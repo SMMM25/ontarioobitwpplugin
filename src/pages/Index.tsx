@@ -1,12 +1,55 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+
+import { useEffect, useState } from "react";
+import Header from "@/components/Header";
+import ObituaryList from "@/components/ObituaryList";
 
 const Index = () => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    document.title = "Ontario Obituaries | Monaco Monuments";
+  }, []);
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-gray-600">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen flex flex-col">
+      <Header />
+      
+      <main className="flex-grow pt-32 pb-16">
+        {mounted && <ObituaryList />}
+      </main>
+      
+      <footer className="bg-secondary/30 border-t border-border/20 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="text-center md:text-left">
+              <p className="text-sm text-muted-foreground">
+                © {new Date().getFullYear()} Monaco Monuments. All rights reserved.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Ontario Obituaries is updated daily from verified sources.
+              </p>
+            </div>
+            <div className="flex items-center space-x-4">
+              <a 
+                href="https://monacomonuments.ca" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Visit Main Site
+              </a>
+              <span className="text-muted-foreground/30">|</span>
+              <a 
+                href="/settings" 
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Admin
+              </a>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };
