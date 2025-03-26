@@ -67,6 +67,10 @@ function ontario_obituaries_activate() {
     if (!wp_next_scheduled('ontario_obituaries_daily_scrape')) {
         wp_schedule_event(time(), 'daily', 'ontario_obituaries_daily_scrape');
     }
+    
+    // Create the obituaries page
+    $plugin = new Ontario_Obituaries();
+    $plugin->register_obituaries_page();
 }
 
 // Register deactivation hook
@@ -74,11 +78,4 @@ register_deactivation_hook(__FILE__, 'ontario_obituaries_deactivate');
 function ontario_obituaries_deactivate() {
     // Clear the scheduled cron job
     wp_clear_scheduled_hook('ontario_obituaries_daily_scrape');
-}
-
-// Add shortcode to display obituaries
-add_shortcode('ontario_obituaries', 'ontario_obituaries_shortcode');
-function ontario_obituaries_shortcode($atts) {
-    $display = new Ontario_Obituaries_Display();
-    return $display->render_obituaries($atts);
 }
