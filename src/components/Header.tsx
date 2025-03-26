@@ -1,32 +1,60 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { 
   Settings, 
   RefreshCw,
-  List
 } from "lucide-react";
+import { toast } from "sonner";
 
 const Header = () => {
   const [scrolled, setScrolled] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
+  // Throttle scroll events for better performance
+  const handleScroll = useCallback(() => {
+    setScrolled(window.scrollY > 10);
+  }, []);
+  
   useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 10);
+    // Throttled scroll handler
+    let ticking = false;
+    
+    const scrollListener = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          handleScroll();
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
     
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+    window.addEventListener("scroll", scrollListener);
+    
+    // Initial check
+    handleScroll();
+    
+    return () => window.removeEventListener("scroll", scrollListener);
+  }, [handleScroll]);
 
   const handleRefresh = async () => {
+    if (isRefreshing) return;
+    
     setIsRefreshing(true);
-    // In a real implementation, this would trigger the scraper
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setIsRefreshing(false);
+    
+    try {
+      // In a real implementation, this would trigger the scraper
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      toast("Data refreshed successfully");
+    } catch (error) {
+      toast("Failed to refresh data. Please try again.");
+      console.error("Refresh error:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   return (

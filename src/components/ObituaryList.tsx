@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import ObituaryCard from "./ObituaryCard";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,6 @@ const ObituaryList = () => {
   const [locationFilter, setLocationFilter] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [obituaries, setObituaries] = useState(mockObituaries);
-  const [filteredObituaries, setFilteredObituaries] = useState(mockObituaries);
   const [isLoading, setIsLoading] = useState(true);
 
   // Simulate loading data
@@ -29,31 +28,34 @@ const ObituaryList = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // Filter obituaries when search or location filter changes
-  useEffect(() => {
-    const filtered = obituaries.filter(obit => {
-      const matchesSearch = searchTerm === "" || 
-        obit.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        obit.description.toLowerCase().includes(searchTerm.toLowerCase());
+  // Memoize unique locations for the filter to prevent recalculation on each render
+  const uniqueLocations = useMemo(() => {
+    return Array.from(
+      new Set(obituaries.map(obit => obit.location))
+    ).sort();
+  }, [obituaries]);
+
+  // Memoize filtered obituaries to avoid unnecessary filtering on each render
+  const filteredObituaries = useMemo(() => {
+    if (!searchTerm && !locationFilter) return obituaries;
+    
+    return obituaries.filter(obit => {
+      const searchTermLower = searchTerm.toLowerCase();
+      const matchesSearch = !searchTerm || 
+        obit.name.toLowerCase().includes(searchTermLower) ||
+        obit.description.toLowerCase().includes(searchTermLower);
       
-      const matchesLocation = locationFilter === "" || 
+      const matchesLocation = !locationFilter || 
         obit.location.toLowerCase().includes(locationFilter.toLowerCase());
       
       return matchesSearch && matchesLocation;
     });
-    
-    setFilteredObituaries(filtered);
   }, [searchTerm, locationFilter, obituaries]);
 
   const clearFilters = () => {
     setSearchTerm("");
     setLocationFilter("");
   };
-
-  // Unique locations for the filter
-  const uniqueLocations = Array.from(
-    new Set(obituaries.map(obit => obit.location))
-  ).sort();
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -139,14 +141,16 @@ const ObituaryList = () => {
               <p className="mt-2 text-sm text-muted-foreground">
                 Try adjusting your search or filters to find what you're looking for.
               </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={clearFilters}
-                className="mt-4"
-              >
-                Clear All Filters
-              </Button>
+              {(searchTerm || locationFilter) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={clearFilters}
+                  className="mt-4"
+                >
+                  Clear All Filters
+                </Button>
+              )}
             </div>
           ) : (
             <div className="py-8">

@@ -1,13 +1,10 @@
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Header from "@/components/Header";
 import ObituaryList from "@/components/ObituaryList";
 
 const Index = () => {
-  const [mounted, setMounted] = useState(false);
-
   useEffect(() => {
-    setMounted(true);
     document.title = "Ontario Obituaries | Monaco Monuments";
   }, []);
 
@@ -16,7 +13,7 @@ const Index = () => {
       <Header />
       
       <main className="flex-grow pt-32 pb-16">
-        {mounted && <ObituaryList />}
+        <ObituaryList />
       </main>
       
       <footer className="bg-secondary/30 border-t border-border/20 py-8">
