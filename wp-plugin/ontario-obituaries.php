@@ -67,6 +67,14 @@ function ontario_obituaries_activate() {
     if (!wp_next_scheduled('ontario_obituaries_daily_scrape')) {
         wp_schedule_event(time(), 'daily', 'ontario_obituaries_daily_scrape');
     }
+    
+    // Default Facebook settings
+    add_option('ontario_obituaries_facebook_settings', array(
+        'app_id' => '',
+        'enabled' => false,
+        'group_id' => '',
+        'auto_share' => false
+    ));
 }
 
 // Register deactivation hook
@@ -82,3 +90,222 @@ function ontario_obituaries_shortcode($atts) {
     $display = new Ontario_Obituaries_Display();
     return $display->render_obituaries($atts);
 }
+
+// Add Facebook settings to the admin menu
+function ontario_obituaries_facebook_settings_init() {
+    add_submenu_page(
+        'ontario-obituaries',
+        __('Facebook Integration', 'ontario-obituaries'),
+        __('Facebook Integration', 'ontario-obituaries'),
+        'manage_options',
+        'ontario-obituaries-facebook',
+        'ontario_obituaries_facebook_settings_page'
+    );
+    
+    // Register settings
+    register_setting('ontario_obituaries_facebook', 'ontario_obituaries_facebook_settings');
+    
+    // Add settings section
+    add_settings_section(
+        'ontario_obituaries_facebook_section',
+        __('Facebook Integration Settings', 'ontario-obituaries'),
+        'ontario_obituaries_facebook_section_callback',
+        'ontario-obituaries-facebook'
+    );
+    
+    // Add fields
+    add_settings_field(
+        'facebook_app_id',
+        __('Facebook App ID', 'ontario-obituaries'),
+        'ontario_obituaries_facebook_app_id_callback',
+        'ontario-obituaries-facebook',
+        'ontario_obituaries_facebook_section'
+    );
+    
+    add_settings_field(
+        'facebook_enabled',
+        __('Enable Facebook Integration', 'ontario-obituaries'),
+        'ontario_obituaries_facebook_enabled_callback',
+        'ontario-obituaries-facebook',
+        'ontario_obituaries_facebook_section'
+    );
+    
+    add_settings_field(
+        'facebook_group_id',
+        __('Facebook Group ID', 'ontario-obituaries'),
+        'ontario_obituaries_facebook_group_id_callback',
+        'ontario-obituaries-facebook',
+        'ontario_obituaries_facebook_section'
+    );
+    
+    add_settings_field(
+        'facebook_auto_share',
+        __('Auto-Share to Facebook Group', 'ontario-obituaries'),
+        'ontario_obituaries_facebook_auto_share_callback',
+        'ontario-obituaries-facebook',
+        'ontario_obituaries_facebook_section'
+    );
+}
+add_action('admin_init', 'ontario_obituaries_facebook_settings_init');
+
+// Settings section callback
+function ontario_obituaries_facebook_section_callback() {
+    echo '<p>' . __('Configure Facebook integration to share obituaries to your Facebook group.', 'ontario-obituaries') . '</p>';
+}
+
+// Facebook App ID field callback
+function ontario_obituaries_facebook_app_id_callback() {
+    $options = get_option('ontario_obituaries_facebook_settings');
+    ?>
+    <input type="text" id="facebook_app_id" name="ontario_obituaries_facebook_settings[app_id]" value="<?php echo esc_attr($options['app_id'] ?? ''); ?>" class="regular-text" />
+    <p class="description"><?php _e('Enter your Facebook App ID. <a href="https://developers.facebook.com/apps/" target="_blank">Create one here</a> if you don\'t have it.', 'ontario-obituaries'); ?></p>
+    <?php
+}
+
+// Facebook enabled field callback
+function ontario_obituaries_facebook_enabled_callback() {
+    $options = get_option('ontario_obituaries_facebook_settings');
+    ?>
+    <input type="checkbox" id="facebook_enabled" name="ontario_obituaries_facebook_settings[enabled]" <?php checked(isset($options['enabled']) ? $options['enabled'] : false); ?> />
+    <p class="description"><?php _e('Enable Facebook sharing functionality', 'ontario-obituaries'); ?></p>
+    <?php
+}
+
+// Facebook Group ID field callback
+function ontario_obituaries_facebook_group_id_callback() {
+    $options = get_option('ontario_obituaries_facebook_settings');
+    ?>
+    <input type="text" id="facebook_group_id" name="ontario_obituaries_facebook_settings[group_id]" value="<?php echo esc_attr($options['group_id'] ?? ''); ?>" class="regular-text" />
+    <p class="description"><?php _e('Enter your Facebook Group ID where obituaries will be shared.', 'ontario-obituaries'); ?></p>
+    <?php
+}
+
+// Facebook auto-share field callback
+function ontario_obituaries_facebook_auto_share_callback() {
+    $options = get_option('ontario_obituaries_facebook_settings');
+    ?>
+    <input type="checkbox" id="facebook_auto_share" name="ontario_obituaries_facebook_settings[auto_share]" <?php checked(isset($options['auto_share']) ? $options['auto_share'] : false); ?> />
+    <p class="description"><?php _e('Automatically share new obituaries to the Facebook group', 'ontario-obituaries'); ?></p>
+    <?php
+}
+
+// Settings page callback
+function ontario_obituaries_facebook_settings_page() {
+    // Check user capabilities
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+    
+    ?>
+    <div class="wrap">
+        <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
+        <form action="options.php" method="post">
+            <?php
+            settings_fields('ontario_obituaries_facebook');
+            do_settings_sections('ontario-obituaries-facebook');
+            submit_button(__('Save Settings', 'ontario-obituaries'));
+            ?>
+        </form>
+        
+        <div class="ontario-obituaries-facebook-help">
+            <h2><?php _e('How to Set Up Facebook Integration', 'ontario-obituaries'); ?></h2>
+            <ol>
+                <li><?php _e('Create a Facebook Developer account and register a new app at <a href="https://developers.facebook.com/apps/" target="_blank">developers.facebook.com</a>', 'ontario-obituaries'); ?></li>
+                <li><?php _e('Get your App ID and add it to the settings above.', 'ontario-obituaries'); ?></li>
+                <li><?php _e('Create a Facebook Group for your obituaries if you don\'t already have one.', 'ontario-obituaries'); ?></li>
+                <li><?php _e('Find your Group ID (it\'s in the URL when you visit your group).', 'ontario-obituaries'); ?></li>
+                <li><?php _e('Enable the Facebook integration in the settings above.', 'ontario-obituaries'); ?></li>
+                <li><?php _e('Optionally, enable auto-sharing to automatically post new obituaries to your group.', 'ontario-obituaries'); ?></li>
+            </ol>
+        </div>
+    </div>
+    <?php
+}
+
+// Update localized script data to include Facebook info
+function ontario_obituaries_enqueue_scripts() {
+    global $post;
+    
+    // Only load on pages/posts with our shortcode
+    if (is_a($post, 'WP_Post') && has_shortcode($post->post_content, 'ontario_obituaries')) {
+        wp_enqueue_style(
+            'ontario-obituaries-css',
+            ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/css/ontario-obituaries.css',
+            array(),
+            ONTARIO_OBITUARIES_VERSION
+        );
+        
+        wp_enqueue_script(
+            'ontario-obituaries-js',
+            ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries.js',
+            array('jquery'),
+            ONTARIO_OBITUARIES_VERSION,
+            true
+        );
+        
+        // Get Facebook settings
+        $fb_settings = get_option('ontario_obituaries_facebook_settings', array());
+        
+        // Pass data to JavaScript
+        wp_localize_script(
+            'ontario-obituaries-js',
+            'ontario_obituaries_data',
+            array(
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('ontario-obituaries-nonce'),
+                'fb_app_id' => $fb_settings['app_id'] ?? '',
+                'fb_enabled' => isset($fb_settings['enabled']) ? (bool) $fb_settings['enabled'] : false,
+                'site_name' => get_bloginfo('name')
+            )
+        );
+    }
+}
+add_action('wp_enqueue_scripts', 'ontario_obituaries_enqueue_scripts');
+
+// Add CSS for the Facebook share button
+function ontario_obituaries_add_facebook_css() {
+    // Add this to your existing CSS file or create a new one
+    $custom_css = "
+        .ontario-obituaries-share-fb {
+            display: inline-flex;
+            align-items: center;
+            background-color: #1877f2;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 8px;
+        }
+        
+        .ontario-obituaries-share-fb:hover {
+            background-color: #166fe5;
+        }
+        
+        .ontario-obituaries-fb-icon {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 5px;
+            background-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"%23fff\"%3E%3Cpath d=\"M9.198 21.5h4v-8.01h3.604l.396-3.98h-4V7.5a1 1 0 0 1 1-1h3v-4h-3a5 5 0 0 0-5 5v2.01h-2l-.396 3.98h2.396v8.01Z\"%3E%3C/path%3E%3C/svg%3E');
+            background-size: contain;
+            background-repeat: no-repeat;
+        }
+        
+        .ontario-obituaries-share-success {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #4caf50;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 4px;
+            z-index: 9999;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+    ";
+    
+    wp_add_inline_style('ontario-obituaries-css', $custom_css);
+}
+add_action('wp_enqueue_scripts', 'ontario_obituaries_add_facebook_css', 20);

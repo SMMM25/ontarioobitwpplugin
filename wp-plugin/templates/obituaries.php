@@ -52,6 +52,9 @@ $locations = $display->get_locations();
 // Add plugin CSS
 wp_enqueue_style('ontario-obituaries-css');
 wp_enqueue_script('ontario-obituaries-js');
+
+// Get site URL for sharing
+$site_url = get_site_url();
 ?>
 
 <div class="ontario-obituaries-container">
@@ -150,6 +153,16 @@ wp_enqueue_script('ontario-obituaries-js');
                                     <?php _e('View Original', 'ontario-obituaries'); ?>
                                 </a>
                             <?php endif; ?>
+                            
+                            <!-- Share to Facebook Button -->
+                            <button class="ontario-obituaries-share-fb" 
+                                    data-id="<?php echo esc_attr($obituary->id); ?>"
+                                    data-name="<?php echo esc_attr($obituary->name); ?>"
+                                    data-url="<?php echo esc_url(add_query_arg(array('obituary_id' => $obituary->id), $site_url)); ?>"
+                                    data-description="<?php echo esc_attr(wp_trim_words($obituary->description, 50, '...')); ?>">
+                                <span class="ontario-obituaries-fb-icon"></span>
+                                <?php _e('Share to Facebook', 'ontario-obituaries'); ?>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -202,3 +215,4 @@ wp_enqueue_script('ontario-obituaries-js');
         </p>
     </div>
 </div>
+

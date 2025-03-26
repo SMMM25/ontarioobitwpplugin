@@ -67,5 +67,10 @@
                 }
             });
         });
+        
+        // Facebook Integration Tab highlight
+        if (window.location.href.indexOf('page=ontario-obituaries-facebook') > -1) {
+            $('#ontario-obituaries-facebook-tab').addClass('current');
+        }
     });
 })(jQuery);

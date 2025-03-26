@@ -16,6 +16,9 @@ class Ontario_Obituaries {
         
         // Add scripts and styles
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
+        
+        // Add hook for auto-sharing to Facebook
+        add_action('ontario_obituaries_new_obituary', array($this, 'auto_share_to_facebook'), 10, 1);
     }
     
     /**
@@ -75,5 +78,89 @@ class Ontario_Obituaries {
                 )
             );
         }
+    }
+    
+    /**
+     * Auto-share new obituary to Facebook group if enabled
+     * 
+     * @param object $obituary The obituary object
+     */
+    public function auto_share_to_facebook($obituary) {
+        // Get Facebook settings
+        $fb_settings = get_option('ontario_obituaries_facebook_settings', array());
+        
+        // Check if auto-share and Facebook integration are enabled
+        if (
+            isset($fb_settings['enabled']) && 
+            $fb_settings['enabled'] && 
+            isset($fb_settings['auto_share']) && 
+            $fb_settings['auto_share'] && 
+            !empty($fb_settings['app_id']) && 
+            !empty($fb_settings['group_id'])
+        ) {
+            // This is a simplified version - in a real implementation, 
+            // you would use Facebook's Graph API to post to the group
+            
+            // Log the auto-share attempt
+            error_log('Auto-sharing obituary to Facebook: ' . $obituary->name);
+            
+            // Prepare the post data
+            $post_data = array(
+                'message' => sprintf(
+                    __('In Memory of %s (%s - %s)', 'ontario-obituaries'),
+                    $obituary->name,
+                    !empty($obituary->date_of_birth) ? $obituary->date_of_birth : __('unknown', 'ontario-obituaries'),
+                    $obituary->date_of_death
+                ),
+                'link' => add_query_arg(array('obituary_id' => $obituary->id), site_url()),
+            );
+            
+            // In a real implementation, you would use wp_remote_post() to send data to Facebook Graph API
+            // This is just a placeholder to demonstrate the concept
+            $this->post_to_facebook_group($fb_settings['group_id'], $post_data);
+        }
+    }
+    
+    /**
+     * Post to Facebook Group using Graph API
+     * 
+     * @param string $group_id The Facebook Group ID
+     * @param array $post_data The data to post
+     * @return bool|WP_Error True on success, WP_Error on failure
+     */
+    private function post_to_facebook_group($group_id, $post_data) {
+        // Get Facebook settings
+        $fb_settings = get_option('ontario_obituaries_facebook_settings', array());
+        
+        // This is a simplified implementation - in a real scenario,
+        // you would need to handle Facebook authentication properly
+        
+        // For demonstration purposes only - this would need to be expanded in a real implementation
+        $url = "https://graph.facebook.com/v18.0/{$group_id}/feed";
+        
+        // Prepare the request arguments
+        $args = array(
+            'method' => 'POST',
+            'timeout' => 45,
+            'redirection' => 5,
+            'httpversion' => '1.0',
+            'blocking' => true,
+            'headers' => array(),
+            'body' => array(
+                'access_token' => $fb_settings['access_token'] ?? '', // You would need a valid access token
+                'message' => $post_data['message'],
+                'link' => $post_data['link'],
+            ),
+            'cookies' => array()
+        );
+        
+        // In a real implementation, you would send this request to Facebook
+        // $response = wp_remote_post($url, $args);
+        
+        // For now, just log that we would have posted
+        error_log('Would post to Facebook Group: ' . $group_id);
+        error_log('Post data: ' . print_r($post_data, true));
+        
+        return true;
     }
 }
