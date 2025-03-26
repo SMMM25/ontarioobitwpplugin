@@ -4,11 +4,13 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SettingsForm from "./SettingsForm";
+import ScraperDebug from "./ScraperDebug";
 import { 
   Settings, 
   Database, 
   History,
-  Home
+  Home,
+  Bug
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -56,6 +58,16 @@ const AdminPanel = () => {
                 Settings
               </TabsTrigger>
               <TabsTrigger 
+                value="debug"
+                className={cn(
+                  "data-[state=active]:bg-background data-[state=active]:shadow-sm",
+                  "transition-all duration-200"
+                )}
+              >
+                <Bug className="h-4 w-4 mr-2" />
+                Debug
+              </TabsTrigger>
+              <TabsTrigger 
                 value="data"
                 className={cn(
                   "data-[state=active]:bg-background data-[state=active]:shadow-sm",
@@ -80,6 +92,10 @@ const AdminPanel = () => {
           
           <TabsContent value="settings" className="animate-fade-in">
             <SettingsForm />
+          </TabsContent>
+          
+          <TabsContent value="debug" className="animate-fade-in">
+            <ScraperDebug />
           </TabsContent>
           
           <TabsContent value="data" className="animate-fade-in">
