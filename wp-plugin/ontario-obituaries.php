@@ -25,6 +25,7 @@ require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-
 require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-admin.php';
 require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-display.php';
 require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-ajax.php';
+require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-debug.php';
 
 // Initialize the plugin
 function ontario_obituaries_init() {
@@ -34,6 +35,10 @@ function ontario_obituaries_init() {
     // Initialize AJAX handler
     $ajax = new Ontario_Obituaries_Ajax();
     $ajax->init();
+    
+    // Initialize Debug handler
+    $debug = new Ontario_Obituaries_Debug();
+    $debug->init();
 }
 ontario_obituaries_init();
 
