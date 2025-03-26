@@ -1,3 +1,24 @@
+/**
+ * Ontario Obituaries CSS
+ */
+
+/* Disclaimer styles */
+.ontario-obituaries-disclaimer {
+    margin-top: 40px;
+    padding: 20px 0;
+    font-size: 14px;
+}
+
+.ontario-obituaries-disclaimer-divider {
+    border-top: 1px solid #e5e5e5;
+    margin-bottom: 20px;
+}
+
+.ontario-obituaries-disclaimer-text {
+    color: #666;
+    line-height: 1.5;
+    text-align: center;
+}
 
 /* Ontario Obituaries Plugin Styles */
 

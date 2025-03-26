@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Ontario Obituaries Admin
@@ -18,6 +17,34 @@ class Ontario_Obituaries_Admin {
         
         // Add admin AJAX handlers
         add_action('wp_ajax_ontario_obituaries_manual_scrape', array($this, 'handle_manual_scrape'));
+        
+        // Add admin scripts
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+    }
+    
+    /**
+     * Enqueue admin scripts
+     */
+    public function enqueue_admin_scripts($hook) {
+        // Only enqueue on our plugin pages
+        if (strpos($hook, 'ontario-obituaries') === false) {
+            return;
+        }
+        
+        wp_enqueue_script(
+            'ontario-obituaries-admin-js',
+            ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-admin.js',
+            array('jquery'),
+            ONTARIO_OBITUARIES_VERSION,
+            true
+        );
+        
+        wp_localize_script('ontario-obituaries-admin-js', 'ontario_obituaries_admin', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('ontario-obituaries-admin-nonce'),
+            'confirm_delete' => __('Are you sure you want to delete this obituary? This action cannot be undone.', 'ontario-obituaries'),
+            'deleting' => __('Deleting...', 'ontario-obituaries')
+        ));
     }
     
     /**
@@ -380,23 +407,6 @@ class Ontario_Obituaries_Admin {
             return;
         }
         
-        // Process actions
-        if (isset($_GET['action']) && isset($_GET['obituary_id']) && isset($_GET['_wpnonce'])) {
-            $action = sanitize_text_field($_GET['action']);
-            $obituary_id = intval($_GET['obituary_id']);
-            $nonce = sanitize_text_field($_GET['_wpnonce']);
-            
-            if (wp_verify_nonce($nonce, 'ontario_obituaries_' . $action . '_' . $obituary_id)) {
-                global $wpdb;
-                $table_name = $wpdb->prefix . 'ontario_obituaries';
-                
-                if ($action === 'delete') {
-                    $wpdb->delete($table_name, array('id' => $obituary_id), array('%d'));
-                    $this->show_admin_notice('success', __('Obituary deleted successfully.', 'ontario-obituaries'));
-                }
-            }
-        }
-        
         // Get obituaries
         global $wpdb;
         $table_name = $wpdb->prefix . 'ontario_obituaries';
@@ -482,7 +492,7 @@ class Ontario_Obituaries_Admin {
                 </div>
             </form>
             
-            <table class="wp-list-table widefat fixed striped">
+            <table class="wp-list-table widefat fixed striped obituaries-list">
                 <thead>
                     <tr>
                         <th scope="col" class="column-primary"><?php _e('Name', 'ontario-obituaries'); ?></th>
@@ -499,7 +509,7 @@ class Ontario_Obituaries_Admin {
                         </tr>
                     <?php else: ?>
                         <?php foreach ($obituaries as $obituary): ?>
-                            <tr>
+                            <tr id="obituary-<?php echo esc_attr($obituary->id); ?>">
                                 <td class="column-primary">
                                     <?php echo esc_html($obituary->name); ?>
                                     <button type="button" class="toggle-row"><span class="screen-reader-text"><?php _e('Show more details', 'ontario-obituaries'); ?></span></button>
@@ -517,15 +527,19 @@ class Ontario_Obituaries_Admin {
                                     <a href="<?php echo esc_url(admin_url('admin.php?page=ontario-obituaries-view&id=' . $obituary->id)); ?>" class="button button-small">
                                         <?php _e('View', 'ontario-obituaries'); ?>
                                     </a>
-                                    <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=ontario-obituaries-list&action=delete&obituary_id=' . $obituary->id), 'ontario_obituaries_delete_' . $obituary->id); ?>" class="button button-small" onclick="return confirm('<?php _e('Are you sure you want to delete this obituary?', 'ontario-obituaries'); ?>')">
+                                    <button type="button" class="button button-small delete-obituary" data-id="<?php echo esc_attr($obituary->id); ?>">
                                         <?php _e('Delete', 'ontario-obituaries'); ?>
-                                    </a>
+                                    </button>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
             </table>
+            
+            <div id="ontario-obituaries-delete-result" class="notice hidden">
+                <p></p>
+            </div>
         </div>
         <?php
     }

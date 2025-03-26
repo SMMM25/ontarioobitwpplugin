@@ -193,4 +193,12 @@ wp_enqueue_script('ontario-obituaries-js');
             </div>
         </div>
     <?php endif; ?>
+    
+    <!-- Disclaimer section -->
+    <div class="ontario-obituaries-disclaimer">
+        <hr class="ontario-obituaries-disclaimer-divider">
+        <p class="ontario-obituaries-disclaimer-text">
+            <?php _e('Disclaimer: All obituary information posted has been obtained via public data. If you wish to have your family\'s data removed, please contact the site administrator.', 'ontario-obituaries'); ?>
+        </p>
+    </div>
 </div>
