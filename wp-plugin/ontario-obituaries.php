@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Ontario Obituaries
- * Description: Scrapes and displays obituaries from Ontario Canada - Compatible with Obituary Assistant
+ * Description: Displays obituaries from Ontario Canada - Compatible with Obituary Assistant
  * Version: 1.0.3
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
@@ -41,7 +41,7 @@ function ontario_obituaries_includes() {
     // AJAX handler
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-ajax.php';
     
-    // Add the scraper class
+    // Add the data processor class
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
 
     // Initialize AJAX handler
@@ -83,13 +83,13 @@ function ontario_obituaries_activate() {
     // Set a transient to show an admin notice
     set_transient('ontario_obituaries_activation_notice', true, 60 * 5);
     
-    // Schedule the cron events for scraping
-    if (!wp_next_scheduled('ontario_obituaries_scrape_event')) {
+    // Schedule the cron events for collection
+    if (!wp_next_scheduled('ontario_obituaries_collection_event')) {
         // Schedule the event to run twice daily
-        wp_schedule_event(time(), 'twicedaily', 'ontario_obituaries_scrape_event');
+        wp_schedule_event(time(), 'twicedaily', 'ontario_obituaries_collection_event');
     }
     
-    // Run an initial scrape to populate data immediately
+    // Run an initial collection to populate data immediately
     if (class_exists('Ontario_Obituaries_Scraper')) {
         $scraper = new Ontario_Obituaries_Scraper();
         $scraper->run_now();
@@ -108,9 +108,9 @@ function ontario_obituaries_deactivate() {
     delete_transient('ontario_obituaries_activation_notice');
     
     // Unschedule the cron event
-    $timestamp = wp_next_scheduled('ontario_obituaries_scrape_event');
+    $timestamp = wp_next_scheduled('ontario_obituaries_collection_event');
     if ($timestamp) {
-        wp_unschedule_event($timestamp, 'ontario_obituaries_scrape_event');
+        wp_unschedule_event($timestamp, 'ontario_obituaries_collection_event');
     }
     
     // Flush rewrite rules
@@ -119,29 +119,29 @@ function ontario_obituaries_deactivate() {
 register_deactivation_hook(__FILE__, 'ontario_obituaries_deactivate');
 
 /**
- * Scheduled task hook for scraping obituaries
+ * Scheduled task hook for collecting obituaries
  */
-function ontario_obituaries_scheduled_scrape() {
-    // Load the scraper class if not already loaded
+function ontario_obituaries_scheduled_collection() {
+    // Load the collection class if not already loaded
     if (!class_exists('Ontario_Obituaries_Scraper')) {
         require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
     }
     
-    // Initialize and run the scraper
+    // Initialize and run the collection
     $scraper = new Ontario_Obituaries_Scraper();
-    $results = $scraper->scrape();
+    $results = $scraper->collect();
     
     // Log the results
-    error_log('Ontario Obituaries Scheduled Scrape: ' . print_r($results, true));
+    error_log('Ontario Obituaries Scheduled Collection: ' . print_r($results, true));
     
-    // Update the last scrape timestamp and data
-    update_option('ontario_obituaries_last_scrape', array(
+    // Update the last collection timestamp and data
+    update_option('ontario_obituaries_last_collection', array(
         'timestamp' => current_time('timestamp'),
         'completed' => current_time('mysql'),
         'results' => $results
     ));
 }
-add_action('ontario_obituaries_scrape_event', 'ontario_obituaries_scheduled_scrape');
+add_action('ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection');
 
 /**
  * Admin notices hook
@@ -152,7 +152,7 @@ function ontario_obituaries_admin_notices() {
         ?>
         <div class="notice notice-success is-dismissible">
             <p><?php _e('Ontario Obituaries plugin has been activated successfully!', 'ontario-obituaries'); ?></p>
-            <p><?php _e('An initial scrape has been triggered to populate obituaries data.', 'ontario-obituaries'); ?></p>
+            <p><?php _e('An initial collection has been triggered to populate obituaries data.', 'ontario-obituaries'); ?></p>
         </div>
         <?php
         delete_transient('ontario_obituaries_activation_notice');
@@ -167,12 +167,12 @@ function ontario_obituaries_admin_notices() {
         <?php
     }
     
-    // Check for failed scrapes
-    $last_scrape = get_option('ontario_obituaries_last_scrape');
-    if ($last_scrape && isset($last_scrape['results']) && !empty($last_scrape['results']['errors'])) {
+    // Check for failed collections
+    $last_collection = get_option('ontario_obituaries_last_collection');
+    if ($last_collection && isset($last_collection['results']) && !empty($last_collection['results']['errors'])) {
         ?>
         <div class="notice notice-warning is-dismissible">
-            <p><?php _e('Ontario Obituaries encountered some issues during the last scrape. Check the logs for details.', 'ontario-obituaries'); ?></p>
+            <p><?php _e('Ontario Obituaries encountered some issues during the last collection. Check the logs for details.', 'ontario-obituaries'); ?></p>
         </div>
         <?php
     }
@@ -228,72 +228,72 @@ function ontario_obituaries_get_data_for_assistant() {
  */
 function ontario_obituaries_add_admin_menu() {
     add_management_page(
-        __('Run Ontario Obituaries Scraper', 'ontario-obituaries'),
-        __('Run Obituaries Scraper', 'ontario-obituaries'),
+        __('Run Ontario Obituaries Collection', 'ontario-obituaries'),
+        __('Run Obituaries Collection', 'ontario-obituaries'),
         'manage_options',
-        'run-ontario-scraper',
-        'ontario_obituaries_render_scraper_page'
+        'run-ontario-collection',
+        'ontario_obituaries_render_collection_page'
     );
 }
 add_action('admin_menu', 'ontario_obituaries_add_admin_menu');
 
 /**
- * Render the manual scrape page
+ * Render the manual collection page
  */
-function ontario_obituaries_render_scraper_page() {
+function ontario_obituaries_render_collection_page() {
     ?>
     <div class="wrap">
-        <h1><?php _e('Run Ontario Obituaries Scraper', 'ontario-obituaries'); ?></h1>
-        <p><?php _e('Click the button below to manually run the obituaries scraper right now.', 'ontario-obituaries'); ?></p>
+        <h1><?php _e('Run Ontario Obituaries Collection', 'ontario-obituaries'); ?></h1>
+        <p><?php _e('Click the button below to manually run the obituaries collection right now.', 'ontario-obituaries'); ?></p>
         
         <form method="post" action="">
-            <?php wp_nonce_field('run_ontario_scraper', 'ontario_scraper_nonce'); ?>
-            <input type="submit" name="run_scraper" class="button button-primary" value="<?php _e('Run Scraper Now', 'ontario-obituaries'); ?>">
+            <?php wp_nonce_field('run_ontario_collection', 'ontario_collection_nonce'); ?>
+            <input type="submit" name="run_collection" class="button button-primary" value="<?php _e('Run Collection Now', 'ontario-obituaries'); ?>">
         </form>
         
         <?php
         // Handle the form submission
-        if (isset($_POST['run_scraper']) && check_admin_referer('run_ontario_scraper', 'ontario_scraper_nonce')) {
-            // Load the scraper class if not already loaded
+        if (isset($_POST['run_collection']) && check_admin_referer('run_ontario_collection', 'ontario_collection_nonce')) {
+            // Load the collection class if not already loaded
             if (!class_exists('Ontario_Obituaries_Scraper')) {
                 require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
             }
             
-            // Initialize and run the scraper
+            // Initialize and run the collection
             $scraper = new Ontario_Obituaries_Scraper();
             $results = $scraper->run_now();
             
             // Display the results
-            echo '<h2>' . __('Scrape Results', 'ontario-obituaries') . '</h2>';
-            echo '<div class="notice notice-success inline"><p>' . sprintf(__('Scrape completed. Found %d obituaries, added %d new entries.', 'ontario-obituaries'), $results['obituaries_found'], $results['obituaries_added']) . '</p></div>';
+            echo '<h2>' . __('Collection Results', 'ontario-obituaries') . '</h2>';
+            echo '<div class="notice notice-success inline"><p>' . sprintf(__('Collection completed. Found %d obituaries, added %d new entries.', 'ontario-obituaries'), $results['obituaries_found'], $results['obituaries_added']) . '</p></div>';
             
             // Display any errors
             if (!empty($results['errors'])) {
                 echo '<h3>' . __('Errors', 'ontario-obituaries') . '</h3>';
                 echo '<div class="notice notice-warning inline"><ul>';
-                foreach ($results['errors'] as $source_id => $errors) {
+                foreach ($results['errors'] as $region_id => $errors) {
                     $error_messages = is_array($errors) ? implode(', ', $errors) : $errors;
-                    echo '<li><strong>' . esc_html($source_id) . ':</strong> ' . esc_html($error_messages) . '</li>';
+                    echo '<li><strong>' . esc_html($region_id) . ':</strong> ' . esc_html($error_messages) . '</li>';
                 }
                 echo '</ul></div>';
             }
             
-            // Display scraping details for each source
-            echo '<h3>' . __('Sources Details', 'ontario-obituaries') . '</h3>';
+            // Display collection details for each region
+            echo '<h3>' . __('Region Details', 'ontario-obituaries') . '</h3>';
             echo '<table class="widefat striped">';
-            echo '<thead><tr><th>' . __('Source', 'ontario-obituaries') . '</th><th>' . __('Found', 'ontario-obituaries') . '</th><th>' . __('Added', 'ontario-obituaries') . '</th></tr></thead>';
+            echo '<thead><tr><th>' . __('Region', 'ontario-obituaries') . '</th><th>' . __('Found', 'ontario-obituaries') . '</th><th>' . __('Added', 'ontario-obituaries') . '</th></tr></thead>';
             echo '<tbody>';
             
-            if (!empty($results['sources'])) {
-                foreach ($results['sources'] as $source_id => $source_results) {
+            if (!empty($results['regions'])) {
+                foreach ($results['regions'] as $region_id => $region_results) {
                     echo '<tr>';
-                    echo '<td>' . esc_html($source_id) . '</td>';
-                    echo '<td>' . intval($source_results['found']) . '</td>';
-                    echo '<td>' . intval($source_results['added']) . '</td>';
+                    echo '<td>' . esc_html($region_id) . '</td>';
+                    echo '<td>' . intval($region_results['found']) . '</td>';
+                    echo '<td>' . intval($region_results['added']) . '</td>';
                     echo '</tr>';
                 }
             } else {
-                echo '<tr><td colspan="3">' . __('No source details available', 'ontario-obituaries') . '</td></tr>';
+                echo '<tr><td colspan="3">' . __('No region details available', 'ontario-obituaries') . '</td></tr>';
             }
             
             echo '</tbody></table>';
@@ -336,8 +336,8 @@ function ontario_obituaries_render_dashboard_widget() {
         "SELECT funeral_home, COUNT(*) as count FROM $table_name GROUP BY funeral_home ORDER BY count DESC LIMIT 10"
     );
     
-    // Get the last scrape result
-    $last_scrape = get_option('ontario_obituaries_last_scrape');
+    // Get the last collection result
+    $last_collection = get_option('ontario_obituaries_last_collection');
     
     echo '<div class="ontario-obituaries-widget">';
     echo '<p>' . sprintf(__('Total Obituaries: <strong>%d</strong>', 'ontario-obituaries'), $total_count) . '</p>';
@@ -352,12 +352,12 @@ function ontario_obituaries_render_dashboard_widget() {
         echo '</ul>';
     }
     
-    if (!empty($last_scrape)) {
-        $time_ago = human_time_diff(strtotime($last_scrape['timestamp']), current_time('timestamp'));
-        echo '<p>' . sprintf(__('Last Scrape: <strong>%s ago</strong>', 'ontario-obituaries'), $time_ago) . '</p>';
+    if (!empty($last_collection)) {
+        $time_ago = human_time_diff(strtotime($last_collection['timestamp']), current_time('timestamp'));
+        echo '<p>' . sprintf(__('Last Collection: <strong>%s ago</strong>', 'ontario-obituaries'), $time_ago) . '</p>';
         
-        if (isset($last_scrape['results'])) {
-            $results = $last_scrape['results'];
+        if (isset($last_collection['results'])) {
+            $results = $last_collection['results'];
             echo '<p>' . sprintf(
                 __('Last Run: %d found, %d added', 'ontario-obituaries'),
                 $results['obituaries_found'],
@@ -366,6 +366,6 @@ function ontario_obituaries_render_dashboard_widget() {
         }
     }
     
-    echo '<p><a href="' . admin_url('tools.php?page=run-ontario-scraper') . '">' . __('Run Scraper Now', 'ontario-obituaries') . '</a></p>';
+    echo '<p><a href="' . admin_url('tools.php?page=run-ontario-collection') . '">' . __('Run Collection Now', 'ontario-obituaries') . '</a></p>';
     echo '</div>';
 }

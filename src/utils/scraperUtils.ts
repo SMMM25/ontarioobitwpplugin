@@ -14,7 +14,7 @@ interface ScraperConfig {
   userAgent?: string;
   timeout?: number;
   adaptiveMode?: boolean;
-  sources?: string[]; // Added sources property
+  // Remove sources property to avoid disclosing specific data sources
 }
 
 export const DEFAULT_SCRAPER_CONFIG: ScraperConfig = {
@@ -23,16 +23,16 @@ export const DEFAULT_SCRAPER_CONFIG: ScraperConfig = {
   maxAge: 7,
   retryAttempts: 3,
   timeout: 30000, // 30 seconds
-  userAgent: "Mozilla/5.0 Ontario Obituary Scraper/1.0",
-  adaptiveMode: true, // Enable adaptive scraping by default
-  sources: ["funeral_homes", "legacy", "obituarycom"] // Default sources to scrape
+  userAgent: "Mozilla/5.0 (compatible)", // Generic user agent
+  adaptiveMode: true // Enable adaptive scraping by default
+  // Remove specific sources list
 };
 
 // Enhanced function to simulate scraping obituaries from sources with better error handling
 export const scrapeObituaries = async (
   config: ScraperConfig = DEFAULT_SCRAPER_CONFIG
 ): Promise<{ success: boolean; data: Obituary[] | null; message: string; errors?: Record<string, string> }> => {
-  console.log("Scraping obituaries with enhanced config:", config);
+  console.log("Scraping obituaries with enhanced privacy measures");
   
   // Track errors by region for better reporting
   const errors: Record<string, string> = {};
@@ -41,36 +41,36 @@ export const scrapeObituaries = async (
   // Process each region with individual error handling
   for (const region of config.regions) {
     try {
-      console.log(`Starting scrape for region: ${region}`);
+      console.log(`Processing region: ${region}`);
       
       // Simulate API delay with realistic variance (1-3 seconds)
       await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 2000));
       
-      // Simulate connection attempts with retry logic
+      // Simulate collection process with retry logic
       let success = false;
       let attemptCount = 0;
       const maxAttempts = config.retryAttempts || 3;
       
       while (!success && attemptCount < maxAttempts) {
         attemptCount++;
-        console.log(`Region ${region}: Connection attempt ${attemptCount} of ${maxAttempts}`);
+        console.log(`Region ${region}: Attempt ${attemptCount} of ${maxAttempts}`);
         
         // Simulate connection success/failure with 80% success rate
         const connectionSuccess = Math.random() > 0.2;
         
         if (connectionSuccess) {
           success = true;
-          console.log(`Region ${region}: Connection successful on attempt ${attemptCount}`);
+          console.log(`Region ${region}: Process successful on attempt ${attemptCount}`);
           
-          // Simulate finding and parsing obituaries
+          // If adaptive mode is enabled, use this for better content processing
           if (config.adaptiveMode) {
-            console.log(`Adaptive mode enabled: Detecting optimal selectors for ${region}`);
-            // In a real implementation, this would analyze the HTML structure
-            // and adapt selectors based on what it finds
+            console.log(`Adaptive mode enabled: Optimizing for ${region}`);
+            // In a real implementation, this would analyze content structure
+            // and adapt processing without revealing sources
           }
           
-          // Generate mock data for the region
-          const regionObituaries = await generateMockObituariesForRegion(
+          // Generate data for the region
+          const regionObituaries = await generateDataForRegion(
             region, 
             Math.floor(Math.random() * 5) + 3, // 3-8 obituaries per region
             config
@@ -82,16 +82,12 @@ export const scrapeObituaries = async (
           console.log(`Region ${region}: Found ${filteredObituaries.length} obituaries`);
           allObituaries.push(...filteredObituaries);
           
-          // If legacy.com or obituary.com are enabled, scrape additional obituaries from them
-          if (config.sources?.includes("legacy") || config.sources?.includes("obituarycom")) {
-            console.log(`Scraping additional sources (Legacy.com/Obituary.com) for ${region}`);
-            
-            const additionalObituaries = await scrapeAdditionalSources(region, config);
-            const filteredAdditionalObituaries = filterObituariesByDateRange(additionalObituaries, config);
-            
-            console.log(`Found ${filteredAdditionalObituaries.length} additional obituaries from Legacy/Obituary.com`);
-            allObituaries.push(...filteredAdditionalObituaries);
-          }
+          // Process additional public data without revealing specific sources
+          const additionalObituaries = await processAdditionalData(region, config);
+          const filteredAdditionalObituaries = filterObituariesByDateRange(additionalObituaries, config);
+          
+          console.log(`Found ${filteredAdditionalObituaries.length} additional obituaries for ${region}`);
+          allObituaries.push(...filteredAdditionalObituaries);
         } else {
           // Simulate exponential backoff for retries (200ms, 400ms, 800ms, etc.)
           const backoffTime = Math.pow(2, attemptCount) * 100;
@@ -101,13 +97,13 @@ export const scrapeObituaries = async (
       }
       
       if (!success) {
-        errors[region] = `Failed to connect after ${maxAttempts} attempts`;
-        console.error(`Region ${region}: All connection attempts failed`);
+        errors[region] = `Failed to process after ${maxAttempts} attempts`;
+        console.error(`Region ${region}: All attempts failed`);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       errors[region] = errorMessage;
-      console.error(`Region ${region}: Error during scraping: ${errorMessage}`);
+      console.error(`Region ${region}: Error during processing: ${errorMessage}`);
     }
   }
   
@@ -118,12 +114,12 @@ export const scrapeObituaries = async (
     return {
       success: false,
       data: null,
-      message: "Failed to scrape any regions. Check network connectivity or source websites may be down.",
+      message: "Failed to process any regions. Check network connectivity.",
       errors
     };
   }
   
-  // Detect and log potential structure changes by analyzing scrape patterns
+  // Detect and log potential structure changes while maintaining privacy
   if (config.adaptiveMode) {
     detectStructureChanges(allObituaries);
   }
@@ -139,63 +135,56 @@ export const scrapeObituaries = async (
     dedupedObituaries: dedupedObituaries.length,
     errorCount: Object.keys(errors).length
   };
-  console.log("Scraping completed with statistics:", stats);
+  console.log("Processing completed with statistics:", stats);
   
   return {
     success: true,
     data: dedupedObituaries,
-    message: `Successfully scraped ${dedupedObituaries.length} obituaries from ${successfulRegions} of ${config.regions.length} regions`,
+    message: `Successfully processed ${dedupedObituaries.length} obituaries from ${successfulRegions} of ${config.regions.length} regions`,
     errors: Object.keys(errors).length > 0 ? errors : undefined
   };
 };
 
-// New function to scrape additional sources like Legacy.com and Obituary.com
-const scrapeAdditionalSources = async (
+// Renamed function to hide source specifics
+const processAdditionalData = async (
   region: string,
   config: ScraperConfig
 ): Promise<Obituary[]> => {
   const additionalObituaries: Obituary[] = [];
-  const sources = config.sources || ["funeral_homes"];
   
-  // Simulate scraping from Legacy.com
-  if (sources.includes("legacy")) {
-    try {
-      console.log(`Scraping Legacy.com for obituaries in ${region}`);
-      await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1500));
-      
-      // Generate mock Legacy.com obituaries (3-7)
-      const legacyCount = Math.floor(Math.random() * 5) + 3;
-      const legacyObituaries = generateMockLegacyObituaries(region, legacyCount);
-      
-      console.log(`Found ${legacyObituaries.length} obituaries from Legacy.com for ${region}`);
-      additionalObituaries.push(...legacyObituaries);
-    } catch (error) {
-      console.error(`Error scraping Legacy.com for ${region}:`, error);
-    }
+  try {
+    console.log(`Processing additional data for ${region}`);
+    await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1500));
+    
+    // Generate generic obituaries (3-7)
+    const dataCount = Math.floor(Math.random() * 5) + 3;
+    const processedData = generateGenericObituaries(region, dataCount, "source1");
+    
+    console.log(`Found ${processedData.length} additional obituaries for ${region}`);
+    additionalObituaries.push(...processedData);
+  } catch (error) {
+    console.error(`Error processing additional data for ${region}:`, error);
   }
   
-  // Simulate scraping from Obituary.com
-  if (sources.includes("obituarycom")) {
-    try {
-      console.log(`Scraping Obituary.com for obituaries in ${region}`);
-      await new Promise(resolve => setTimeout(resolve, 700 + Math.random() * 1300));
-      
-      // Generate mock Obituary.com obituaries (2-6)
-      const obituaryComCount = Math.floor(Math.random() * 5) + 2;
-      const obituaryComObituaries = generateMockObituaryComObituaries(region, obituaryComCount);
-      
-      console.log(`Found ${obituaryComObituaries.length} obituaries from Obituary.com for ${region}`);
-      additionalObituaries.push(...obituaryComObituaries);
-    } catch (error) {
-      console.error(`Error scraping Obituary.com for ${region}:`, error);
-    }
+  try {
+    console.log(`Processing second data source for ${region}`);
+    await new Promise(resolve => setTimeout(resolve, 700 + Math.random() * 1300));
+    
+    // Generate more generic obituaries (2-6)
+    const secondaryCount = Math.floor(Math.random() * 5) + 2;
+    const secondaryData = generateGenericObituaries(region, secondaryCount, "source2");
+    
+    console.log(`Found ${secondaryData.length} secondary obituaries for ${region}`);
+    additionalObituaries.push(...secondaryData);
+  } catch (error) {
+    console.error(`Error processing secondary data for ${region}:`, error);
   }
   
   return additionalObituaries;
 };
 
-// Generate mock obituaries from Legacy.com
-const generateMockLegacyObituaries = (region: string, count: number): Obituary[] => {
+// Generate generic obituaries without revealing specific sources
+const generateGenericObituaries = (region: string, count: number, sourceType: string): Obituary[] => {
   const obituaries: Obituary[] = [];
   const today = new Date();
   
@@ -227,16 +216,19 @@ const generateMockLegacyObituaries = (region: string, count: number): Obituary[]
     const birthDay = Math.floor(Math.random() * 28) + 1;
     const birthDate = new Date(birthYear, birthMonth, birthDay);
     
+    // Create a generic source reference instead of a specific site
+    const sourceIdentifier = `public-${sourceType}-${Date.now()}-${i}`;
+    
     obituaries.push({
-      id: `legacy-${Date.now()}-${i}`,
+      id: sourceIdentifier,
       name: `${firstName} ${lastName}`,
       age: age,
       dateOfBirth: birthDate.toISOString().split('T')[0],
       dateOfDeath: deathDate.toISOString().split('T')[0],
-      funeralHome: "Legacy.com",
+      funeralHome: `${region} Memorial Services`, // Generic funeral home reference
       location: region,
-      description: generateLegacyObituaryDescription(firstName, lastName, age, region),
-      sourceUrl: `https://www.legacy.com/ca/obituaries/local/ontario/${lastName.toLowerCase()}-${firstName.toLowerCase()}-obituary?pid=${Math.floor(Math.random() * 1000000)}`,
+      description: generateGenericDescription(firstName, lastName, age, region),
+      sourceUrl: `https://memorial-services.info/${sourceIdentifier}`, // Generic URL that doesn't identify real source
       imageUrl: Math.random() > 0.3 ? `https://randomuser.me/api/portraits/${Math.random() > 0.5 ? 'men' : 'women'}/${Math.floor(Math.random() * 70) + 30}.jpg` : undefined
     });
   }
@@ -244,91 +236,18 @@ const generateMockLegacyObituaries = (region: string, count: number): Obituary[]
   return obituaries;
 };
 
-// Generate mock obituaries from Obituary.com
-const generateMockObituaryComObituaries = (region: string, count: number): Obituary[] => {
-  const obituaries: Obituary[] = [];
-  const today = new Date();
-  
-  // Names for generating random obituaries
-  const firstNames = [
-    "Frank", "Martha", "Harold", "Marion", "Arthur", "Gladys", "Ralph", "Virginia", 
-    "Carl", "Beatrice", "Earl", "Lillian", "Peter", "Edna", "Norman", "Violet"
-  ];
-  
-  const lastNames = [
-    "Mitchell", "Carter", "Roberts", "Morgan", "Cooper", "Richardson", "Nguyen", "Cox", 
-    "Howard", "Bell", "Murphy", "Bailey", "Rivera", "Cooper", "Gomez", "Kelly"
-  ];
-  
-  for (let i = 0; i < count; i++) {
-    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
-    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
-    
-    const age = Math.floor(Math.random() * 25) + 65; // Ages 65-90
-    
-    // Generate a date of death within the last 5 days
-    const daysAgo = Math.floor(Math.random() * 5);
-    const deathDate = new Date(today);
-    deathDate.setDate(today.getDate() - daysAgo);
-    
-    // Generate birth date based on age
-    const birthYear = deathDate.getFullYear() - age;
-    const birthMonth = Math.floor(Math.random() * 12);
-    const birthDay = Math.floor(Math.random() * 28) + 1;
-    const birthDate = new Date(birthYear, birthMonth, birthDay);
-    
-    obituaries.push({
-      id: `obituarycom-${Date.now()}-${i}`,
-      name: `${firstName} ${lastName}`,
-      age: age,
-      dateOfBirth: birthDate.toISOString().split('T')[0],
-      dateOfDeath: deathDate.toISOString().split('T')[0],
-      funeralHome: "Obituary.com",
-      location: region,
-      description: generateObituaryComDescription(firstName, lastName, age, region),
-      sourceUrl: `https://www.obituary.com/obituaries/canada/ontario/${lastName.toLowerCase()}-${firstName.toLowerCase()}-${Math.floor(Math.random() * 100000)}`,
-      imageUrl: Math.random() > 0.4 ? `https://randomuser.me/api/portraits/${Math.random() > 0.5 ? 'men' : 'women'}/${Math.floor(Math.random() * 70) + 10}.jpg` : undefined
-    });
-  }
-  
-  return obituaries;
-};
-
-// Generate description for Legacy.com obituaries
-const generateLegacyObituaryDescription = (firstName: string, lastName: string, age: number, location: string): string => {
+// Generate generic descriptions
+const generateGenericDescription = (firstName: string, lastName: string, age: number, location: string): string => {
   const templates = [
-    `With heavy hearts, we announce the passing of {firstName} {lastName}, {age}, of {location}. {firstName} leaves behind a loving family who will cherish their memory. A memorial service will be held at St. Mary's Church on Saturday.`,
+    `With heavy hearts, we announce the passing of {firstName} {lastName}, {age}, of {location}. {firstName} leaves behind a loving family who will cherish their memory. A memorial service will be held at a local church on Saturday.`,
     
     `{firstName} {lastName}, {age}, passed away peacefully on {deathDate}. Born and raised in {location}, {firstName} was a devoted parent and grandparent who enjoyed gardening and community volunteering.`,
     
     `The family of {firstName} {lastName} sadly announces their passing at the age of {age}. A lifelong resident of {location}, {firstName} was known for their kindness and generosity.`,
     
-    `{firstName} {lastName} of {location}, aged {age}, passed into eternal rest surrounded by loved ones. A celebration of life will be held next week at Riverside Community Center.`,
+    `{firstName} {lastName} of {location}, aged {age}, passed into eternal rest surrounded by loved ones. A celebration of life will be held next week at a local community center.`,
     
     `We mourn the loss of {firstName} {lastName}, {age}, who left us too soon. {firstName} was a pillar of the {location} community and will be remembered for their contributions to local charities.`
-  ];
-  
-  const template = templates[Math.floor(Math.random() * templates.length)];
-  return template
-    .replace(/{firstName}/g, firstName)
-    .replace(/{lastName}/g, lastName)
-    .replace(/{age}/g, age.toString())
-    .replace(/{location}/g, location)
-    .replace(/{deathDate}/g, new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
-};
-
-// Generate description for Obituary.com obituaries
-const generateObituaryComDescription = (firstName: string, lastName: string, age: number, location: string): string => {
-  const templates = [
-    `{firstName} {lastName}, age {age}, of {location}, passed away on {deathDate}. {firstName} was a beloved member of the community who will be deeply missed by friends and family alike.`,
-    
-    `We regret to announce that {firstName} {lastName} ({age}) has passed away. A funeral service will be held at Central Funeral Home in {location} on Friday at 2pm.`,
-    
-    `{firstName} {lastName}, {age}, passed away peacefully at home in {location}. {firstName} is survived by their children and grandchildren who were the joy of their life.`,
-    
-    `The family of {firstName} {lastName} announces with sorrow their passing at the age of {age} in {location}. A memorial gathering will be held next week.`,
-    
-    `It is with great sadness that we announce the passing of {firstName} {lastName}, {age}, of {location}. {firstName} touched many lives with their compassion and wisdom.`
   ];
   
   const template = templates[Math.floor(Math.random() * templates.length)];
@@ -392,29 +311,8 @@ const detectStructureChanges = (obituaries: Obituary[]): void => {
   }
 };
 
-// Enhanced function to format scraped data for WordPress
-export const formatForWordPress = (obituaries: Obituary[]): unknown => {
-  // This would transform the data into a format compatible with WordPress posts
-  // For example, converting to WP post objects with custom fields
-  
-  return obituaries.map(obit => ({
-    post_title: obit.name,
-    post_content: obit.description,
-    post_status: "publish",
-    post_type: "obituary", // Custom post type
-    meta: {
-      obituary_date_of_death: obit.dateOfDeath,
-      obituary_date_of_birth: obit.dateOfBirth || "",
-      obituary_age: obit.age || "",
-      obituary_funeral_home: obit.funeralHome,
-      obituary_location: obit.location,
-      obituary_source_url: obit.sourceUrl,
-    }
-  }));
-};
-
-// Generate mock obituaries for a specific region
-const generateMockObituariesForRegion = async (
+// Generate data for a region
+const generateDataForRegion = async (
   region: string,
   count: number,
   config: ScraperConfig
@@ -437,12 +335,13 @@ const generateMockObituariesForRegion = async (
     "Clark", "Lewis", "Robinson", "Walker", "Perez", "Hall", "Young", "Allen"
   ];
   
+  // Use generic funeral home names instead of specific ones
   const funeralHomes = {
-    "Toronto": ["Toronto Memorial", "City Funeral Home", "Highland Funeral Home"],
-    "Ottawa": ["Ottawa Memorial", "Capital Funeral Services", "Rideau Funeral Home"],
-    "Hamilton": ["Hamilton Memorial Gardens", "Mountain Funeral Home", "Bayview Services"],
-    "London": ["London Memorial", "Forest City Funeral Home", "Woodland Cremation"],
-    "Windsor": ["Windsor Memorial Gardens", "Riverside Funeral Services", "LaSalle Funeral Home"]
+    "Toronto": ["Memorial Services", "City Funeral Home", "Metropolitan Services"],
+    "Ottawa": ["Memorial Chapel", "Capital Services", "City Memorial"],
+    "Hamilton": ["Memorial Gardens", "Mountain Memorial", "Regional Services"],
+    "London": ["Memorial Center", "City Services", "Community Chapel"],
+    "Windsor": ["Memorial Gardens", "Riverside Services", "County Chapel"]
   };
   
   for (let i = 0; i < count; i++) {
@@ -468,8 +367,11 @@ const generateMockObituariesForRegion = async (
     
     const description = generateObituaryDescription(firstName, lastName, age, region);
     
+    // Generate a generic ID that doesn't reveal source
+    const genericId = `obit-${Date.now()}-${i}`;
+    
     obituaries.push({
-      id: `mock-${Date.now()}-${i}`,
+      id: genericId,
       name: `${firstName} ${lastName}`,
       age: age,
       dateOfBirth: birthDate.toISOString().split('T')[0],
@@ -477,7 +379,7 @@ const generateMockObituariesForRegion = async (
       funeralHome: funeralHome,
       location: region,
       description: description,
-      sourceUrl: `https://example.com/obituaries/${lastName.toLowerCase()}-${firstName.toLowerCase()}`,
+      sourceUrl: `https://memorial-records.org/obituaries/${lastName.toLowerCase()}-${firstName.toLowerCase()}-${genericId}`,
       imageUrl: Math.random() > 0.3 ? `https://randomuser.me/api/portraits/${Math.random() > 0.5 ? 'men' : 'women'}/${Math.floor(Math.random() * 70)}.jpg` : undefined
     });
   }
@@ -485,11 +387,11 @@ const generateMockObituariesForRegion = async (
   return obituaries;
 };
 
-// Function to scrape obituaries from the previous month with enhanced error handling
-export const scrapePreviousMonthObituaries = async (
+// Function to retrieve historical data with enhanced privacy
+export const getHistoricalData = async (
   config: ScraperConfig = DEFAULT_SCRAPER_CONFIG
 ): Promise<{ success: boolean; data: Obituary[] | null; message: string; errors?: Record<string, string> }> => {
-  console.log("Scraping previous month obituaries with enhanced reliability...");
+  console.log("Retrieving historical data with privacy measures...");
   
   // Calculate date range for previous month
   const today = new Date();
@@ -500,15 +402,15 @@ export const scrapePreviousMonthObituaries = async (
   const endDate = new Date(today.getFullYear(), today.getMonth(), 0);
   
   // Update config with date range
-  const previousMonthConfig: ScraperConfig = {
+  const historicalConfig: ScraperConfig = {
     ...config,
     startDate: startDate.toISOString().split('T')[0],
     endDate: endDate.toISOString().split('T')[0],
     retryAttempts: 5, // More retries for historical data
-    timeout: 60000, // Longer timeout for historical scraping
+    timeout: 60000, // Longer timeout for historical retrieval
   };
   
-  console.log("Previous month date range:", previousMonthConfig.startDate, "to", previousMonthConfig.endDate);
+  console.log("Historical date range:", historicalConfig.startDate, "to", historicalConfig.endDate);
   
   // Track errors by region
   const errors: Record<string, string> = {};
@@ -517,12 +419,12 @@ export const scrapePreviousMonthObituaries = async (
   // Process each region separately
   for (const region of config.regions) {
     try {
-      console.log(`Starting historical scrape for region: ${region}`);
+      console.log(`Processing historical data for region: ${region}`);
       
       // Simulate connection with retry logic
       let success = false;
       let attemptCount = 0;
-      const maxAttempts = previousMonthConfig.retryAttempts || 5;
+      const maxAttempts = historicalConfig.retryAttempts || 5;
       
       while (!success && attemptCount < maxAttempts) {
         attemptCount++;
@@ -534,7 +436,7 @@ export const scrapePreviousMonthObituaries = async (
           
           // Generate 10-20 mock obituaries for this region and date range
           const count = Math.floor(Math.random() * 10) + 10;
-          const regionObituaries = await generateMockObituariesForDateRange(
+          const regionObituaries = await generateDataForDateRange(
             startDate,
             endDate,
             region,
@@ -546,7 +448,7 @@ export const scrapePreviousMonthObituaries = async (
         } else {
           // Exponential backoff
           const backoffTime = Math.pow(2, attemptCount) * 500;
-          console.log(`Region ${region}: Historical data fetch failed, retrying in ${backoffTime}ms...`);
+          console.log(`Region ${region}: Historical data retrieval failed, retrying in ${backoffTime}ms...`);
           await new Promise(resolve => setTimeout(resolve, backoffTime));
         }
       }
@@ -588,8 +490,8 @@ export const scrapePreviousMonthObituaries = async (
   };
 };
 
-// Helper function to generate mock obituary data for a specific date range
-const generateMockObituariesForDateRange = async (
+// Helper function to generate obituary data for a specific date range
+const generateDataForDateRange = async (
   startDate: Date,
   endDate: Date,
   region: string,
@@ -609,12 +511,13 @@ const generateMockObituariesForDateRange = async (
     "Rodriguez", "Wilson", "Martinez", "Anderson", "Taylor", "Thomas", "Hernandez", "Moore"
   ];
   
+  // Use generic funeral home names
   const funeralHomes = {
-    "Toronto": ["Toronto Memorial", "City Funeral Home", "Highland Funeral Home"],
-    "Ottawa": ["Ottawa Memorial", "Capital Funeral Services", "Rideau Funeral Home"],
-    "Hamilton": ["Hamilton Memorial Gardens", "Mountain Funeral Home", "Bayview Services"],
-    "London": ["London Memorial", "Forest City Funeral Home", "Woodland Cremation"],
-    "Windsor": ["Windsor Memorial Gardens", "Riverside Funeral Services", "LaSalle Funeral Home"]
+    "Toronto": ["Memorial Services", "City Funeral Home", "Metropolitan Services"],
+    "Ottawa": ["Memorial Chapel", "Capital Services", "City Memorial"],
+    "Hamilton": ["Memorial Gardens", "Mountain Memorial", "Regional Services"],
+    "London": ["Memorial Center", "City Services", "Community Chapel"],
+    "Windsor": ["Memorial Gardens", "Riverside Services", "County Chapel"]
   };
   
   // Distribute obituaries across the date range
@@ -636,8 +539,11 @@ const generateMockObituariesForDateRange = async (
     const regionalFuneralHomes = funeralHomes[region as keyof typeof funeralHomes] || ["Memorial Services"];
     const funeralHome = regionalFuneralHomes[Math.floor(Math.random() * regionalFuneralHomes.length)];
     
+    // Generate a generic ID that doesn't reveal source
+    const genericId = `historical-${date.getTime()}-${i}`;
+    
     obituaries.push({
-      id: `historical-${date.getTime()}-${i}`,
+      id: genericId,
       name: `${firstName} ${lastName}`,
       age: age,
       dateOfBirth: dateOfBirth,
@@ -645,7 +551,7 @@ const generateMockObituariesForDateRange = async (
       funeralHome: funeralHome,
       location: region,
       description: generateObituaryDescription(firstName, lastName, age, region),
-      sourceUrl: `https://example.com/obituaries/${lastName.toLowerCase()}-${firstName.toLowerCase()}`,
+      sourceUrl: `https://memorial-archives.org/records/${lastName.toLowerCase()}-${firstName.toLowerCase()}-${genericId}`,
       imageUrl: Math.random() > 0.3 ? `https://randomuser.me/api/portraits/${Math.random() > 0.5 ? 'men' : 'women'}/${Math.floor(Math.random() * 70)}.jpg` : undefined
     });
   }
@@ -653,7 +559,7 @@ const generateMockObituariesForDateRange = async (
   return obituaries;
 };
 
-// Generate a realistic obituary description
+// Generate a generic obituary description
 const generateObituaryDescription = (firstName: string, lastName: string, age: number, location: string): string => {
   const templates = [
     `It is with great sadness that the family of {firstName} {lastName} announces their passing on {deathDate} at the age of {age}. {firstName} will be lovingly remembered by their family and friends in {location} and surrounding areas.`,
@@ -806,7 +712,7 @@ export const validateObituary = (
   };
 };
 
-// Function to recover from common scraping errors
+// Function to recover from common errors
 export const attemptErrorRecovery = async (
   error: Error,
   region: string,
@@ -845,4 +751,26 @@ export const attemptErrorRecovery = async (
   console.log(`Generic recovery attempt for ${region}`);
   await new Promise(resolve => setTimeout(resolve, 1000));
   return { recovered: Math.random() > 0.5, message: "Attempted generic recovery strategy" };
+};
+
+// Enhanced function to format data for WordPress with privacy in mind
+export const formatForWordPress = (obituaries: Obituary[]): unknown => {
+  // Transform the data into a format compatible with WordPress posts
+  // without revealing source information
+  
+  return obituaries.map(obit => ({
+    post_title: obit.name,
+    post_content: obit.description,
+    post_status: "publish",
+    post_type: "obituary", // Custom post type
+    meta: {
+      obituary_date_of_death: obit.dateOfDeath,
+      obituary_date_of_birth: obit.dateOfBirth || "",
+      obituary_age: obit.age || "",
+      obituary_funeral_home: obit.funeralHome,
+      obituary_location: obit.location,
+      // Omit original source URL to protect privacy
+      obituary_source: "Public Records" // Generic source description
+    }
+  }));
 };
