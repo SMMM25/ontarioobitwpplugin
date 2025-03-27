@@ -1,3 +1,4 @@
+
 <?php
 /**
  * Plugin Name: Ontario Obituaries
@@ -89,6 +90,12 @@ function ontario_obituaries_activate() {
         wp_schedule_event(time(), 'twicedaily', 'ontario_obituaries_scrape_event');
     }
     
+    // Run an initial scrape to populate data immediately
+    if (class_exists('Ontario_Obituaries_Scraper')) {
+        $scraper = new Ontario_Obituaries_Scraper();
+        $scraper->run_now();
+    }
+    
     // Force-flush rewrite rules
     flush_rewrite_rules();
 }
@@ -146,6 +153,7 @@ function ontario_obituaries_admin_notices() {
         ?>
         <div class="notice notice-success is-dismissible">
             <p><?php _e('Ontario Obituaries plugin has been activated successfully!', 'ontario-obituaries'); ?></p>
+            <p><?php _e('An initial scrape has been triggered to populate obituaries data.', 'ontario-obituaries'); ?></p>
         </div>
         <?php
         delete_transient('ontario_obituaries_activation_notice');
@@ -156,6 +164,16 @@ function ontario_obituaries_admin_notices() {
         ?>
         <div class="notice notice-warning is-dismissible">
             <p><?php _e('Ontario Obituaries plugin works best with Obituary Assistant plugin. Please install and activate it for full functionality.', 'ontario-obituaries'); ?></p>
+        </div>
+        <?php
+    }
+    
+    // Check for failed scrapes
+    $last_scrape = get_option('ontario_obituaries_last_scrape');
+    if ($last_scrape && isset($last_scrape['results']) && !empty($last_scrape['results']['errors'])) {
+        ?>
+        <div class="notice notice-warning is-dismissible">
+            <p><?php _e('Ontario Obituaries encountered some issues during the last scrape. Check the logs for details.', 'ontario-obituaries'); ?></p>
         </div>
         <?php
     }
@@ -205,3 +223,84 @@ function ontario_obituaries_get_data_for_assistant() {
     $display = new Ontario_Obituaries_Display();
     return $display->get_obituaries(array('limit' => 50));
 }
+
+/**
+ * Add a new menu item in the WP Admin
+ */
+function ontario_obituaries_add_admin_menu() {
+    add_management_page(
+        __('Run Ontario Obituaries Scraper', 'ontario-obituaries'),
+        __('Run Obituaries Scraper', 'ontario-obituaries'),
+        'manage_options',
+        'run-ontario-scraper',
+        'ontario_obituaries_render_scraper_page'
+    );
+}
+add_action('admin_menu', 'ontario_obituaries_add_admin_menu');
+
+/**
+ * Render the manual scrape page
+ */
+function ontario_obituaries_render_scraper_page() {
+    ?>
+    <div class="wrap">
+        <h1><?php _e('Run Ontario Obituaries Scraper', 'ontario-obituaries'); ?></h1>
+        <p><?php _e('Click the button below to manually run the obituaries scraper right now.', 'ontario-obituaries'); ?></p>
+        
+        <form method="post" action="">
+            <?php wp_nonce_field('run_ontario_scraper', 'ontario_scraper_nonce'); ?>
+            <input type="submit" name="run_scraper" class="button button-primary" value="<?php _e('Run Scraper Now', 'ontario-obituaries'); ?>">
+        </form>
+        
+        <?php
+        // Handle the form submission
+        if (isset($_POST['run_scraper']) && check_admin_referer('run_ontario_scraper', 'ontario_scraper_nonce')) {
+            // Load the scraper class if not already loaded
+            if (!class_exists('Ontario_Obituaries_Scraper')) {
+                require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
+            }
+            
+            // Initialize and run the scraper
+            $scraper = new Ontario_Obituaries_Scraper();
+            $results = $scraper->run_now();
+            
+            // Display the results
+            echo '<h2>' . __('Scrape Results', 'ontario-obituaries') . '</h2>';
+            echo '<div class="notice notice-success inline"><p>' . sprintf(__('Scrape completed. Found %d obituaries, added %d new entries.', 'ontario-obituaries'), $results['obituaries_found'], $results['obituaries_added']) . '</p></div>';
+            
+            // Display any errors
+            if (!empty($results['errors'])) {
+                echo '<h3>' . __('Errors', 'ontario-obituaries') . '</h3>';
+                echo '<div class="notice notice-warning inline"><ul>';
+                foreach ($results['errors'] as $source_id => $errors) {
+                    $error_messages = is_array($errors) ? implode(', ', $errors) : $errors;
+                    echo '<li><strong>' . esc_html($source_id) . ':</strong> ' . esc_html($error_messages) . '</li>';
+                }
+                echo '</ul></div>';
+            }
+            
+            // Display scraping details for each source
+            echo '<h3>' . __('Sources Details', 'ontario-obituaries') . '</h3>';
+            echo '<table class="widefat striped">';
+            echo '<thead><tr><th>' . __('Source', 'ontario-obituaries') . '</th><th>' . __('Found', 'ontario-obituaries') . '</th><th>' . __('Added', 'ontario-obituaries') . '</th></tr></thead>';
+            echo '<tbody>';
+            
+            if (!empty($results['sources'])) {
+                foreach ($results['sources'] as $source_id => $source_results) {
+                    echo '<tr>';
+                    echo '<td>' . esc_html($source_id) . '</td>';
+                    echo '<td>' . intval($source_results['found']) . '</td>';
+                    echo '<td>' . intval($source_results['added']) . '</td>';
+                    echo '</tr>';
+                }
+            } else {
+                echo '<tr><td colspan="3">' . __('No source details available', 'ontario-obituaries') . '</td></tr>';
+            }
+            
+            echo '</tbody></table>';
+        }
+        ?>
+    </div>
+    <?php
+}
+
