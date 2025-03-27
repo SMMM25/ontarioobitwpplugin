@@ -54,11 +54,18 @@ if (!defined('ABSPATH')) {
     </div>
     
     <div class="ontario-obituary-detail-footer">
-        <?php if (!empty($obituary->source_url)): ?>
-            <a href="<?php echo esc_url($obituary->source_url); ?>" target="_blank" rel="noopener noreferrer" class="ontario-obituary-detail-source-link">
-                <?php _e('View Original Obituary', 'ontario-obituaries'); ?>
-            </a>
-        <?php endif; ?>
+        <div class="ontario-obituary-detail-actions">
+            <?php if (!empty($obituary->source_url)): ?>
+                <a href="<?php echo esc_url($obituary->source_url); ?>" target="_blank" rel="noopener noreferrer" class="ontario-obituary-detail-source-link">
+                    <?php _e('View Original Obituary', 'ontario-obituaries'); ?>
+                </a>
+            <?php endif; ?>
+            
+            <!-- Print button -->
+            <button class="ontario-obituary-print-button" onclick="window.print();">
+                <span class="dashicons dashicons-printer"></span> <?php _e('Print Obituary', 'ontario-obituaries'); ?>
+            </button>
+        </div>
 
         <!-- Integration with Obituary Assistant if available -->
         <?php if (function_exists('ontario_obituaries_check_dependency') && ontario_obituaries_check_dependency()): ?>
