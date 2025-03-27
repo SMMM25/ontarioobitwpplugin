@@ -13,9 +13,6 @@ class Ontario_Obituaries_Display {
      * @return string The rendered HTML
      */
     public function render_obituaries($atts) {
-        // Debug log
-        error_log('Ontario Obituaries: Starting to render obituaries with attributes: ' . print_r($atts, true));
-        
         // Parse attributes
         $atts = shortcode_atts(array(
             'limit' => 20,
@@ -30,21 +27,53 @@ class Ontario_Obituaries_Display {
         try {
             // Include the template
             if (file_exists(ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php')) {
-                include_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php';
-                error_log('Ontario Obituaries: Template included successfully');
+                // Get the obituaries data first
+                $args = array(
+                    'limit' => intval($atts['limit']),
+                    'location' => $atts['location'],
+                    'funeral_home' => $atts['funeral_home'],
+                    'days' => intval($atts['days']),
+                );
+                
+                // Get search and pagination values from request
+                $search = isset($_GET['ontario_obituaries_search']) ? sanitize_text_field($_GET['ontario_obituaries_search']) : '';
+                $page = isset($_GET['ontario_obituaries_page']) ? max(1, intval($_GET['ontario_obituaries_page'])) : 1;
+                
+                // Add to args
+                $args['search'] = $search;
+                $args['offset'] = (intval($atts['limit']) * ($page - 1));
+                
+                // Get obituaries
+                $obituaries = $this->get_obituaries($args);
+                
+                // Get total count for pagination
+                $total = $this->count_obituaries(array(
+                    'location' => $atts['location'],
+                    'funeral_home' => $atts['funeral_home'],
+                    'days' => intval($atts['days']),
+                    'search' => $search
+                ));
+                
+                // Calculate pagination
+                $total_pages = ceil($total / intval($atts['limit']));
+                
+                // Get locations for filter
+                $locations = $this->get_locations();
+                
+                // Get funeral homes for filter
+                $funeral_homes = $this->get_funeral_homes();
+                
+                // Include the template with data available
+                include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php';
             } else {
-                error_log('Ontario Obituaries: Template file not found at: ' . ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php');
-                echo '<p>Error: Obituary template not found.</p>';
+                echo '<p>' . __('Error: Obituary template not found.', 'ontario-obituaries') . '</p>';
             }
         } catch (Exception $e) {
-            error_log('Ontario Obituaries: Error including template: ' . $e->getMessage());
-            echo '<p>Error rendering obituaries: ' . esc_html($e->getMessage()) . '</p>';
+            echo '<p>' . __('Error rendering obituaries:', 'ontario-obituaries') . ' ' . esc_html($e->getMessage()) . '</p>';
         }
         
         // Return the buffered content
-        $content = ob_get_clean();
-        error_log('Ontario Obituaries: Rendering complete, content length: ' . strlen($content));
-        return $content;
+        return ob_get_clean();
     }
     
     /**
@@ -57,14 +86,10 @@ class Ontario_Obituaries_Display {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ontario_obituaries';
         
-        // Debug log
-        error_log('Ontario Obituaries: Getting obituaries with args: ' . print_r($args, true));
-        
         try {
             // Check if table exists
             $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
             if (!$table_exists) {
-                error_log("Ontario Obituaries: Table $table_name does not exist");
                 return array(); // Return empty array if table doesn't exist
             }
             
@@ -84,59 +109,69 @@ class Ontario_Obituaries_Display {
             $args = wp_parse_args($args, $defaults);
             
             // Build query
-            $where = '1=1';
+            $where_clauses = array('1=1');
             $values = array();
             
             // Location filter
             if (!empty($args['location'])) {
-                $where .= ' AND location = %s';
+                $where_clauses[] = 'location = %s';
                 $values[] = $args['location'];
             }
             
             // Funeral home filter
             if (!empty($args['funeral_home'])) {
-                $where .= ' AND funeral_home = %s';
+                $where_clauses[] = 'funeral_home = %s';
                 $values[] = $args['funeral_home'];
             }
             
             // Days filter
             if (!empty($args['days']) && is_numeric($args['days'])) {
-                $where .= ' AND date_of_death >= DATE_SUB(CURDATE(), INTERVAL %d DAY)';
+                $where_clauses[] = 'date_of_death >= DATE_SUB(CURDATE(), INTERVAL %d DAY)';
                 $values[] = intval($args['days']);
             }
             
             // Search filter
             if (!empty($args['search'])) {
-                $where .= ' AND (name LIKE %s OR description LIKE %s)';
-                $values[] = '%' . $wpdb->esc_like($args['search']) . '%';
-                $values[] = '%' . $wpdb->esc_like($args['search']) . '%';
+                $where_clauses[] = '(name LIKE %s OR description LIKE %s)';
+                $search_term = '%' . $wpdb->esc_like($args['search']) . '%';
+                $values[] = $search_term;
+                $values[] = $search_term;
             }
             
-            // Orderby
+            // Join where clauses
+            $where = implode(' AND ', $where_clauses);
+            
+            // Orderby - sanitize to prevent SQL injection
             $allowed_orderby = array('date_of_death', 'name', 'location', 'funeral_home');
             $orderby = in_array($args['orderby'], $allowed_orderby) ? $args['orderby'] : 'date_of_death';
             
-            // Order
+            // Order - sanitize to prevent SQL injection
             $order = $args['order'] === 'ASC' ? 'ASC' : 'DESC';
             
             // Prepare the query with limit and offset
-            $query = "SELECT * FROM $table_name WHERE $where ORDER BY $orderby $order LIMIT %d OFFSET %d";
-            $values[] = intval($args['limit']);
-            $values[] = intval($args['offset']);
+            $limit = intval($args['limit']);
+            $offset = intval($args['offset']);
+            
+            $query = "SELECT * FROM $table_name WHERE $where ORDER BY $orderby $order";
+            
+            // Add limit and offset
+            if ($limit > 0) {
+                $query .= " LIMIT %d";
+                $values[] = $limit;
+                
+                if ($offset > 0) {
+                    $query .= " OFFSET %d";
+                    $values[] = $offset;
+                }
+            }
             
             // Get the obituaries
             $prepared_query = $wpdb->prepare($query, $values);
-            error_log('Ontario Obituaries: Executing query: ' . $prepared_query);
-            
             $results = $wpdb->get_results($prepared_query);
             
-            if ($wpdb->last_error) {
-                error_log('Ontario Obituaries: Database error: ' . $wpdb->last_error);
-            }
-            
-            error_log('Ontario Obituaries: Found ' . count($results) . ' obituaries');
             return $results ?: array();
         } catch (Exception $e) {
+            // Log the error but don't expose it
             error_log('Ontario Obituaries: Error getting obituaries: ' . $e->getMessage());
             return array();
         }
@@ -156,18 +191,20 @@ class Ontario_Obituaries_Display {
             // Check if table exists
             $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
             if (!$table_exists) {
-                error_log("Ontario Obituaries: Table $table_name does not exist");
                 return null;
             }
             
+            // Validate ID
+            $id = intval($id);
+            if ($id <= 0) {
+                return null;
+            }
+            
+            // Get the obituary
             $result = $wpdb->get_row($wpdb->prepare(
                 "SELECT * FROM $table_name WHERE id = %d",
                 $id
             ));
-            
-            if ($wpdb->last_error) {
-                error_log('Ontario Obituaries: Database error: ' . $wpdb->last_error);
-            }
             
             return $result;
         } catch (Exception $e) {
@@ -189,17 +226,12 @@ class Ontario_Obituaries_Display {
             // Check if table exists
             $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
             if (!$table_exists) {
-                error_log("Ontario Obituaries: Table $table_name does not exist");
                 return array();
             }
             
             $locations = $wpdb->get_col(
-                "SELECT DISTINCT location FROM $table_name ORDER BY location"
+                "SELECT DISTINCT location FROM $table_name WHERE location != '' ORDER BY location"
             );
-            
-            if ($wpdb->last_error) {
-                error_log('Ontario Obituaries: Database error: ' . $wpdb->last_error);
-            }
             
             return $locations ?: array();
         } catch (Exception $e) {
@@ -221,17 +253,12 @@ class Ontario_Obituaries_Display {
             // Check if table exists
             $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
             if (!$table_exists) {
-                error_log("Ontario Obituaries: Table $table_name does not exist");
                 return array();
             }
             
             $funeral_homes = $wpdb->get_col(
-                "SELECT DISTINCT funeral_home FROM $table_name ORDER BY funeral_home"
+                "SELECT DISTINCT funeral_home FROM $table_name WHERE funeral_home != '' ORDER BY funeral_home"
             );
-            
-            if ($wpdb->last_error) {
-                error_log('Ontario Obituaries: Database error: ' . $wpdb->last_error);
-            }
             
             return $funeral_homes ?: array();
         } catch (Exception $e) {
@@ -254,7 +281,6 @@ class Ontario_Obituaries_Display {
             // Check if table exists
             $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
             if (!$table_exists) {
-                error_log("Ontario Obituaries: Table $table_name does not exist");
                 return 0;
             }
             
@@ -270,33 +296,37 @@ class Ontario_Obituaries_Display {
             $args = wp_parse_args($args, $defaults);
             
             // Build query
-            $where = '1=1';
+            $where_clauses = array('1=1');
             $values = array();
             
             // Location filter
             if (!empty($args['location'])) {
-                $where .= ' AND location = %s';
+                $where_clauses[] = 'location = %s';
                 $values[] = $args['location'];
             }
             
             // Funeral home filter
             if (!empty($args['funeral_home'])) {
-                $where .= ' AND funeral_home = %s';
+                $where_clauses[] = 'funeral_home = %s';
                 $values[] = $args['funeral_home'];
             }
             
             // Days filter
             if (!empty($args['days']) && is_numeric($args['days'])) {
-                $where .= ' AND date_of_death >= DATE_SUB(CURDATE(), INTERVAL %d DAY)';
+                $where_clauses[] = 'date_of_death >= DATE_SUB(CURDATE(), INTERVAL %d DAY)';
                 $values[] = intval($args['days']);
             }
             
             // Search filter
             if (!empty($args['search'])) {
-                $where .= ' AND (name LIKE %s OR description LIKE %s)';
-                $values[] = '%' . $wpdb->esc_like($args['search']) . '%';
-                $values[] = '%' . $wpdb->esc_like($args['search']) . '%';
+                $where_clauses[] = '(name LIKE %s OR description LIKE %s)';
+                $search_term = '%' . $wpdb->esc_like($args['search']) . '%';
+                $values[] = $search_term;
+                $values[] = $search_term;
             }
+            
+            // Join where clauses
+            $where = implode(' AND ', $where_clauses);
             
             // Prepare the query
             $query = "SELECT COUNT(*) FROM $table_name WHERE $where";
@@ -305,12 +335,7 @@ class Ontario_Obituaries_Display {
             $prepared_query = $wpdb->prepare($query, $values);
             $count = $wpdb->get_var($prepared_query);
             
-            if ($wpdb->last_error) {
-                error_log('Ontario Obituaries: Database error: ' . $wpdb->last_error);
-                return 0;
-            }
-            
-            return (int)$count;
+            return intval($count);
         } catch (Exception $e) {
             error_log('Ontario Obituaries: Error counting obituaries: ' . $e->getMessage());
             return 0;

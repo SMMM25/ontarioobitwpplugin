@@ -16,6 +16,12 @@ class Ontario_Obituaries_Ajax {
         
         // Add Admin AJAX actions
         add_action('wp_ajax_ontario_obituaries_delete', array($this, 'delete_obituary'));
+        
+        // Integration with Obituary Assistant
+        if (function_exists('ontario_obituaries_check_dependency') && ontario_obituaries_check_dependency()) {
+            add_action('wp_ajax_obituary_assistant_get_ontario', array($this, 'get_obituaries_for_assistant'));
+            add_action('wp_ajax_nopriv_obituary_assistant_get_ontario', array($this, 'get_obituaries_for_assistant'));
+        }
     }
     
     /**
@@ -23,9 +29,7 @@ class Ontario_Obituaries_Ajax {
      */
     public function get_obituary_detail() {
         // Check nonce
-        if (!isset($_GET['nonce']) || !wp_verify_nonce($_GET['nonce'], 'ontario-obituaries-nonce')) {
-            wp_send_json_error(array('message' => __('Security check failed.', 'ontario-obituaries')));
-        }
+        check_ajax_referer('ontario-obituaries-nonce', 'nonce');
         
         // Check obituary ID
         if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
@@ -53,7 +57,8 @@ class Ontario_Obituaries_Ajax {
         
         // Send the response
         wp_send_json_success(array(
-            'html' => $html
+            'html' => $html,
+            'obituary' => $obituary
         ));
     }
     
@@ -62,9 +67,7 @@ class Ontario_Obituaries_Ajax {
      */
     public function delete_obituary() {
         // Check nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ontario-obituaries-admin-nonce')) {
-            wp_send_json_error(array('message' => __('Security check failed.', 'ontario-obituaries')));
-        }
+        check_ajax_referer('ontario-obituaries-admin-nonce', 'nonce');
         
         // Check permissions
         if (!current_user_can('manage_options')) {
@@ -89,7 +92,44 @@ class Ontario_Obituaries_Ajax {
         
         // Send success response
         wp_send_json_success(array(
-            'message' => __('Obituary deleted successfully.', 'ontario-obituaries')
+            'message' => __('Obituary deleted successfully.', 'ontario-obituaries'),
+            'id' => $id
         ));
+    }
+    
+    /**
+     * Get obituaries for Obituary Assistant
+     */
+    public function get_obituaries_for_assistant() {
+        // Check if the request is from Obituary Assistant
+        if (!isset($_GET['source']) || $_GET['source'] !== 'obituary_assistant') {
+            wp_send_json_error(array('message' => __('Invalid request.', 'ontario-obituaries')));
+        }
+        
+        // Get the obituaries
+        $display = new Ontario_Obituaries_Display();
+        $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 50;
+        $obituaries = $display->get_obituaries(array('limit' => $limit));
+        
+        // Format the data for Obituary Assistant
+        $formatted_data = array();
+        foreach ($obituaries as $obituary) {
+            $formatted_data[] = array(
+                'id' => $obituary->id,
+                'name' => $obituary->name,
+                'date_of_birth' => $obituary->date_of_birth,
+                'date_of_death' => $obituary->date_of_death,
+                'age' => $obituary->age,
+                'location' => $obituary->location,
+                'funeral_home' => $obituary->funeral_home,
+                'image' => $obituary->image_url,
+                'description' => $obituary->description,
+                'source' => $obituary->source_url,
+                'source_name' => 'Ontario Obituaries'
+            );
+        }
+        
+        // Send the response
+        wp_send_json_success($formatted_data);
     }
 }
