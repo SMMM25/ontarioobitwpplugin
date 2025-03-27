@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Plugin Name: Ontario Obituaries
@@ -19,70 +18,128 @@ define('ONTARIO_OBITUARIES_VERSION', '1.0.0');
 define('ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+// Enable error logging
+ini_set('display_errors', 1);
+error_log('Ontario Obituaries: Plugin file loaded');
+
 // Include required files
-require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries.php';
-require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
-require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-admin.php';
-require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-display.php';
-require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-ajax.php';
-require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-debug.php';
+try {
+    error_log('Ontario Obituaries: Loading required files');
+    
+    $required_files = array(
+        'includes/class-ontario-obituaries.php',
+        'includes/class-ontario-obituaries-scraper.php',
+        'includes/class-ontario-obituaries-admin.php',
+        'includes/class-ontario-obituaries-display.php',
+        'includes/class-ontario-obituaries-ajax.php',
+        'includes/class-ontario-obituaries-debug.php'
+    );
+    
+    foreach ($required_files as $file) {
+        $file_path = ONTARIO_OBITUARIES_PLUGIN_DIR . $file;
+        if (file_exists($file_path)) {
+            require_once $file_path;
+            error_log('Ontario Obituaries: Successfully loaded ' . $file);
+        } else {
+            error_log('Ontario Obituaries: File not found - ' . $file_path);
+            throw new Exception('Required file not found: ' . $file);
+        }
+    }
+    
+    error_log('Ontario Obituaries: All required files loaded successfully');
+} catch (Exception $e) {
+    error_log('Ontario Obituaries: Error loading required files - ' . $e->getMessage());
+    
+    // Display admin notice for missing files
+    add_action('admin_notices', function() use ($e) {
+        echo '<div class="error"><p><strong>Ontario Obituaries Error:</strong> ' . esc_html($e->getMessage()) . '</p></div>';
+    });
+    return; // Stop execution if files are missing
+}
 
 // Initialize the plugin
 function ontario_obituaries_init() {
-    $plugin = new Ontario_Obituaries();
-    $plugin->run();
-    
-    // Initialize AJAX handler
-    $ajax = new Ontario_Obituaries_Ajax();
-    $ajax->init();
-    
-    // Initialize Debug handler
-    $debug = new Ontario_Obituaries_Debug();
-    $debug->init();
+    try {
+        error_log('Ontario Obituaries: Initializing plugin');
+        
+        $plugin = new Ontario_Obituaries();
+        $plugin->run();
+        
+        // Initialize AJAX handler
+        $ajax = new Ontario_Obituaries_Ajax();
+        $ajax->init();
+        
+        // Initialize Debug handler
+        $debug = new Ontario_Obituaries_Debug();
+        $debug->init();
+        
+        error_log('Ontario Obituaries: Plugin initialized successfully');
+    } catch (Exception $e) {
+        error_log('Ontario Obituaries: Error initializing plugin - ' . $e->getMessage());
+        
+        // Display admin notice for initialization errors
+        add_action('admin_notices', function() use ($e) {
+            echo '<div class="error"><p><strong>Ontario Obituaries Initialization Error:</strong> ' . esc_html($e->getMessage()) . '</p></div>';
+        });
+    }
 }
 ontario_obituaries_init();
 
 // Register activation hook
 register_activation_hook(__FILE__, 'ontario_obituaries_activate');
 function ontario_obituaries_activate() {
-    // Create database tables
-    global $wpdb;
-    $charset_collate = $wpdb->get_charset_collate();
-    $table_name = $wpdb->prefix . 'ontario_obituaries';
-    
-    $sql = "CREATE TABLE $table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        name varchar(255) NOT NULL,
-        age int(3),
-        date_of_birth date,
-        date_of_death date NOT NULL,
-        funeral_home varchar(255) NOT NULL,
-        location varchar(255) NOT NULL,
-        image_url text,
-        description longtext NOT NULL,
-        source_url text NOT NULL,
-        created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        PRIMARY KEY  (id)
-    ) $charset_collate;";
+    try {
+        error_log('Ontario Obituaries: Running activation');
+        
+        // Create database tables
+        global $wpdb;
+        $charset_collate = $wpdb->get_charset_collate();
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
+        
+        error_log('Ontario Obituaries: Creating database table ' . $table_name);
+        
+        $sql = "CREATE TABLE $table_name (
+            id mediumint(9) NOT NULL AUTO_INCREMENT,
+            name varchar(255) NOT NULL,
+            age int(3),
+            date_of_birth date,
+            date_of_death date NOT NULL,
+            funeral_home varchar(255) NOT NULL,
+            location varchar(255) NOT NULL,
+            image_url text,
+            description longtext NOT NULL,
+            source_url text NOT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id)
+        ) $charset_collate;";
 
-    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-    dbDelta($sql);
-    
-    // Schedule the daily scraper cron job
-    if (!wp_next_scheduled('ontario_obituaries_daily_scrape')) {
-        wp_schedule_event(time(), 'daily', 'ontario_obituaries_daily_scrape');
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        $result = dbDelta($sql);
+        error_log('Ontario Obituaries: Database creation result: ' . print_r($result, true));
+        
+        // Schedule the daily scraper cron job
+        if (!wp_next_scheduled('ontario_obituaries_daily_scrape')) {
+            $scheduled = wp_schedule_event(time(), 'daily', 'ontario_obituaries_daily_scrape');
+            error_log('Ontario Obituaries: Scheduling daily scrape result: ' . ($scheduled ? 'success' : 'failed'));
+        }
+        
+        // Default Facebook settings
+        add_option('ontario_obituaries_facebook_settings', array(
+            'app_id' => '',
+            'enabled' => false,
+            'group_id' => '',
+            'auto_share' => false
+        ));
+        
+        // Perform initial scrape of previous month's obituaries
+        ontario_obituaries_initial_scrape();
+        
+        error_log('Ontario Obituaries: Activation completed successfully');
+    } catch (Exception $e) {
+        error_log('Ontario Obituaries: Error during activation - ' . $e->getMessage());
+        // Store activation error for display
+        update_option('ontario_obituaries_activation_error', $e->getMessage());
     }
-    
-    // Default Facebook settings
-    add_option('ontario_obituaries_facebook_settings', array(
-        'app_id' => '',
-        'enabled' => false,
-        'group_id' => '',
-        'auto_share' => false
-    ));
-    
-    // Perform initial scrape of previous month's obituaries
-    ontario_obituaries_initial_scrape();
 }
 
 // Function to run initial scrape on activation
@@ -135,6 +192,15 @@ function ontario_obituaries_admin_notices() {
     }
 }
 add_action('admin_notices', 'ontario_obituaries_admin_notices');
+
+// Display activation errors
+add_action('admin_notices', function() {
+    $activation_error = get_option('ontario_obituaries_activation_error');
+    if ($activation_error) {
+        echo '<div class="error"><p><strong>Ontario Obituaries Activation Error:</strong> ' . esc_html($activation_error) . '</p></div>';
+        delete_option('ontario_obituaries_activation_error');
+    }
+});
 
 // Register deactivation hook
 register_deactivation_hook(__FILE__, 'ontario_obituaries_deactivate');
