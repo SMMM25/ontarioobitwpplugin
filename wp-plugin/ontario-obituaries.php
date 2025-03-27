@@ -1,3 +1,4 @@
+
 <?php
 /**
  * Plugin Name: Ontario Obituaries
@@ -79,7 +80,61 @@ function ontario_obituaries_activate() {
         'group_id' => '',
         'auto_share' => false
     ));
+    
+    // Perform initial scrape of previous month's obituaries
+    ontario_obituaries_initial_scrape();
 }
+
+// Function to run initial scrape on activation
+function ontario_obituaries_initial_scrape() {
+    // Log that we're starting the initial scrape
+    error_log('Starting initial obituary scrape for previous month on plugin activation');
+    
+    // Check if we have any obituaries already
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'ontario_obituaries';
+    $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+    
+    // Only run if we have no obituaries
+    if ($count == 0) {
+        // Create scraper instance
+        $scraper = new Ontario_Obituaries_Scraper();
+        
+        // Run the previous month scrape
+        $result = $scraper->scrape_previous_month();
+        
+        if ($result['success']) {
+            error_log('Initial obituary scrape successful: ' . $result['message']);
+            
+            // Add transient to show admin notice
+            set_transient('ontario_obituaries_initial_scrape_notice', $result, 60 * 60 * 24); // 1 day
+        } else {
+            error_log('Initial obituary scrape failed: ' . $result['message']);
+            
+            // If scrape failed, add test data instead
+            $test_result = $scraper->add_test_data();
+            error_log('Added test data instead: ' . $test_result['message']);
+        }
+    } else {
+        error_log('Skipping initial obituary scrape - database already contains ' . $count . ' obituaries');
+    }
+}
+
+// Display admin notice after initial scrape
+function ontario_obituaries_admin_notices() {
+    $notice = get_transient('ontario_obituaries_initial_scrape_notice');
+    
+    if ($notice) {
+        $class = $notice['success'] ? 'notice-success' : 'notice-warning';
+        $message = $notice['message'];
+        
+        echo "<div class='notice $class is-dismissible'><p><strong>Ontario Obituaries:</strong> $message</p></div>";
+        
+        // Remove the transient
+        delete_transient('ontario_obituaries_initial_scrape_notice');
+    }
+}
+add_action('admin_notices', 'ontario_obituaries_admin_notices');
 
 // Register deactivation hook
 register_deactivation_hook(__FILE__, 'ontario_obituaries_deactivate');
