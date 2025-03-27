@@ -16,16 +16,11 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-8">
           <div className="bg-card rounded-lg shadow-sm border border-border p-6">
             <h2 className="text-2xl font-semibold mb-3">Comprehensive Ontario Obituary Database</h2>
-            <p className="text-muted-foreground mb-2">
-              Our database is updated daily with obituaries from across Ontario, sourced from:
+            <p className="text-muted-foreground">
+              Our database is updated daily with obituaries from across Ontario. We ensure comprehensive 
+              coverage of all regions with our trusted network of sources.
             </p>
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4 ml-6 list-disc text-muted-foreground">
-              <li>Local Ontario Funeral Homes</li>
-              <li>Legacy.com - North America's largest provider of obituaries</li>
-              <li>Obituary.com - Nationwide obituary collection</li>
-              <li>Regional newspaper announcements</li>
-            </ul>
-            <p className="text-sm text-muted-foreground italic">
+            <p className="text-sm text-muted-foreground italic mt-4">
               Last updated: {new Date().toLocaleDateString()}
             </p>
           </div>
