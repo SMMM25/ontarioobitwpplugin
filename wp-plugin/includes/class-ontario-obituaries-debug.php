@@ -1,30 +1,31 @@
 
 <?php
 /**
- * Ontario Obituaries Debug
- * 
- * Adds debugging tools to the admin interface
+ * Debug functionality for Ontario Obituaries
  */
 class Ontario_Obituaries_Debug {
     /**
-     * Initialize debug tools
+     * Initialize the debug functionality
      */
     public function init() {
-        // Add debug submenu page
+        // Add debug tab to admin menu
         add_action('admin_menu', array($this, 'add_debug_menu'));
         
-        // Add AJAX handler for testing scraper sources
-        add_action('wp_ajax_ontario_obituaries_test_scraper', array($this, 'handle_test_scraper'));
+        // Register AJAX handler for testing the scraper
+        add_action('wp_ajax_ontario_obituaries_test_scraper', array($this, 'ajax_test_scraper'));
+        
+        // Add admin scripts and styles
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
     }
     
     /**
-     * Add debug menu
+     * Add debug menu item
      */
     public function add_debug_menu() {
         add_submenu_page(
             'ontario-obituaries',
-            __('Scraper Diagnostics', 'ontario-obituaries'),
-            __('Diagnostics', 'ontario-obituaries'),
+            __('Debug Tools', 'ontario-obituaries'),
+            __('Debug Tools', 'ontario-obituaries'),
             'manage_options',
             'ontario-obituaries-debug',
             array($this, 'render_debug_page')
@@ -32,65 +33,16 @@ class Ontario_Obituaries_Debug {
     }
     
     /**
-     * Render debug page
+     * Enqueue admin scripts and styles
      */
-    public function render_debug_page() {
-        if (!current_user_can('manage_options')) {
+    public function enqueue_admin_scripts($hook) {
+        // Only load on our debug page
+        if ($hook != 'obituaries_page_ontario-obituaries-debug') {
             return;
         }
         
-        ?>
-        <div class="wrap">
-            <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
-            
-            <div class="ontario-debug-container">
-                <div class="ontario-debug-card">
-                    <h2><?php _e('Scraper Diagnostics', 'ontario-obituaries'); ?></h2>
-                    <p><?php _e('Test the connection to each obituary source to identify issues.', 'ontario-obituaries'); ?></p>
-                    
-                    <div class="ontario-debug-actions">
-                        <button id="ontario-test-scraper" class="button button-primary">
-                            <?php _e('Test Scraper Sources', 'ontario-obituaries'); ?>
-                        </button>
-                    </div>
-                    
-                    <div id="ontario-debug-results" class="ontario-debug-results" style="display: none;">
-                        <h3><?php _e('Test Results', 'ontario-obituaries'); ?></h3>
-                        
-                        <div class="ontario-debug-status">
-                            <div class="ontario-debug-connections">
-                                <h4><?php _e('Successful Connections', 'ontario-obituaries'); ?></h4>
-                                <div id="ontario-success-connections" class="ontario-connection-badges"></div>
-                            </div>
-                            
-                            <div class="ontario-debug-connections">
-                                <h4><?php _e('Failed Connections', 'ontario-obituaries'); ?></h4>
-                                <div id="ontario-failed-connections" class="ontario-connection-badges"></div>
-                            </div>
-                        </div>
-                        
-                        <div class="ontario-debug-log">
-                            <h4><?php _e('Scraper Log', 'ontario-obituaries'); ?></h4>
-                            <div id="ontario-debug-log-entries" class="ontario-debug-log-container"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="ontario-debug-tips">
-                        <h3><?php _e('Troubleshooting Tips', 'ontario-obituaries'); ?></h3>
-                        <ul>
-                            <li><?php _e('Check that your website has proper permissions to connect to external sites', 'ontario-obituaries'); ?></li>
-                            <li><?php _e('Ensure your web host allows outbound connections to the funeral home websites', 'ontario-obituaries'); ?></li>
-                            <li><?php _e('Verify the scraper selectors match the current structure of the funeral home websites', 'ontario-obituaries'); ?></li>
-                            <li><?php _e('Try increasing the "max_age" setting to find older obituaries', 'ontario-obituaries'); ?></li>
-                            <li><?php _e('Check the WordPress debug log for PHP errors', 'ontario-obituaries'); ?></li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-        </div>
+        wp_enqueue_style('ontario-obituaries-admin-css');
         
-        <?php
-        // Load the debug JavaScript
         wp_enqueue_script(
             'ontario-obituaries-debug-js',
             ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-debug.js',
@@ -98,130 +50,167 @@ class Ontario_Obituaries_Debug {
             ONTARIO_OBITUARIES_VERSION,
             true
         );
-        
-        // Add inline styles
-        $this->add_debug_styles();
     }
     
     /**
-     * Add debug styles
+     * Render the debug page
      */
-    private function add_debug_styles() {
+    public function render_debug_page() {
         ?>
+        <div class="wrap">
+            <h1><?php _e('Ontario Obituaries Debug Tools', 'ontario-obituaries'); ?></h1>
+            
+            <div class="ontario-admin-card">
+                <h2><?php _e('Scraper Diagnostics', 'ontario-obituaries'); ?></h2>
+                <p><?php _e('Test connections to obituary sources and diagnose issues with the scraper.', 'ontario-obituaries'); ?></p>
+                
+                <button id="ontario-test-scraper" class="button button-primary">
+                    <?php _e('Test Scraper Sources', 'ontario-obituaries'); ?>
+                </button>
+                
+                <div id="ontario-debug-results" class="ontario-debug-results" style="display: none;">
+                    <div class="ontario-debug-section">
+                        <h3><?php _e('Connection Results', 'ontario-obituaries'); ?></h3>
+                        
+                        <div class="ontario-debug-connections">
+                            <div class="ontario-debug-connection-group">
+                                <h4><?php _e('Successful Connections', 'ontario-obituaries'); ?></h4>
+                                <div id="ontario-success-connections" class="ontario-connection-list"></div>
+                            </div>
+                            
+                            <div class="ontario-debug-connection-group">
+                                <h4><?php _e('Failed Connections', 'ontario-obituaries'); ?></h4>
+                                <div id="ontario-failed-connections" class="ontario-connection-list"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="ontario-debug-section">
+                        <h3><?php _e('Debug Log', 'ontario-obituaries'); ?></h3>
+                        <div id="ontario-debug-log-entries" class="ontario-debug-log"></div>
+                    </div>
+                    
+                    <div class="ontario-debug-section">
+                        <h3><?php _e('Troubleshooting', 'ontario-obituaries'); ?></h3>
+                        <ul class="ontario-troubleshooting-tips">
+                            <li><?php _e('If connections are failing, check that your website has permissions to make outbound HTTP requests.', 'ontario-obituaries'); ?></li>
+                            <li><?php _e('Ensure the funeral home websites are accessible and not blocking web scrapers.', 'ontario-obituaries'); ?></li>
+                            <li><?php _e('Check that the website structure hasn\'t changed, which could break the scraper selectors.', 'ontario-obituaries'); ?></li>
+                            <li><?php _e('Try temporarily disabling other plugins that might be interfering with outbound requests.', 'ontario-obituaries'); ?></li>
+                            <li><?php _e('Contact your hosting provider if outbound connections are being blocked.', 'ontario-obituaries'); ?></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <style>
-            .ontario-debug-card {
+            .ontario-admin-card {
                 background: #fff;
                 border: 1px solid #ccd0d4;
-                box-shadow: 0 1px 1px rgba(0,0,0,.04);
+                border-radius: 4px;
                 padding: 20px;
-                margin-bottom: 20px;
-                border-radius: 3px;
-            }
-            
-            .ontario-debug-actions {
-                margin-bottom: 20px;
-            }
-            
-            .ontario-debug-results {
                 margin-top: 20px;
-                padding-top: 20px;
-                border-top: 1px solid #eee;
+                box-shadow: 0 1px 1px rgba(0,0,0,0.04);
             }
             
-            .ontario-debug-status {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 20px;
-                margin-bottom: 20px;
+            .ontario-debug-section {
+                margin-top: 25px;
             }
             
             .ontario-debug-connections {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 20px;
+            }
+            
+            .ontario-debug-connection-group {
                 flex: 1;
                 min-width: 250px;
             }
             
-            .ontario-connection-badges {
+            .ontario-connection-list {
+                margin-top: 10px;
                 display: flex;
                 flex-wrap: wrap;
                 gap: 8px;
-                margin-top: 10px;
             }
             
             .ontario-connection-badge {
                 display: inline-flex;
                 align-items: center;
-                padding: 5px 10px;
-                border-radius: 15px;
-                font-size: 12px;
-                font-weight: 500;
+                padding: 4px 10px;
+                border-radius: 20px;
+                font-size: 13px;
             }
             
             .ontario-connection-badge.success {
-                background: #edfaef;
-                border: 1px solid #c3e6cb;
-                color: #155724;
+                background-color: #edfaef;
+                color: #1e8a3e;
+                border: 1px solid #a9e0b6;
             }
             
             .ontario-connection-badge.error {
-                background: #f8d7da;
-                border: 1px solid #f5c6cb;
-                color: #721c24;
+                background-color: #fcefef;
+                color: #b71c1c;
+                border: 1px solid #f1c0c0;
             }
             
-            .ontario-debug-log-container {
-                height: 250px;
-                overflow-y: auto;
-                background: #f5f5f5;
+            .ontario-connection-badge .dashicons {
+                font-size: 16px;
+                width: 16px;
+                height: 16px;
+                margin-right: 4px;
+            }
+            
+            .ontario-debug-log {
+                background: #f6f7f7;
+                border: 1px solid #dcdcde;
                 padding: 10px;
-                border: 1px solid #ddd;
-                border-radius: 3px;
+                max-height: 300px;
+                overflow-y: auto;
                 font-family: monospace;
                 font-size: 12px;
                 line-height: 1.5;
             }
             
             .ontario-log-entry {
-                margin-bottom: 5px;
+                margin-bottom: 4px;
+                word-break: break-word;
             }
             
             .ontario-log-timestamp {
-                color: #6c757d;
-                margin-right: 5px;
+                color: #646970;
             }
             
             .ontario-log-message.error {
-                color: #dc3545;
-                font-weight: bold;
+                color: #b71c1c;
             }
             
             .ontario-log-message.success {
-                color: #28a745;
-                font-weight: bold;
+                color: #1e8a3e;
             }
             
-            .ontario-debug-tips {
-                margin-top: 20px;
-                padding: 15px;
-                background: #fff8e5;
-                border-left: 4px solid #ffb900;
+            .ontario-troubleshooting-tips {
+                padding-left: 20px;
             }
             
-            .ontario-debug-tips ul {
-                margin-left: 20px;
+            .ontario-troubleshooting-tips li {
+                margin-bottom: 8px;
             }
             
             .ontario-spinner {
                 display: inline-block;
-                width: 20px;
-                height: 20px;
-                margin-right: 10px;
-                border: 2px solid rgba(0, 0, 0, 0.1);
-                border-left-color: #0073aa;
+                width: 16px;
+                height: 16px;
+                border: 2px solid rgba(0,0,0,0.1);
+                border-top-color: #fff;
                 border-radius: 50%;
-                animation: ontario-spin 1s linear infinite;
+                animation: ontario-spinner 1s linear infinite;
+                margin-right: 8px;
             }
             
-            @keyframes ontario-spin {
+            @keyframes ontario-spinner {
                 to { transform: rotate(360deg); }
             }
         </style>
@@ -229,111 +218,106 @@ class Ontario_Obituaries_Debug {
     }
     
     /**
-     * Handle test scraper AJAX request
+     * AJAX handler for testing the scraper
      */
-    public function handle_test_scraper() {
+    public function ajax_test_scraper() {
         // Check nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ontario-obituaries-admin-nonce')) {
-            wp_send_json_error(array('message' => __('Security check failed.', 'ontario-obituaries')));
-        }
+        check_ajax_referer('ontario_obituaries_admin_nonce', 'nonce');
         
         // Check permissions
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('You do not have permission to do this.', 'ontario-obituaries')));
+            wp_send_json_error(array('message' => __('You do not have permission to perform this action.', 'ontario-obituaries')));
         }
         
-        // Get settings
-        $settings = get_option('ontario_obituaries_settings', array());
-        $regions = isset($settings['regions']) ? $settings['regions'] : array('Toronto', 'Ottawa', 'Hamilton');
-        
-        // Test results
+        // Initialize log
         $log = array();
         $successful = array();
         $failed = array();
         
-        // Initialize scraper
-        $scraper = new Ontario_Obituaries_Scraper();
+        // Get settings
+        $settings = get_option('ontario_obituaries_settings', array(
+            'regions' => array('Toronto', 'Ottawa', 'Hamilton', 'London', 'Windsor')
+        ));
         
-        // Test each region separately
+        // Get regions
+        $regions = isset($settings['regions']) ? $settings['regions'] : array('Toronto', 'Ottawa', 'Hamilton', 'London', 'Windsor');
+        
+        // Add initial log entry
+        $log[] = array(
+            'timestamp' => current_time('H:i:s'),
+            'type' => 'info',
+            'message' => __('Starting test of obituary sources...', 'ontario-obituaries')
+        );
+        
+        // Test each region
         foreach ($regions as $region) {
+            // Log test start
             $log[] = array(
                 'timestamp' => current_time('H:i:s'),
                 'type' => 'info',
-                'message' => sprintf(__('Testing connection to %s sources...', 'ontario-obituaries'), $region)
+                'message' => sprintf(__('Testing connection to %s obituary sources...', 'ontario-obituaries'), $region)
             );
             
-            // Try to scrape this region
-            $result = $scraper->test_region($region);
+            // Create a scraper instance
+            $scraper = new Ontario_Obituaries_Scraper();
+            
+            // Test the connection
+            $result = $scraper->test_connection($region);
             
             if ($result['success']) {
+                // Connection successful
                 $successful[] = $region;
                 $log[] = array(
                     'timestamp' => current_time('H:i:s'),
                     'type' => 'success',
-                    'message' => sprintf(
-                        __('Successfully connected to %s source (found %d obituaries)', 'ontario-obituaries'),
-                        $region,
-                        $result['count']
-                    )
+                    'message' => sprintf(__('Successfully connected to %s obituary sources.', 'ontario-obituaries'), $region)
                 );
                 
-                // If no obituaries found despite successful connection
-                if ($result['count'] == 0) {
+                // Add details if available
+                if (!empty($result['message'])) {
                     $log[] = array(
                         'timestamp' => current_time('H:i:s'),
                         'type' => 'info',
-                        'message' => sprintf(
-                            __('No obituaries found from %s within the time period. Try increasing maxAge.', 'ontario-obituaries'),
-                            $region
-                        )
+                        'message' => $result['message']
                     );
                 }
             } else {
+                // Connection failed
                 $failed[] = $region;
                 $log[] = array(
                     'timestamp' => current_time('H:i:s'),
                     'type' => 'error',
-                    'message' => sprintf(__('Failed to scrape %s: %s', 'ontario-obituaries'), $region, $result['message'])
+                    'message' => sprintf(__('Failed to connect to %s obituary sources: %s', 'ontario-obituaries'), $region, $result['message'])
                 );
             }
-            
-            // Small delay between requests
-            usleep(500000); // 0.5 second
         }
         
-        // Log completion
-        $success_count = count($successful);
-        $error_count = count($failed);
-        
-        if ($success_count && !$error_count) {
+        // Add summary log entry
+        if (count($successful) > 0 && count($failed) == 0) {
             $log[] = array(
                 'timestamp' => current_time('H:i:s'),
                 'type' => 'success',
-                'message' => __('All sources connected successfully. Check WordPress database for obituaries.', 'ontario-obituaries')
+                'message' => __('All connections successful! The scraper should work properly.', 'ontario-obituaries')
             );
-        } else if ($success_count && $error_count) {
+        } elseif (count($successful) > 0 && count($failed) > 0) {
             $log[] = array(
                 'timestamp' => current_time('H:i:s'),
                 'type' => 'info',
-                'message' => sprintf(
-                    __('Test completed with %d successful and %d failed connections.', 'ontario-obituaries'),
-                    $success_count,
-                    $error_count
-                )
+                'message' => sprintf(__('Testing completed with %d successful and %d failed connections.', 'ontario-obituaries'), count($successful), count($failed))
             );
         } else {
             $log[] = array(
                 'timestamp' => current_time('H:i:s'),
                 'type' => 'error',
-                'message' => __('No sources could be connected. Check your network and source configurations.', 'ontario-obituaries')
+                'message' => __('All connections failed. Check your network and source configurations.', 'ontario-obituaries')
             );
         }
         
-        // Send response
+        // Send the results
         wp_send_json_success(array(
-            'log' => $log,
             'successful' => $successful,
-            'failed' => $failed
+            'failed' => $failed,
+            'log' => $log
         ));
     }
 }
