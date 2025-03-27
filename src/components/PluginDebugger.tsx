@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -12,75 +12,126 @@ type LogEntry = {
   type: "info" | "error" | "success";
 };
 
+const StatusIcon = memo(({ status }: { status: "active" | "inactive" | "unknown" }) => {
+  switch (status) {
+    case "active":
+      return <CheckCircle className="h-5 w-5 text-green-500" />;
+    case "inactive":
+      return <AlertTriangle className="h-5 w-5 text-yellow-500" />;
+    default:
+      return <Bug className="h-5 w-5 text-gray-400" />;
+  }
+});
+
+const LogEntryItem = memo(({ log }: { log: LogEntry }) => (
+  <div className="flex flex-col text-sm">
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-muted-foreground">
+        {new Date(log.timestamp).toLocaleTimeString()}
+      </span>
+      <span className={`
+        ${log.type === "info" ? "text-blue-500" : ""}
+        ${log.type === "error" ? "text-red-500" : ""}
+        ${log.type === "success" ? "text-green-500" : ""}
+        font-medium
+      `}>
+        {log.message}
+      </span>
+    </div>
+  </div>
+));
+
 const PluginDebugger = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [pluginStatus, setPluginStatus] = useState<"active" | "inactive" | "unknown">("unknown");
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
+    if (loading) return; // Prevent multiple simultaneous requests
+    
     setLoading(true);
     
-    // In a real implementation, this would make an AJAX call to the WordPress backend
-    // to fetch real logs using the wp_ajax action
-    
-    // Simulate an API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Sample logs for demonstration
-    const sampleLogs: LogEntry[] = [
-      {
-        timestamp: new Date().toISOString(),
-        message: "Plugin status check performed",
-        type: "info"
-      },
-      {
-        timestamp: new Date(Date.now() - 60000).toISOString(),
-        message: pluginStatus === "active" 
-          ? "Plugin is active and functioning properly" 
-          : "Plugin appears to be inactive or experiencing issues",
-        type: pluginStatus === "active" ? "success" : "error"
-      }
-    ];
-    
-    setLogs(sampleLogs);
-    setLoading(false);
-  };
-
-  const checkPluginStatus = async () => {
-    setLoading(true);
-    
-    // In a real implementation, this would make an AJAX call to check if the plugin is active
-    // For demonstration, we'll randomly set the status
-    
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Sample status for demonstration
-    const status = Math.random() > 0.5 ? "active" : "inactive";
-    setPluginStatus(status as "active" | "inactive");
-    
-    setLoading(false);
-    
-    // Add a log entry
-    setLogs(prev => [
-      {
-        timestamp: new Date().toISOString(),
-        message: `Plugin status check: ${status}`,
-        type: status === "active" ? "success" : "error"
-      },
-      ...prev
-    ]);
-  };
-
-  const getStatusIcon = () => {
-    switch (pluginStatus) {
-      case "active":
-        return <CheckCircle className="h-5 w-5 text-green-500" />;
-      case "inactive":
-        return <AlertTriangle className="h-5 w-5 text-yellow-500" />;
-      default:
-        return <Bug className="h-5 w-5 text-gray-400" />;
+    try {
+      // In a real implementation, this would make an AJAX call to the WordPress backend
+      // to fetch real logs using the wp_ajax action
+      
+      // Simulate an API call
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Sample logs for demonstration
+      const sampleLogs: LogEntry[] = [
+        {
+          timestamp: new Date().toISOString(),
+          message: "Plugin status check performed",
+          type: "info"
+        },
+        {
+          timestamp: new Date(Date.now() - 60000).toISOString(),
+          message: pluginStatus === "active" 
+            ? "Plugin is active and functioning properly" 
+            : "Plugin appears to be inactive or experiencing issues",
+          type: pluginStatus === "active" ? "success" : "error"
+        }
+      ];
+      
+      setLogs(sampleLogs);
+    } catch (error) {
+      console.error("Error fetching logs:", error);
+      
+      // Add error to logs
+      setLogs(prev => [
+        {
+          timestamp: new Date().toISOString(),
+          message: `Error fetching logs: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          type: "error"
+        },
+        ...prev
+      ]);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [loading, pluginStatus]);
+
+  const checkPluginStatus = useCallback(async () => {
+    if (loading) return; // Prevent multiple simultaneous requests
+    
+    setLoading(true);
+    
+    try {
+      // In a real implementation, this would make an AJAX call to check if the plugin is active
+      // For demonstration, we'll randomly set the status
+      
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Sample status for demonstration
+      const status = Math.random() > 0.5 ? "active" : "inactive";
+      setPluginStatus(status as "active" | "inactive");
+      
+      // Add a log entry
+      setLogs(prev => [
+        {
+          timestamp: new Date().toISOString(),
+          message: `Plugin status check: ${status}`,
+          type: status === "active" ? "success" : "error"
+        },
+        ...prev
+      ]);
+    } catch (error) {
+      console.error("Error checking plugin status:", error);
+      
+      // Add error to logs
+      setLogs(prev => [
+        {
+          timestamp: new Date().toISOString(),
+          message: `Error checking status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          type: "error"
+        },
+        ...prev
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }, [loading]);
 
   useEffect(() => {
     // Check plugin status on component mount
@@ -101,7 +152,7 @@ const PluginDebugger = () => {
           <div className="flex items-center gap-2">
             <span>Plugin Status:</span>
             <span className="flex items-center gap-1 font-medium">
-              {getStatusIcon()}
+              <StatusIcon status={pluginStatus} />
               {pluginStatus === "active" && "Active"}
               {pluginStatus === "inactive" && "Inactive"}
               {pluginStatus === "unknown" && "Unknown"}
@@ -148,21 +199,7 @@ const PluginDebugger = () => {
           ) : (
             <div className="space-y-3">
               {logs.map((log, index) => (
-                <div key={index} className="flex flex-col text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(log.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className={`
-                      ${log.type === "info" ? "text-blue-500" : ""}
-                      ${log.type === "error" ? "text-red-500" : ""}
-                      ${log.type === "success" ? "text-green-500" : ""}
-                      font-medium
-                    `}>
-                      {log.message}
-                    </span>
-                  </div>
-                </div>
+                <LogEntryItem key={index} log={log} />
               ))}
             </div>
           )}
@@ -179,4 +216,4 @@ const PluginDebugger = () => {
   );
 };
 
-export default PluginDebugger;
+export default memo(PluginDebugger);
