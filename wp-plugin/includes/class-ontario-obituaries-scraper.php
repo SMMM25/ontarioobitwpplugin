@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Ontario Obituaries Scraper
@@ -143,7 +142,7 @@ class Ontario_Obituaries_Scraper {
                 'backup_selectors' => array(
                     'list' => '.obits .obit, .obituaries .obituary, .content article',
                     'name' => '.name, .title, .heading, h2, h3',
-                    'dates' => '.dates, .date-info, .lifespan, time, .date',
+                    'dates' => '.dates, .date-info, .date-range, .date',
                     'description' => '.description, .summary, .content, .text',
                     'image' => '.image img, .photo img, figure img',
                     'link' => 'a.more, a.details, a.view, h3 a'
@@ -297,6 +296,54 @@ class Ontario_Obituaries_Scraper {
                 )
             );
         }
+        
+        // Add Legacy.com as a source - specifically for Ontario
+        $this->sources['legacy_ontario'] = array(
+            'name' => 'Legacy.com (Ontario)',
+            'url' => 'https://www.legacy.com/ca/obituaries/local/ontario',
+            'region' => 'Ontario',
+            'selectors' => array(
+                'list' => '.ObituaryList-items article',
+                'name' => '.Obituary-heading',
+                'dates' => '.Obituary-dates',
+                'description' => '.Obituary-description',
+                'image' => '.Obituary-image img',
+                'link' => '.Obituary-link'
+            ),
+            'date_format' => 'F j, Y',
+            'backup_selectors' => array(
+                'list' => '.obit-list .obit, .listings-container .listing',
+                'name' => 'h2.obit-title, .name, .title',
+                'dates' => '.obit-date, .dates, .date-range',
+                'description' => '.obit-content, .description, .content',
+                'image' => '.obit-photo img, .photo img',
+                'link' => 'a.obit-link, a.more-link, a.read-more'
+            )
+        );
+        
+        // Add Obituary.com as a source
+        $this->sources['obituarycom'] = array(
+            'name' => 'Obituary.com',
+            'url' => 'https://www.obituary.com/obituaries/canada/ontario/',
+            'region' => 'Ontario',
+            'selectors' => array(
+                'list' => '.obituary-item, .obit-container',
+                'name' => '.obituary-name, .obit-name',
+                'dates' => '.obituary-dates, .obit-dates',
+                'description' => '.obituary-text, .obit-text',
+                'image' => '.obituary-photo img, .obit-photo img',
+                'link' => '.obituary-link, .obit-link, a.read-more'
+            ),
+            'date_format' => 'F j, Y',
+            'backup_selectors' => array(
+                'list' => '.obituaries .obituary, .list .item',
+                'name' => 'h2.name, .title, .heading',
+                'dates' => '.dates, .date-info, .lifespan',
+                'description' => '.description, .content, .text',
+                'image' => '.photo img, .image img',
+                'link' => 'a.details, a.more, a.view'
+            )
+        );
         
         // Apply filter to allow adding more sources or modifying existing ones
         $this->sources = apply_filters('ontario_obituaries_sources', $this->sources);
@@ -1100,4 +1147,3 @@ class Ontario_Obituaries_Scraper {
         return $this->scrape();
     }
 }
-

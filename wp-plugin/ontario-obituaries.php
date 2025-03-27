@@ -1,9 +1,8 @@
-
 <?php
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Scrapes and displays obituaries from Ontario Canada - Compatible with Obituary Assistant
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ONTARIO_OBITUARIES_VERSION', '1.0.2');
+define('ONTARIO_OBITUARIES_VERSION', '1.0.3');
 define('ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -304,3 +303,69 @@ function ontario_obituaries_render_scraper_page() {
     <?php
 }
 
+/**
+ * Add a new dashboard widget for obituary statistics
+ */
+function ontario_obituaries_add_dashboard_widget() {
+    wp_add_dashboard_widget(
+        'ontario_obituaries_stats', 
+        __('Ontario Obituaries Statistics', 'ontario-obituaries'),
+        'ontario_obituaries_render_dashboard_widget'
+    );
+}
+add_action('wp_dashboard_setup', 'ontario_obituaries_add_dashboard_widget');
+
+/**
+ * Render the dashboard widget
+ */
+function ontario_obituaries_render_dashboard_widget() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'ontario_obituaries';
+    
+    // Get total count
+    $total_count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+    
+    // Get count from the last 7 days
+    $last_week_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM $table_name WHERE date_of_death >= %s",
+        date('Y-m-d', strtotime('-7 days'))
+    ));
+    
+    // Get counts by source
+    $source_counts = $wpdb->get_results(
+        "SELECT funeral_home, COUNT(*) as count FROM $table_name GROUP BY funeral_home ORDER BY count DESC LIMIT 10"
+    );
+    
+    // Get the last scrape result
+    $last_scrape = get_option('ontario_obituaries_last_scrape');
+    
+    echo '<div class="ontario-obituaries-widget">';
+    echo '<p>' . sprintf(__('Total Obituaries: <strong>%d</strong>', 'ontario-obituaries'), $total_count) . '</p>';
+    echo '<p>' . sprintf(__('Added in Last 7 Days: <strong>%d</strong>', 'ontario-obituaries'), $last_week_count) . '</p>';
+    
+    if (!empty($source_counts)) {
+        echo '<h4>' . __('Top Sources:', 'ontario-obituaries') . '</h4>';
+        echo '<ul>';
+        foreach ($source_counts as $source) {
+            echo '<li>' . esc_html($source->funeral_home) . ': ' . esc_html($source->count) . '</li>';
+        }
+        echo '</ul>';
+    }
+    
+    if (!empty($last_scrape)) {
+        $time_ago = human_time_diff(strtotime($last_scrape['timestamp']), current_time('timestamp'));
+        echo '<p>' . sprintf(__('Last Scrape: <strong>%s ago</strong>', 'ontario-obituaries'), $time_ago) . '</p>';
+        
+        if (isset($last_scrape['results'])) {
+            $results = $last_scrape['results'];
+            echo '<p>' . sprintf(
+                __('Last Run: %d found, %d added', 'ontario-obituaries'),
+                $results['obituaries_found'],
+                $results['obituaries_added']
+            ) . '</p>';
+        }
+    }
+    
+    echo '<p><a href="' . admin_url('tools.php?page=run-ontario-scraper') . '">' . __('Run Scraper Now', 'ontario-obituaries') . '</a></p>';
+    echo '</div>';
+}
