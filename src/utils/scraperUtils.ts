@@ -145,6 +145,33 @@ export const scrapeObituaries = async (
   };
 };
 
+// Function to scrape obituaries from the previous month
+export const scrapePreviousMonthObituaries = async (
+  config: ScraperConfig = DEFAULT_SCRAPER_CONFIG
+): Promise<{ success: boolean; data: Obituary[] | null; message: string; errors?: Record<string, string> }> => {
+  // Calculate date range for previous month
+  const today = new Date();
+  const prevMonth = new Date(today);
+  prevMonth.setMonth(today.getMonth() - 1);
+  
+  const startDate = new Date(prevMonth.getFullYear(), prevMonth.getMonth(), 1);
+  const endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+  
+  console.log("Scraping previous month obituaries:", startDate.toISOString().split('T')[0], "to", endDate.toISOString().split('T')[0]);
+  
+  // Update config with date range for previous month
+  const historicalConfig: ScraperConfig = {
+    ...config,
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0],
+    retryAttempts: config.retryAttempts || 5, // More retries for historical data
+    timeout: 60000, // Longer timeout for historical retrieval
+  };
+  
+  // Use the existing getHistoricalData function which has the same functionality
+  return getHistoricalData(historicalConfig);
+};
+
 // Renamed function to hide source specifics
 const processAdditionalData = async (
   region: string,
