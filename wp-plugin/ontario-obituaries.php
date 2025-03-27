@@ -41,6 +41,9 @@ function ontario_obituaries_includes() {
     
     // AJAX handler
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-ajax.php';
+    
+    // Add the scraper class
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
 
     // Initialize AJAX handler
     $ajax_handler = new Ontario_Obituaries_Ajax();
@@ -81,6 +84,12 @@ function ontario_obituaries_activate() {
     // Set a transient to show an admin notice
     set_transient('ontario_obituaries_activation_notice', true, 60 * 5);
     
+    // Schedule the cron events for scraping
+    if (!wp_next_scheduled('ontario_obituaries_scrape_event')) {
+        // Schedule the event to run twice daily
+        wp_schedule_event(time(), 'twicedaily', 'ontario_obituaries_scrape_event');
+    }
+    
     // Force-flush rewrite rules
     flush_rewrite_rules();
 }
@@ -93,10 +102,41 @@ function ontario_obituaries_deactivate() {
     // Clean up transients
     delete_transient('ontario_obituaries_activation_notice');
     
+    // Unschedule the cron event
+    $timestamp = wp_next_scheduled('ontario_obituaries_scrape_event');
+    if ($timestamp) {
+        wp_unschedule_event($timestamp, 'ontario_obituaries_scrape_event');
+    }
+    
     // Flush rewrite rules
     flush_rewrite_rules();
 }
 register_deactivation_hook(__FILE__, 'ontario_obituaries_deactivate');
+
+/**
+ * Scheduled task hook for scraping obituaries
+ */
+function ontario_obituaries_scheduled_scrape() {
+    // Load the scraper class if not already loaded
+    if (!class_exists('Ontario_Obituaries_Scraper')) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
+    }
+    
+    // Initialize and run the scraper
+    $scraper = new Ontario_Obituaries_Scraper();
+    $results = $scraper->scrape();
+    
+    // Log the results
+    error_log('Ontario Obituaries Scheduled Scrape: ' . print_r($results, true));
+    
+    // Update the last scrape timestamp and data
+    update_option('ontario_obituaries_last_scrape', array(
+        'timestamp' => current_time('timestamp'),
+        'completed' => current_time('mysql'),
+        'results' => $results
+    ));
+}
+add_action('ontario_obituaries_scrape_event', 'ontario_obituaries_scheduled_scrape');
 
 /**
  * Admin notices hook

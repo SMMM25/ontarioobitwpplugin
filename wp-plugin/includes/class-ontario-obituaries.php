@@ -1,4 +1,3 @@
-
 <?php
 /**
  * The main plugin class
@@ -28,6 +27,9 @@ class Ontario_Obituaries {
         
         // Register REST API endpoints for Obituary Assistant integration
         add_action('rest_api_init', array($this, 'register_rest_routes'));
+        
+        // Register settings
+        add_action('admin_init', array($this, 'register_settings'));
     }
     
     /**
@@ -53,6 +55,52 @@ class Ontario_Obituaries {
             'ontario-obituaries-settings',
             array($this, 'settings_page')
         );
+    }
+    
+    /**
+     * Register plugin settings
+     */
+    public function register_settings() {
+        register_setting('ontario_obituaries_options', 'ontario_obituaries_settings', array(
+            'sanitize_callback' => array($this, 'sanitize_settings')
+        ));
+    }
+    
+    /**
+     * Sanitize settings
+     */
+    public function sanitize_settings($input) {
+        $sanitized = array();
+        
+        // Boolean settings
+        $boolean_settings = array('enabled', 'auto_publish', 'notify_admin');
+        foreach ($boolean_settings as $setting) {
+            $sanitized[$setting] = isset($input[$setting]) ? true : false;
+        }
+        
+        // Text settings
+        $text_settings = array('time', 'filter_keywords');
+        foreach ($text_settings as $setting) {
+            $sanitized[$setting] = isset($input[$setting]) ? sanitize_text_field($input[$setting]) : '';
+        }
+        
+        // Numeric settings
+        $numeric_settings = array('max_age');
+        foreach ($numeric_settings as $setting) {
+            $sanitized[$setting] = isset($input[$setting]) ? intval($input[$setting]) : 0;
+        }
+        
+        // Select settings
+        $sanitized['frequency'] = isset($input['frequency']) && in_array($input['frequency'], array('hourly', 'daily', 'twicedaily', 'weekly')) 
+            ? $input['frequency'] 
+            : 'daily';
+        
+        // Array settings
+        $sanitized['regions'] = isset($input['regions']) && is_array($input['regions']) 
+            ? array_map('sanitize_text_field', $input['regions'])
+            : array('Toronto', 'Ottawa', 'Hamilton');
+        
+        return $sanitized;
     }
     
     /**
@@ -146,6 +194,18 @@ class Ontario_Obituaries {
      * Display the settings page
      */
     public function settings_page() {
+        // Get settings
+        $settings = get_option('ontario_obituaries_settings', array(
+            'enabled' => true,
+            'frequency' => 'daily',
+            'time' => '03:00',
+            'regions' => array('Toronto', 'Ottawa', 'Hamilton'),
+            'max_age' => 7,
+            'filter_keywords' => '',
+            'auto_publish' => true,
+            'notify_admin' => true
+        ));
+        
         ?>
         <div class="wrap">
             <h1><?php _e('Ontario Obituaries Settings', 'ontario-obituaries'); ?></h1>
@@ -153,33 +213,160 @@ class Ontario_Obituaries {
             <form method="post" action="options.php">
                 <?php
                 settings_fields('ontario_obituaries_options');
-                do_settings_sections('ontario_obituaries_settings');
                 ?>
                 
                 <table class="form-table">
                     <tr valign="top">
-                        <th scope="row"><?php _e('Items Per Page', 'ontario-obituaries'); ?></th>
+                        <th scope="row"><?php _e('Enable Scraper', 'ontario-obituaries'); ?></th>
                         <td>
-                            <input type="number" name="ontario_obituaries_items_per_page" value="<?php echo esc_attr(get_option('ontario_obituaries_items_per_page', 20)); ?>" min="1" max="100" />
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[enabled]" value="1" <?php checked(isset($settings['enabled']) ? $settings['enabled'] : true); ?> />
+                                <?php _e('Automatically collect obituaries from Ontario', 'ontario-obituaries'); ?>
+                            </label>
                         </td>
                     </tr>
                     <tr valign="top">
-                        <th scope="row"><?php _e('Default Location Filter', 'ontario-obituaries'); ?></th>
+                        <th scope="row"><?php _e('Scrape Frequency', 'ontario-obituaries'); ?></th>
                         <td>
-                            <input type="text" name="ontario_obituaries_default_location" value="<?php echo esc_attr(get_option('ontario_obituaries_default_location', '')); ?>" />
-                            <p class="description"><?php _e('Leave blank to show all locations', 'ontario-obituaries'); ?></p>
+                            <select name="ontario_obituaries_settings[frequency]">
+                                <option value="hourly" <?php selected(isset($settings['frequency']) ? $settings['frequency'] : 'daily', 'hourly'); ?>><?php _e('Hourly', 'ontario-obituaries'); ?></option>
+                                <option value="twicedaily" <?php selected(isset($settings['frequency']) ? $settings['frequency'] : 'daily', 'twicedaily'); ?>><?php _e('Twice Daily', 'ontario-obituaries'); ?></option>
+                                <option value="daily" <?php selected(isset($settings['frequency']) ? $settings['frequency'] : 'daily', 'daily'); ?>><?php _e('Daily', 'ontario-obituaries'); ?></option>
+                                <option value="weekly" <?php selected(isset($settings['frequency']) ? $settings['frequency'] : 'daily', 'weekly'); ?>><?php _e('Weekly', 'ontario-obituaries'); ?></option>
+                            </select>
+                            <p class="description"><?php _e('How often to check for new obituaries', 'ontario-obituaries'); ?></p>
                         </td>
                     </tr>
                     <tr valign="top">
-                        <th scope="row"><?php _e('Enable Facebook Sharing', 'ontario-obituaries'); ?></th>
+                        <th scope="row"><?php _e('Regions to Scrape', 'ontario-obituaries'); ?></th>
                         <td>
-                            <input type="checkbox" name="ontario_obituaries_enable_facebook" value="1" <?php checked('1', get_option('ontario_obituaries_enable_facebook', '1')); ?> />
+                            <?php $regions = array('Toronto', 'Ottawa', 'Hamilton', 'London', 'Windsor', 'Kitchener', 'Sudbury', 'Thunder Bay'); ?>
+                            <?php foreach ($regions as $region): ?>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" name="ontario_obituaries_settings[regions][]" value="<?php echo esc_attr($region); ?>" <?php checked(in_array($region, isset($settings['regions']) ? $settings['regions'] : array())); ?> />
+                                    <?php echo esc_html($region); ?>
+                                </label>
+                            <?php endforeach; ?>
+                            <p class="description"><?php _e('Select which regions to collect obituaries from', 'ontario-obituaries'); ?></p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php _e('Auto-Publish', 'ontario-obituaries'); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[auto_publish]" value="1" <?php checked(isset($settings['auto_publish']) ? $settings['auto_publish'] : true); ?> />
+                                <?php _e('Automatically publish new obituaries without review', 'ontario-obituaries'); ?>
+                            </label>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php _e('Email Notifications', 'ontario-obituaries'); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[notify_admin]" value="1" <?php checked(isset($settings['notify_admin']) ? $settings['notify_admin'] : true); ?> />
+                                <?php _e('Send email when new obituaries are found', 'ontario-obituaries'); ?>
+                            </label>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php _e('Retention Period (days)', 'ontario-obituaries'); ?></th>
+                        <td>
+                            <input type="number" name="ontario_obituaries_settings[max_age]" value="<?php echo esc_attr(isset($settings['max_age']) ? $settings['max_age'] : 7); ?>" min="1" max="365" />
+                            <p class="description"><?php _e('How many days to keep obituaries before archiving', 'ontario-obituaries'); ?></p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php _e('Filtering Keywords', 'ontario-obituaries'); ?></th>
+                        <td>
+                            <input type="text" class="regular-text" name="ontario_obituaries_settings[filter_keywords]" value="<?php echo esc_attr(isset($settings['filter_keywords']) ? $settings['filter_keywords'] : ''); ?>" placeholder="<?php _e('Enter comma-separated terms', 'ontario-obituaries'); ?>" />
+                            <p class="description"><?php _e('Optional: Filter obituaries containing these terms', 'ontario-obituaries'); ?></p>
                         </td>
                     </tr>
                 </table>
                 
-                <?php submit_button(); ?>
+                <?php submit_button(__('Save Settings', 'ontario-obituaries')); ?>
             </form>
+            
+            <hr>
+            
+            <h2><?php _e('Manual Control', 'ontario-obituaries'); ?></h2>
+            <p><?php _e('Click the button below to manually run the scraper:', 'ontario-obituaries'); ?></p>
+            
+            <form method="post" action="">
+                <?php wp_nonce_field('ontario_obituaries_manual_scrape', 'ontario_obituaries_nonce'); ?>
+                <p>
+                    <input type="submit" name="ontario_obituaries_scrape" class="button button-primary" value="<?php _e('Run Scraper Now', 'ontario-obituaries'); ?>">
+                </p>
+            </form>
+            
+            <?php
+            // Handle manual scrape
+            if (isset($_POST['ontario_obituaries_scrape']) && check_admin_referer('ontario_obituaries_manual_scrape', 'ontario_obituaries_nonce')) {
+                $scraper = new Ontario_Obituaries_Scraper();
+                $results = $scraper->scrape();
+                
+                echo '<div class="notice notice-success is-dismissible"><p>';
+                printf(
+                    __('Scraper completed. Checked %d sources, found %d obituaries, added %d new obituaries.', 'ontario-obituaries'),
+                    $results['sources_scraped'],
+                    $results['obituaries_found'],
+                    $results['obituaries_added']
+                );
+                echo '</p></div>';
+                
+                if (!empty($results['errors'])) {
+                    echo '<div class="notice notice-warning is-dismissible"><p>';
+                    _e('The following errors were encountered:', 'ontario-obituaries');
+                    echo '</p><ul>';
+                    
+                    foreach ($results['errors'] as $source_id => $errors) {
+                        foreach ((array)$errors as $error) {
+                            echo '<li><strong>' . esc_html($source_id) . '</strong>: ' . esc_html($error) . '</li>';
+                        }
+                    }
+                    
+                    echo '</ul></div>';
+                }
+            }
+            ?>
+            
+            <hr>
+            
+            <h2><?php _e('Last Scrape Information', 'ontario-obituaries'); ?></h2>
+            <?php
+            $last_scrape = get_option('ontario_obituaries_last_scrape');
+            
+            if ($last_scrape) {
+                echo '<p><strong>' . __('Last Run:', 'ontario-obituaries') . '</strong> ' . esc_html($last_scrape['completed']) . '</p>';
+                
+                if (isset($last_scrape['results'])) {
+                    $results = $last_scrape['results'];
+                    echo '<p><strong>' . __('Results:', 'ontario-obituaries') . '</strong> ';
+                    printf(
+                        __('Checked %d sources, found %d obituaries, added %d new obituaries.', 'ontario-obituaries'),
+                        $results['sources_scraped'],
+                        $results['obituaries_found'],
+                        $results['obituaries_added']
+                    );
+                    echo '</p>';
+                    
+                    if (!empty($results['errors'])) {
+                        echo '<p><strong>' . __('Errors:', 'ontario-obituaries') . '</strong></p>';
+                        echo '<ul>';
+                        
+                        foreach ($results['errors'] as $source_id => $errors) {
+                            foreach ((array)$errors as $error) {
+                                echo '<li><strong>' . esc_html($source_id) . '</strong>: ' . esc_html($error) . '</li>';
+                            }
+                        }
+                        
+                        echo '</ul>';
+                    }
+                }
+            } else {
+                echo '<p>' . __('No scrapes have been run yet.', 'ontario-obituaries') . '</p>';
+            }
+            ?>
         </div>
         <?php
     }
@@ -294,64 +481,39 @@ class Ontario_Obituaries {
      * Run a manual scrape
      */
     private function run_scrape() {
-        // For now, just add more test data with different dates
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'ontario_obituaries';
-        
-        // Sample test data with older dates
-        $test_data = array(
-            array(
-                'name' => 'Emily Test Wilson',
-                'date_of_birth' => date('Y-m-d', strtotime('-85 years')),
-                'date_of_death' => date('Y-m-d', strtotime('-8 days')),
-                'age' => 85,
-                'funeral_home' => 'Windsor Memorial',
-                'location' => 'Windsor',
-                'image_url' => 'https://via.placeholder.com/150',
-                'description' => 'Emily was known for her kindness and generosity. This is a test obituary added by manual scrape.',
-                'source_url' => home_url()
-            ),
-            array(
-                'name' => 'David Test Brown',
-                'date_of_birth' => date('Y-m-d', strtotime('-70 years')),
-                'date_of_death' => date('Y-m-d', strtotime('-12 days')),
-                'age' => 70,
-                'funeral_home' => 'London Funeral Home',
-                'location' => 'London',
-                'image_url' => 'https://via.placeholder.com/150',
-                'description' => 'David was an accomplished musician and loving father. This is a test obituary added by manual scrape.',
-                'source_url' => home_url()
-            )
-        );
-        
-        $count = 0;
-        
-        // Insert test data
-        foreach ($test_data as $obituary) {
-            $wpdb->insert(
-                $table_name,
-                array(
-                    'name' => $obituary['name'],
-                    'date_of_birth' => $obituary['date_of_birth'],
-                    'date_of_death' => $obituary['date_of_death'],
-                    'age' => $obituary['age'],
-                    'funeral_home' => $obituary['funeral_home'],
-                    'location' => $obituary['location'],
-                    'image_url' => $obituary['image_url'],
-                    'description' => $obituary['description'],
-                    'source_url' => $obituary['source_url'],
-                    'created_at' => current_time('mysql')
-                )
-            );
-            
-            if ($wpdb->insert_id) {
-                $count++;
-            }
+        // Load the scraper class
+        if (!class_exists('Ontario_Obituaries_Scraper')) {
+            require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
         }
         
+        // Run the scraper
+        $scraper = new Ontario_Obituaries_Scraper();
+        $results = $scraper->scrape();
+        
         // Add admin notice
-        add_action('admin_notices', function() use ($count) {
-            echo '<div class="notice notice-success is-dismissible"><p>' . sprintf(__('Added %d obituaries from manual scrape.', 'ontario-obituaries'), $count) . '</p></div>';
+        add_action('admin_notices', function() use ($results) {
+            echo '<div class="notice notice-success is-dismissible"><p>';
+            printf(
+                __('Scraper completed. Checked %d sources, found %d obituaries, added %d new obituaries.', 'ontario-obituaries'),
+                $results['sources_scraped'],
+                $results['obituaries_found'],
+                $results['obituaries_added']
+            );
+            echo '</p></div>';
+            
+            if (!empty($results['errors'])) {
+                echo '<div class="notice notice-warning is-dismissible"><p>';
+                _e('The following errors were encountered:', 'ontario-obituaries');
+                echo '</p><ul>';
+                
+                foreach ($results['errors'] as $source_id => $errors) {
+                    foreach ((array)$errors as $error) {
+                        echo '<li><strong>' . esc_html($source_id) . '</strong>: ' . esc_html($error) . '</li>';
+                    }
+                }
+                
+                echo '</ul></div>';
+            }
         });
         
         // Redirect back to admin page

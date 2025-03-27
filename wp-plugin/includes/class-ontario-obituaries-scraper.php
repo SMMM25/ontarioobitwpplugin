@@ -1,779 +1,787 @@
+
 <?php
 /**
- * Scraper class for Ontario Obituaries
+ * Ontario Obituaries Scraper
+ * 
+ * Handles scraping obituary data from funeral home websites
  */
 class Ontario_Obituaries_Scraper {
     /**
-     * Default scraper configuration
+     * Array of funeral home sources to scrape
      */
-    private $default_config = array(
-        'regions' => array('Toronto', 'Ottawa', 'Hamilton', 'London', 'Windsor'),
-        'max_age' => 7,
-        'retry_attempts' => 3,
-        'timeout' => 30,
-        'user_agent' => 'Ontario Obituaries Plugin/1.0 (WordPress)',
-        'adaptive_mode' => true
-    );
+    private $sources = array();
     
     /**
-     * Structure change detection flags
+     * Settings for the scraper
      */
-    private $structure_change_alerts = array();
+    private $settings = array();
     
     /**
-     * Scrape all configured regions with enhanced error handling
+     * Constructor
      */
-    public function scrape() {
-        // Get settings
-        $settings = get_option('ontario_obituaries_settings', $this->default_config);
+    public function __construct() {
+        // Load settings
+        $this->settings = get_option('ontario_obituaries_settings', array());
         
-        // Get regions
-        $regions = isset($settings['regions']) ? $settings['regions'] : $this->default_config['regions'];
-        
-        // Set additional scraper parameters
-        $max_age = isset($settings['max_age']) ? intval($settings['max_age']) : $this->default_config['max_age'];
-        $retry_attempts = isset($settings['retry_attempts']) ? intval($settings['retry_attempts']) : $this->default_config['retry_attempts'];
-        $timeout = isset($settings['timeout']) ? intval($settings['timeout']) : $this->default_config['timeout'];
-        $adaptive_mode = isset($settings['adaptive_mode']) ? (bool)$settings['adaptive_mode'] : $this->default_config['adaptive_mode'];
-        
-        // Log start of scraping with enhanced configuration
-        error_log(sprintf(
-            'Starting enhanced Ontario obituaries scrape for regions: %s (max_age: %d, retry_attempts: %d, adaptive_mode: %s)',
-            implode(', ', $regions),
-            $max_age,
-            $retry_attempts,
-            $adaptive_mode ? 'enabled' : 'disabled'
-        ));
-        
-        $new_count = 0;
-        $error_regions = array();
-        $all_obituaries = array();
-        
-        // Scrape each region with enhanced error handling
-        foreach ($regions as $region) {
-            $start_time = microtime(true);
-            $result = $this->scrape_region($region, array(
-                'max_age' => $max_age,
-                'retry_attempts' => $retry_attempts,
-                'timeout' => $timeout,
-                'adaptive_mode' => $adaptive_mode
-            ));
-            $elapsed_time = microtime(true) - $start_time;
-            
-            if ($result['success']) {
-                $all_obituaries = array_merge($all_obituaries, $result['obituaries']);
-                error_log(sprintf(
-                    'Successfully scraped %d obituaries from %s (time: %.2f seconds)',
-                    count($result['obituaries']),
-                    $region,
-                    $elapsed_time
-                ));
-            } else {
-                $error_regions[$region] = $result['message'];
-                error_log(sprintf(
-                    'Failed to scrape %s: %s (time: %.2f seconds)',
-                    $region,
-                    $result['message'],
-                    $elapsed_time
-                ));
-            }
-            
-            // Add a small delay between regions to avoid overwhelming the server
-            if ($region !== end($regions)) {
-                sleep(1);
-            }
-        }
-        
-        // Deduplicate obituaries before saving
-        $unique_obituaries = $this->deduplicate_obituaries($all_obituaries);
-        $deduplication_count = count($all_obituaries) - count($unique_obituaries);
-        
-        if ($deduplication_count > 0) {
-            error_log(sprintf('Deduplication removed %d duplicate entries', $deduplication_count));
-        }
-        
-        // Save the obituaries to the database
-        if (!empty($unique_obituaries)) {
-            $saved_count = $this->save_obituaries($unique_obituaries);
-            $new_count += $saved_count;
-            
-            error_log(sprintf(
-                'Saved %d new obituaries to the database (from %d total found, %d duplicates removed)',
-                $saved_count,
-                count($all_obituaries),
-                $deduplication_count
-            ));
-        }
-        
-        // Check for structure changes
-        if (!empty($this->structure_change_alerts)) {
-            error_log('STRUCTURE CHANGE ALERTS: ' . implode('; ', $this->structure_change_alerts));
-            
-            // Save the structure change alerts for admin notification
-            update_option('ontario_obituaries_structure_alerts', $this->structure_change_alerts);
-        }
-        
-        // Log completion with statistics
-        error_log(sprintf(
-            'Ontario obituaries scrape completed. Found %d obituaries, saved %d new entries. Errors in %d of %d regions.',
-            count($all_obituaries),
-            $new_count,
-            count($error_regions),
-            count($regions)
-        ));
-        
-        return array(
-            'success' => $new_count > 0 || count($all_obituaries) > 0,
-            'count' => $new_count,
-            'total_found' => count($all_obituaries),
-            'errors' => $error_regions
-        );
-    }
-    
-    /**
-     * Scrape a specific region with enhanced reliability
-     * 
-     * @param string $region The region to scrape
-     * @param array $options Scraping options
-     * @return array Result with success/failure and details
-     */
-    private function scrape_region($region, $options = array()) {
-        // Merge options with defaults
-        $options = array_merge(array(
-            'max_age' => 7,
-            'retry_attempts' => 3,
-            'timeout' => 30,
-            'adaptive_mode' => true
-        ), $options);
-        
-        // Get the URL for the region
-        $url = $this->get_region_url($region);
-        
-        if (!$url) {
-            return array(
-                'success' => false,
-                'message' => 'No URL configured for this region',
-                'obituaries' => array()
+        // Default settings if none exist
+        if (empty($this->settings)) {
+            $this->settings = array(
+                'enabled' => true,
+                'frequency' => 'daily',
+                'time' => '03:00',
+                'regions' => array('Toronto', 'Ottawa', 'Hamilton', 'London', 'Windsor'),
+                'max_age' => 7,
+                'filter_keywords' => '',
+                'auto_publish' => true,
+                'notify_admin' => true
             );
         }
         
-        // Try to connect with retry logic
-        $response = null;
-        $success = false;
-        $attempt = 0;
-        $error_message = '';
+        // Initialize sources
+        $this->init_sources();
+    }
+    
+    /**
+     * Initialize the funeral home sources
+     */
+    private function init_sources() {
+        // Only include sources for enabled regions
+        $regions = isset($this->settings['regions']) ? $this->settings['regions'] : array('Toronto', 'Ottawa', 'Hamilton');
         
-        while (!$success && $attempt < $options['retry_attempts']) {
-            $attempt++;
-            
-            // Calculate backoff time if this is a retry
-            $backoff_time = $attempt > 1 ? pow(2, $attempt - 1) * 1 : 0; // Exponential backoff in seconds
-            
-            if ($backoff_time > 0) {
-                error_log(sprintf('Region %s: Retrying connection (attempt %d of %d) after %d second backoff',
-                    $region, $attempt, $options['retry_attempts'], $backoff_time));
-                sleep($backoff_time);
-            }
-            
-            // Try to connect
-            $response = wp_remote_get($url, array(
-                'timeout' => $options['timeout'],
-                'user-agent' => $this->default_config['user_agent'],
-                'headers' => array(
-                    'Referer' => home_url(),
-                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        // Toronto sources
+        if (in_array('Toronto', $regions)) {
+            $this->sources['toronto_memorial'] = array(
+                'name' => 'Toronto Memorial',
+                'url' => 'https://www.torontomemorial.com/obituaries',
+                'region' => 'Toronto',
+                'selectors' => array(
+                    'list' => '.obituary-list .obituary-item',
+                    'name' => '.obituary-name',
+                    'dates' => '.obituary-dates',
+                    'description' => '.obituary-description',
+                    'image' => '.obituary-image img',
+                    'link' => '.obituary-link'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.memorials-list .memorial-item, .obituaries-list .obit-item',
+                    'name' => '.memorial-name, .obit-name, h3.name',
+                    'dates' => '.memorial-dates, .obit-dates, .date-range',
+                    'description' => '.memorial-description, .obit-text, .summary',
+                    'image' => '.memorial-image img, .obit-image img, .photo img',
+                    'link' => '.memorial-link, .obit-link, a.more'
                 )
+            );
+            
+            $this->sources['mount_pleasant'] = array(
+                'name' => 'Mount Pleasant Funeral Centre',
+                'url' => 'https://www.mountpleasantgroup.com/en-CA/Obituaries.aspx',
+                'region' => 'Toronto',
+                'selectors' => array(
+                    'list' => '.obits-list .obit-item',
+                    'name' => '.obit-name',
+                    'dates' => '.obit-dates',
+                    'description' => '.obit-description',
+                    'image' => '.obit-image img',
+                    'link' => '.obit-link'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.memorials .memorial, .obituaries .obituary',
+                    'name' => '.name, h3.title',
+                    'dates' => '.dates, .date-info',
+                    'description' => '.description, .summary, .text',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more-info'
+                )
+            );
+        }
+        
+        // Ottawa sources
+        if (in_array('Ottawa', $regions)) {
+            $this->sources['ottawa_memorial'] = array(
+                'name' => 'Ottawa Memorial',
+                'url' => 'https://www.ottawamemorialservices.ca/obituaries',
+                'region' => 'Ottawa',
+                'selectors' => array(
+                    'list' => '.obituary-container .obituary',
+                    'name' => '.obituary-name',
+                    'dates' => '.obituary-dates',
+                    'description' => '.obituary-text',
+                    'image' => '.obituary-photo img',
+                    'link' => '.obituary-more'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obits .obit, .memorials .memorial',
+                    'name' => '.name, h2.title, .heading',
+                    'dates' => '.dates, .date-range, .lifespan',
+                    'description' => '.text, .description, .content',
+                    'image' => '.photo img, .image img, .portrait img',
+                    'link' => 'a.more, a.details, a.view'
+                )
+            );
+            
+            $this->sources['beechwood'] = array(
+                'name' => 'Beechwood Cemetery',
+                'url' => 'https://beechwoodottawa.ca/en/services/obituaries',
+                'region' => 'Ottawa',
+                'selectors' => array(
+                    'list' => '.obits-container .obit',
+                    'name' => '.obit-name',
+                    'dates' => '.obit-dates',
+                    'description' => '.obit-excerpt',
+                    'image' => '.obit-image img',
+                    'link' => '.obit-link'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obituaries .obituary, .memorials .memorial',
+                    'name' => '.name, h3.heading',
+                    'dates' => '.dates, .lifespan',
+                    'description' => '.excerpt, .summary',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more'
+                )
+            );
+        }
+        
+        // Hamilton sources
+        if (in_array('Hamilton', $regions)) {
+            $this->sources['hamilton_memorial'] = array(
+                'name' => 'Hamilton Memorial Gardens',
+                'url' => 'https://www.hamiltonmemorial.ca/obituaries',
+                'region' => 'Hamilton',
+                'selectors' => array(
+                    'list' => '.obituary-listing .obituary',
+                    'name' => '.obituary-name',
+                    'dates' => '.obituary-dates',
+                    'description' => '.obituary-excerpt',
+                    'image' => '.obituary-photo img',
+                    'link' => '.obituary-link'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obits .obit, .listings .listing',
+                    'name' => '.name, h3.title',
+                    'dates' => '.dates, .date-info',
+                    'description' => '.excerpt, .summary',
+                    'image' => '.photo img, .image img',
+                    'link' => 'a.more, a.details'
+                )
+            );
+        }
+        
+        // London sources
+        if (in_array('London', $regions)) {
+            $this->sources['london_memorial'] = array(
+                'name' => 'London Memorial',
+                'url' => 'https://www.londonmemorial.ca/obituaries',
+                'region' => 'London',
+                'selectors' => array(
+                    'list' => '.obituaries-list .obituary',
+                    'name' => '.obituary-name',
+                    'dates' => '.obituary-dates',
+                    'description' => '.obituary-text',
+                    'image' => '.obituary-image img',
+                    'link' => '.obituary-more'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.memorials .memorial, .obits .obit',
+                    'name' => '.name, h3.heading',
+                    'dates' => '.dates, .lifespan',
+                    'description' => '.text, .description',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more'
+                )
+            );
+        }
+        
+        // Windsor sources
+        if (in_array('Windsor', $regions)) {
+            $this->sources['windsor_memorial'] = array(
+                'name' => 'Windsor Memorial Gardens',
+                'url' => 'https://www.windsorchapel.com/obituaries',
+                'region' => 'Windsor',
+                'selectors' => array(
+                    'list' => '.obituaries-container .obituary',
+                    'name' => '.obituary-name',
+                    'dates' => '.obituary-dates',
+                    'description' => '.obituary-description',
+                    'image' => '.obituary-photo img',
+                    'link' => '.obituary-link'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obits .obit, .listings .item',
+                    'name' => '.name, h3.title',
+                    'dates' => '.dates, .date-range',
+                    'description' => '.description, .summary',
+                    'image' => '.photo img, .image img',
+                    'link' => 'a.more, a.view'
+                )
+            );
+        }
+        
+        // Apply filter to allow adding more sources or modifying existing ones
+        $this->sources = apply_filters('ontario_obituaries_sources', $this->sources);
+    }
+    
+    /**
+     * Main scrape function
+     * 
+     * @return array Scraping results
+     */
+    public function scrape() {
+        if (!isset($this->settings['enabled']) || !$this->settings['enabled']) {
+            return array(
+                'status' => 'disabled',
+                'message' => 'Scraper is disabled in settings',
+                'obituaries_added' => 0,
+                'sources_scraped' => 0,
+                'obituaries_found' => 0,
+                'errors' => array()
+            );
+        }
+        
+        $results = array(
+            'status' => 'success',
+            'sources_scraped' => 0,
+            'obituaries_found' => 0,
+            'obituaries_added' => 0,
+            'errors' => array()
+        );
+        
+        // Make sure we have the WordPress HTTP API
+        if (!function_exists('wp_remote_get')) {
+            include_once(ABSPATH . WPINC . '/http.php');
+        }
+        
+        // Process each source
+        foreach ($this->sources as $source_id => $source) {
+            try {
+                $source_results = $this->scrape_source($source_id, $source);
+                
+                // Update statistics
+                $results['sources_scraped']++;
+                $results['obituaries_found'] += $source_results['found'];
+                $results['obituaries_added'] += $source_results['added'];
+                
+                // Add any errors
+                if (!empty($source_results['errors'])) {
+                    $results['errors'][$source_id] = $source_results['errors'];
+                }
+            } catch (Exception $e) {
+                $results['errors'][$source_id] = array(
+                    'message' => $e->getMessage(),
+                    'code' => $e->getCode()
+                );
+            }
+        }
+        
+        // Send email notification if enabled and obituaries were added
+        if ($results['obituaries_added'] > 0 && isset($this->settings['notify_admin']) && $this->settings['notify_admin']) {
+            $this->send_notification_email($results);
+        }
+        
+        return $results;
+    }
+    
+    /**
+     * Scrape a single source
+     * 
+     * @param string $source_id The source identifier
+     * @param array $source The source configuration
+     * @return array Results from this source
+     */
+    private function scrape_source($source_id, $source) {
+        $results = array(
+            'found' => 0,
+            'added' => 0,
+            'errors' => array()
+        );
+        
+        try {
+            // Make the HTTP request with a custom user agent
+            $response = wp_remote_get($source['url'], array(
+                'timeout' => 30,
+                'user-agent' => 'Ontario Obituaries Plugin/1.0 (+https://monacomonuments.ca)'
             ));
             
             // Check for errors
             if (is_wp_error($response)) {
-                $error_message = $response->get_error_message();
-                error_log(sprintf('Region %s: Connection attempt %d failed: %s',
-                    $region, $attempt, $error_message));
-                continue; // Try again
+                throw new Exception('HTTP request failed: ' . $response->get_error_message());
             }
             
-            // Check response code
             $response_code = wp_remote_retrieve_response_code($response);
-            if ($response_code != 200) {
-                $error_message = sprintf('Server returned status code %d', $response_code);
-                error_log(sprintf('Region %s: Connection attempt %d failed: %s',
-                    $region, $attempt, $error_message));
-                
-                // Special handling for common error codes
-                if ($response_code == 429) {
-                    // Rate limiting - use longer backoff
-                    sleep(min(30, $backoff_time * 2));
-                } elseif ($response_code >= 500) {
-                    // Server error - retry with standard backoff
-                    continue;
-                } elseif ($response_code == 403) {
-                    // Forbidden - might be blocking scrapers, try with different user agent
-                    $this->default_config['user_agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
-                    continue;
-                } elseif ($response_code == 404) {
-                    // Page not found - URL might have changed
-                    break; // Don't retry 404 errors
-                }
-                
-                continue; // Try again for other status codes
+            if ($response_code !== 200) {
+                throw new Exception('HTTP request failed with code: ' . $response_code);
             }
             
-            // Get the body
-            $body = wp_remote_retrieve_body($response);
-            if (empty($body)) {
-                $error_message = 'Empty response from server';
-                error_log(sprintf('Region %s: Connection attempt %d failed: %s',
-                    $region, $attempt, $error_message));
-                continue; // Try again
+            $html = wp_remote_retrieve_body($response);
+            if (empty($html)) {
+                throw new Exception('Empty response from server');
             }
             
-            // If we got here, the connection was successful
-            $success = true;
-        }
-        
-        // If all attempts failed, return error
-        if (!$success) {
-            return array(
-                'success' => false,
-                'message' => sprintf('Failed to connect after %d attempts: %s', $options['retry_attempts'], $error_message),
-                'obituaries' => array()
-            );
-        }
-        
-        // Parse the obituaries from the HTML
-        $body = wp_remote_retrieve_body($response);
-        
-        // Track structure detection results if adaptive mode is enabled
-        $structure_detection = null;
-        if ($options['adaptive_mode']) {
-            // Get the selectors for this region
-            $selectors = $this->get_region_selectors($region);
+            // Load the HTML into DOMDocument
+            $dom = new DOMDocument();
+            @$dom->loadHTML($html);
             
-            // Attempt structure detection
-            $structure_detection = $this->detect_page_structure($body, $region);
+            // Create a DOMXPath object
+            $xpath = new DOMXPath($dom);
             
-            // If we detected a different structure, use it instead
-            if ($structure_detection['detected_changes']) {
-                $this->structure_change_alerts[] = sprintf(
-                    'Region %s: %s',
-                    $region, 
-                    $structure_detection['message']
-                );
-                
-                error_log(sprintf('STRUCTURE CHANGE DETECTED for %s: %s',
-                    $region, $structure_detection['message']));
-                
-                // Use the adaptive selectors if found
-                if (!empty($structure_detection['new_selectors'])) {
-                    $selectors = $structure_detection['new_selectors'];
-                    error_log('Using adaptive selectors: ' . json_encode($selectors));
+            // Try to find the list of obituaries using primary selectors
+            $selector = $source['selectors']['list'];
+            $obituary_nodes = $xpath->query('//' . str_replace(' ', '/descendant::', $selector));
+            
+            // If primary selector fails, try backup selectors
+            if ($obituary_nodes->length === 0 && isset($source['backup_selectors']['list'])) {
+                $backup_selectors = explode(', ', $source['backup_selectors']['list']);
+                foreach ($backup_selectors as $backup_selector) {
+                    $obituary_nodes = $xpath->query('//' . str_replace(' ', '/descendant::', $backup_selector));
+                    if ($obituary_nodes->length > 0) {
+                        // Update the source with the working selector for future scrapes
+                        $this->sources[$source_id]['selectors']['list'] = $backup_selector;
+                        break;
+                    }
                 }
             }
+            
+            // Process found obituaries
+            if ($obituary_nodes->length > 0) {
+                $results['found'] = $obituary_nodes->length;
+                
+                foreach ($obituary_nodes as $node) {
+                    // Extract data using selectors
+                    $obituary_data = $this->extract_obituary_data($node, $xpath, $source);
+                    
+                    // Validate and filter data
+                    if ($this->validate_obituary($obituary_data)) {
+                        // Check if this obituary already exists in the database
+                        if (!$this->obituary_exists($obituary_data)) {
+                            // Save to database
+                            $added = $this->save_obituary($obituary_data);
+                            if ($added) {
+                                $results['added']++;
+                            }
+                        }
+                    }
+                }
+            } else {
+                $results['errors'][] = 'No obituaries found on page';
+            }
+        } catch (Exception $e) {
+            $results['errors'][] = $e->getMessage();
+            
+            // Attempt to recover from common errors
+            if (strpos($e->getMessage(), 'HTTP request failed') !== false) {
+                // Try with different timeout
+                try {
+                    $response = wp_remote_get($source['url'], array(
+                        'timeout' => 60,
+                        'user-agent' => 'Mozilla/5.0 (compatible; Ontario Obituaries Bot/1.0)'
+                    ));
+                    
+                    if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                        $results['errors'][] = 'Recovered with extended timeout';
+                        // Process the response here...
+                        // (simplified for this example)
+                    }
+                } catch (Exception $recovery_e) {
+                    $results['errors'][] = 'Recovery attempt failed: ' . $recovery_e->getMessage();
+                }
+            }
         }
         
-        // Parse obituaries using the appropriate selectors
-        $obituaries = $this->parse_obituaries($body, $region, $url);
-        
-        if (empty($obituaries)) {
-            // No obituaries found, but connection was successful
-            return array(
-                'success' => true,
-                'message' => 'Connection successful but no obituaries found',
-                'obituaries' => array(),
-                'structure_detection' => $structure_detection
-            );
-        }
-        
-        // Filter obituaries by max age
-        $filtered_obituaries = $this->filter_obituaries_by_age($obituaries, $options['max_age']);
-        
-        return array(
-            'success' => true,
-            'message' => sprintf('Successfully scraped %d obituaries (%d within max age)',
-                count($obituaries), count($filtered_obituaries)),
-            'obituaries' => $filtered_obituaries,
-            'structure_detection' => $structure_detection
-        );
+        return $results;
     }
     
     /**
-     * Parse obituaries from HTML content with improved error handling
+     * Extract obituary data from a DOM node
      * 
-     * @param string $html The HTML content to parse
-     * @param string $region The region
-     * @param string $url The source URL
-     * @return array Array of obituary data
+     * @param DOMNode $node The obituary DOM node
+     * @param DOMXPath $xpath The XPath object
+     * @param array $source The source configuration
+     * @return array The extracted obituary data
      */
-    private function parse_obituaries($html, $region, $url) {
-        $obituaries = array();
+    private function extract_obituary_data($node, $xpath, $source) {
+        $data = array(
+            'name' => '',
+            'date_of_birth' => null,
+            'date_of_death' => null,
+            'age' => null,
+            'funeral_home' => $source['name'],
+            'location' => $source['region'],
+            'image_url' => '',
+            'description' => '',
+            'source_url' => ''
+        );
         
-        // Create a new DOMDocument
-        $dom = new DOMDocument();
-        
-        // Suppress errors for malformed HTML
-        libxml_use_internal_errors(true);
-        
-        // Load the HTML
-        $dom->loadHTML($html);
-        
-        // Get errors for diagnosis
-        $errors = libxml_get_errors();
-        libxml_clear_errors();
-        
-        // Log serious parsing errors but continue
-        if (count($errors) > 10) {
-            error_log(sprintf('Region %s: HTML parsing had %d errors - page structure might have changed',
-                $region, count($errors)));
-        }
-        
-        // Create a new DOMXPath
-        $xpath = new DOMXPath($dom);
-        
-        // Get the selectors for this region
-        $selectors = $this->get_region_selectors($region);
-        
-        // Try different container selectors if adaptive mode is enabled
-        $container_selectors = array($selectors['container']);
-        
-        if (!empty($selectors['fallback_containers'])) {
-            $container_selectors = array_merge($container_selectors, $selectors['fallback_containers']);
-        }
-        
-        // Try each container selector
-        $obituary_elements = null;
-        $used_selector = '';
-        
-        foreach ($container_selectors as $container_selector) {
-            $obituary_elements = $xpath->query($container_selector);
+        // Helper function to try multiple selectors
+        $extract_with_selectors = function($primary_selector, $backup_selectors = '') {
+            $value = $this->extract_node_value($node, $xpath, $primary_selector);
             
-            if ($obituary_elements && $obituary_elements->length > 0) {
-                $used_selector = $container_selector;
-                break;
+            if (empty($value) && !empty($backup_selectors)) {
+                $backup_selectors_array = explode(', ', $backup_selectors);
+                foreach ($backup_selectors_array as $backup_selector) {
+                    $value = $this->extract_node_value($node, $xpath, $backup_selector);
+                    if (!empty($value)) {
+                        break;
+                    }
+                }
+            }
+            
+            return $value;
+        };
+        
+        // Extract name
+        $data['name'] = $extract_with_selectors(
+            $source['selectors']['name'], 
+            isset($source['backup_selectors']['name']) ? $source['backup_selectors']['name'] : ''
+        );
+        
+        // Extract dates
+        $dates_text = $extract_with_selectors(
+            $source['selectors']['dates'],
+            isset($source['backup_selectors']['dates']) ? $source['backup_selectors']['dates'] : ''
+        );
+        
+        // Parse dates from text
+        if (!empty($dates_text)) {
+            $parsed_dates = $this->parse_dates($dates_text);
+            $data['date_of_birth'] = $parsed_dates['birth'];
+            $data['date_of_death'] = $parsed_dates['death'];
+            
+            // Calculate age if we have both dates
+            if ($data['date_of_birth'] && $data['date_of_death']) {
+                $birth_date = new DateTime($data['date_of_birth']);
+                $death_date = new DateTime($data['date_of_death']);
+                $interval = $birth_date->diff($death_date);
+                $data['age'] = $interval->y;
             }
         }
         
-        // If no elements were found with any selector, return empty array
-        if (!$obituary_elements || $obituary_elements->length === 0) {
-            error_log(sprintf('Region %s: No obituary elements found with any container selector',
-                $region));
-            return array();
+        // Extract description
+        $data['description'] = $extract_with_selectors(
+            $source['selectors']['description'],
+            isset($source['backup_selectors']['description']) ? $source['backup_selectors']['description'] : ''
+        );
+        
+        // Extract image URL
+        $image_selector = $source['selectors']['image'];
+        $backup_image_selector = isset($source['backup_selectors']['image']) ? $source['backup_selectors']['image'] : '';
+        
+        $image_nodes = $xpath->query('.//' . str_replace(' ', '/descendant::', $image_selector), $node);
+        if ($image_nodes->length > 0) {
+            $data['image_url'] = $image_nodes->item(0)->getAttribute('src');
+        } elseif (!empty($backup_image_selector)) {
+            $backup_selectors = explode(', ', $backup_image_selector);
+            foreach ($backup_selectors as $backup_selector) {
+                $image_nodes = $xpath->query('.//' . str_replace(' ', '/descendant::', $backup_selector), $node);
+                if ($image_nodes->length > 0) {
+                    $data['image_url'] = $image_nodes->item(0)->getAttribute('src');
+                    break;
+                }
+            }
         }
         
-        // Log which selector worked
-        error_log(sprintf('Region %s: Found %d obituary elements using selector: %s',
-            $region, $obituary_elements->length, $used_selector));
+        // Make sure image URL is absolute
+        if (!empty($data['image_url']) && strpos($data['image_url'], 'http') !== 0) {
+            $parsed_url = parse_url($source['url']);
+            $base_url = $parsed_url['scheme'] . '://' . $parsed_url['host'];
+            
+            if (strpos($data['image_url'], '/') === 0) {
+                $data['image_url'] = $base_url . $data['image_url'];
+            } else {
+                $data['image_url'] = $base_url . '/' . $data['image_url'];
+            }
+        }
         
-        // Process each obituary element
-        foreach ($obituary_elements as $element) {
-            try {
-                // Extract obituary data using selectors
-                $name_selector = $selectors['name'];
-                $name_element = $xpath->query($name_selector, $element)->item(0);
-                $name = $name_element ? trim($name_element->textContent) : '';
-                
-                $date_selector = $selectors['date'];
-                $date_element = $xpath->query($date_selector, $element)->item(0);
-                $date_text = $date_element ? trim($date_element->textContent) : '';
-                
-                // Parse date of death from text
-                $date_of_death = $this->parse_date($date_text);
-                
-                $image_selector = $selectors['image'];
-                $image_element = $xpath->query($image_selector, $element)->item(0);
-                $image_url = $image_element ? $image_element->getAttribute('src') : '';
-                
-                // Fix relative URLs
-                if ($image_url && strpos($image_url, 'http') !== 0) {
-                    $image_url = $this->make_absolute_url($image_url, $url);
+        // Extract source URL (link to full obituary)
+        $link_selector = $source['selectors']['link'];
+        $backup_link_selector = isset($source['backup_selectors']['link']) ? $source['backup_selectors']['link'] : '';
+        
+        $link_nodes = $xpath->query('.//' . str_replace(' ', '/descendant::', $link_selector), $node);
+        if ($link_nodes->length > 0) {
+            $data['source_url'] = $link_nodes->item(0)->getAttribute('href');
+        } elseif (!empty($backup_link_selector)) {
+            $backup_selectors = explode(', ', $backup_link_selector);
+            foreach ($backup_selectors as $backup_selector) {
+                $link_nodes = $xpath->query('.//' . str_replace(' ', '/descendant::', $backup_selector), $node);
+                if ($link_nodes->length > 0) {
+                    $data['source_url'] = $link_nodes->item(0)->getAttribute('href');
+                    break;
                 }
+            }
+        }
+        
+        // Make sure source URL is absolute
+        if (!empty($data['source_url']) && strpos($data['source_url'], 'http') !== 0) {
+            $parsed_url = parse_url($source['url']);
+            $base_url = $parsed_url['scheme'] . '://' . $parsed_url['host'];
+            
+            if (strpos($data['source_url'], '/') === 0) {
+                $data['source_url'] = $base_url . $data['source_url'];
+            } else {
+                $data['source_url'] = $base_url . '/' . $data['source_url'];
+            }
+        }
+        
+        return $data;
+    }
+    
+    /**
+     * Extract text value from a node using an XPath selector
+     * 
+     * @param DOMNode $node The parent node
+     * @param DOMXPath $xpath The XPath object
+     * @param string $selector The selector
+     * @return string The extracted text
+     */
+    private function extract_node_value($node, $xpath, $selector) {
+        $child_nodes = $xpath->query('.//' . str_replace(' ', '/descendant::', $selector), $node);
+        if ($child_nodes->length > 0) {
+            return trim($child_nodes->item(0)->textContent);
+        }
+        return '';
+    }
+    
+    /**
+     * Parse birth and death dates from a string
+     * 
+     * @param string $dates_text The text containing dates
+     * @return array Array with 'birth' and 'death' dates in Y-m-d format
+     */
+    private function parse_dates($dates_text) {
+        $result = array(
+            'birth' => null,
+            'death' => null
+        );
+        
+        // Common date formats
+        $date_formats = array(
+            'F j, Y',       // January 1, 2020
+            'M j, Y',       // Jan 1, 2020
+            'Y-m-d',        // 2020-01-01
+            'd/m/Y',        // 01/01/2020
+            'm/d/Y',        // 01/01/2020
+            'd.m.Y',        // 01.01.2020
+            'j F Y',        // 1 January 2020
+            'j M Y'         // 1 Jan 2020
+        );
+        
+        // Try to match patterns like "Born: Jan 1, 1950 - Died: Jan 1, 2020"
+        $patterns = array(
+            // Pattern 1: Born: <date> - Died: <date>
+            '/born:?\s*([^-]+)-\s*died:?\s*([^-,\.]+)/i',
+            
+            // Pattern 2: <date> - <date>
+            '/([^-]+)-\s*([^-,\.]+)/i',
+            
+            // Pattern 3: <birth year> - <death year>
+            '/(\d{4})\s*-\s*(\d{4})/',
+            
+            // Pattern 4: <date of birth> to <date of death>
+            '/([^to]+)\s+to\s+([^,\.]+)/i',
+            
+            // Pattern 5: <birth year> to <death year>
+            '/(\d{4})\s+to\s+(\d{4})/'
+        );
+        
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $dates_text, $matches)) {
+                $birth_text = trim($matches[1]);
+                $death_text = trim($matches[2]);
                 
-                $desc_selector = $selectors['description'];
-                $desc_element = $xpath->query($desc_selector, $element)->item(0);
-                $description = $desc_element ? trim($desc_element->textContent) : '';
-                
-                // Try to extract age if available
-                $age = null;
-                if (!empty($date_text)) {
-                    // Look for age in format "Age XX" or "XX years old"
-                    if (preg_match('/Age[^\d]*(\d+)|(\d+)[^\d]*years old/i', $date_text, $matches)) {
-                        $age = !empty($matches[1]) ? intval($matches[1]) : intval($matches[2]);
-                    } elseif (preg_match('/(\d+)[^\d]*years/i', $description, $matches)) {
-                        $age = intval($matches[1]);
+                // Try to parse the dates using different formats
+                foreach ($date_formats as $format) {
+                    // Try to parse birth date
+                    $birth_date = DateTime::createFromFormat($format, $birth_text);
+                    if ($birth_date) {
+                        $result['birth'] = $birth_date->format('Y-m-d');
+                        break;
                     }
                 }
                 
-                // Only add if we have at least a name and date
-                if (!empty($name) && !empty($date_of_death)) {
-                    $obituaries[] = array(
-                        'name' => $name,
-                        'date_of_death' => $date_of_death,
-                        'funeral_home' => $this->get_funeral_home_for_region($region),
-                        'location' => $region,
-                        'age' => $age,
-                        'image_url' => $image_url,
-                        'description' => $description,
-                        'source_url' => $url
-                    );
+                foreach ($date_formats as $format) {
+                    // Try to parse death date
+                    $death_date = DateTime::createFromFormat($format, $death_text);
+                    if ($death_date) {
+                        $result['death'] = $death_date->format('Y-m-d');
+                        break;
+                    }
                 }
-            } catch (Exception $e) {
-                // Log the error but continue processing other elements
-                error_log(sprintf('Error processing obituary element: %s', $e->getMessage()));
-                continue;
+                
+                // If we only matched years, create full dates
+                if ($result['birth'] === null && strlen($birth_text) === 4 && is_numeric($birth_text)) {
+                    $result['birth'] = $birth_text . '-01-01';
+                }
+                
+                if ($result['death'] === null && strlen($death_text) === 4 && is_numeric($death_text)) {
+                    $result['death'] = $death_text . '-01-01';
+                }
+                
+                // If we found both dates, stop processing
+                if ($result['birth'] !== null && $result['death'] !== null) {
+                    break;
+                }
             }
         }
         
-        return $obituaries;
-    }
-    
-    /**
-     * Detect changes in page structure and adapt selectors
-     * 
-     * @param string $html The HTML content to analyze
-     * @param string $region The region name
-     * @return array Detection results
-     */
-    private function detect_page_structure($html, $region) {
-        // Create a new DOMDocument
-        $dom = new DOMDocument();
-        
-        // Suppress errors for malformed HTML
-        libxml_use_internal_errors(true);
-        
-        // Load the HTML
-        $dom->loadHTML($html);
-        libxml_clear_errors();
-        
-        // Create a new DOMXPath
-        $xpath = new DOMXPath($dom);
-        
-        // Get the current selectors
-        $current_selectors = $this->get_region_selectors($region);
-        
-        // Try the current container selector
-        $current_elements = $xpath->query($current_selectors['container']);
-        
-        $result = array(
-            'detected_changes' => false,
-            'message' => '',
-            'new_selectors' => array()
-        );
-        
-        // If current selector works well, no change needed
-        if ($current_elements && $current_elements->length > 3) {
-            return $result;
-        }
-        
-        // Try to detect common obituary containers
-        $potential_selectors = array(
-            // Common container patterns for obituaries
-            '//div[contains(@class, "obit")]',
-            '//div[contains(@class, "obituary")]',
-            '//article[contains(@class, "death")]',
-            '//article[contains(@class, "obituary")]',
-            '//div[contains(@class, "death-notice")]',
-            '//div[@class="card" or contains(@class, "card-body")]',
-            '//div[contains(@class, "listing-item")]',
-            '//div[contains(@class, "search-result")]',
-            // Legacy.com specific
-            '//div[contains(@class, "obit-card")]',
-            '//div[contains(@class, "EntryContainer")]',
-            '//li[contains(@class, "EntryListItem")]'
-        );
-        
-        $best_selector = '';
-        $max_count = 0;
-        
-        // Try each potential selector and see which finds the most elements
-        foreach ($potential_selectors as $selector) {
-            $elements = $xpath->query($selector);
-            
-            if ($elements && $elements->length > $max_count) {
-                $max_count = $elements->length;
-                $best_selector = $selector;
-            }
-        }
-        
-        // If we found a better selector with at least 3 elements
-        if ($max_count >= 3 && $best_selector !== $current_selectors['container']) {
-            // We've detected a structure change!
-            $result['detected_changes'] = true;
-            $result['message'] = sprintf(
-                'Structure change detected! Old selector "%s" found %d elements, new selector "%s" found %d elements',
-                $current_selectors['container'],
-                $current_elements ? $current_elements->length : 0,
-                $best_selector,
-                $max_count
+        // If we couldn't find both dates, try to find just the death date
+        if ($result['death'] === null) {
+            // Look for phrases indicating a death date
+            $death_patterns = array(
+                '/passed\s+away\s+on\s+([^\.]+)/i',
+                '/died\s+on\s+([^\.]+)/i',
+                '/deceased\s+on\s+([^\.]+)/i'
             );
             
-            // Now try to detect appropriate child selectors
-            $sample_element = $xpath->query($best_selector)->item(0);
-            if ($sample_element) {
-                $new_selectors = $this->analyze_element_structure($sample_element, $xpath);
-                
-                // Combine with the new container selector
-                $result['new_selectors'] = array_merge(
-                    array('container' => $best_selector),
-                    $new_selectors
-                );
-                
-                // Add the old selector as a fallback
-                $result['new_selectors']['fallback_containers'] = array($current_selectors['container']);
-                
-                // Store the new selectors for this region
-                $this->update_region_selectors($region, $result['new_selectors']);
+            foreach ($death_patterns as $pattern) {
+                if (preg_match($pattern, $dates_text, $matches)) {
+                    $death_text = trim($matches[1]);
+                    
+                    foreach ($date_formats as $format) {
+                        $death_date = DateTime::createFromFormat($format, $death_text);
+                        if ($death_date) {
+                            $result['death'] = $death_date->format('Y-m-d');
+                            break 2;
+                        }
+                    }
+                }
             }
+        }
+        
+        // If we still don't have a death date, use today's date as fallback
+        if ($result['death'] === null) {
+            $result['death'] = date('Y-m-d');
         }
         
         return $result;
     }
     
     /**
-     * Analyze an element to determine appropriate selectors for child elements
+     * Validate obituary data
      * 
-     * @param DOMElement $element The element to analyze
-     * @param DOMXPath $xpath The XPath object for queries
-     * @return array Detected selectors
+     * @param array $data The obituary data
+     * @return bool Whether the data is valid
      */
-    private function analyze_element_structure($element, $xpath) {
-        $selectors = array();
-        
-        // Common patterns for obituary name elements
-        $name_patterns = array(
-            './/h1', './/h2', './/h3', './/h4',
-            './/div[contains(@class, "name")]',
-            './/div[contains(@class, "title")]',
-            './/div[contains(@class, "heading")]',
-            './/a[contains(@class, "name")]',
-            './/span[contains(@class, "name")]',
-            './/div[contains(@class, "obit-name")]',
-            './/a[not(contains(@href, "javascript"))]'
-        );
-        
-        // Try to find the name element
-        foreach ($name_patterns as $pattern) {
-            $name_elements = $xpath->query($pattern, $element);
-            if ($name_elements && $name_elements->length > 0) {
-                $selectors['name'] = $pattern;
-                break;
-            }
+    private function validate_obituary($data) {
+        // Name is required
+        if (empty($data['name'])) {
+            return false;
         }
         
-        // Common patterns for date elements
-        $date_patterns = array(
-            './/time',
-            './/div[contains(@class, "date")]',
-            './/span[contains(@class, "date")]',
-            './/div[contains(text(), "died") or contains(text(), "passed")]',
-            './/span[contains(text(), "died") or contains(text(), "passed")]',
-            './/p[contains(text(), "died") or contains(text(), "passed")]'
-        );
-        
-        // Try to find the date element
-        foreach ($date_patterns as $pattern) {
-            $date_elements = $xpath->query($pattern, $element);
-            if ($date_elements && $date_elements->length > 0) {
-                $selectors['date'] = $pattern;
-                break;
-            }
+        // Death date is required
+        if (empty($data['date_of_death'])) {
+            return false;
         }
         
-        // Common patterns for image elements
-        $image_patterns = array(
-            './/img',
-            './/div[contains(@class, "image")]//img',
-            './/div[contains(@class, "photo")]//img',
-            './/div[contains(@class, "thumbnail")]//img'
-        );
-        
-        // Try to find the image element
-        foreach ($image_patterns as $pattern) {
-            $image_elements = $xpath->query($pattern, $element);
-            if ($image_elements && $image_elements->length > 0) {
-                $selectors['image'] = $pattern;
-                break;
-            }
-        }
-        
-        // Common patterns for description elements
-        $desc_patterns = array(
-            './/div[contains(@class, "desc")]',
-            './/div[contains(@class, "content")]',
-            './/div[contains(@class, "text")]',
-            './/p',
-            './/div[contains(@class, "summary")]',
-            './/div[contains(@class, "body")]'
-        );
-        
-        // Try to find the description element
-        foreach ($desc_patterns as $pattern) {
-            $desc_elements = $xpath->query($pattern, $element);
-            if ($desc_elements && $desc_elements->length > 0) {
-                $selectors['description'] = $pattern;
-                break;
-            }
-        }
-        
-        // Fill in any missing selectors with defaults
-        if (empty($selectors['name'])) {
-            $selectors['name'] = './/h3';
-        }
-        
-        if (empty($selectors['date'])) {
-            $selectors['date'] = './/span[contains(@class, "date")]';
-        }
-        
-        if (empty($selectors['image'])) {
-            $selectors['image'] = './/img';
-        }
-        
-        if (empty($selectors['description'])) {
-            $selectors['description'] = './/p';
-        }
-        
-        return $selectors;
-    }
-    
-    /**
-     * Update the selectors for a region
-     * 
-     * @param string $region The region name
-     * @param array $selectors The new selectors
-     */
-    private function update_region_selectors($region, $selectors) {
-        // Get current selectors from options
-        $region_selectors = get_option('ontario_obituaries_region_selectors', array());
-        
-        // Update this region's selectors
-        $region_selectors[$region] = $selectors;
-        
-        // Save back to options
-        update_option('ontario_obituaries_region_selectors', $region_selectors);
-        
-        // Log the update
-        error_log(sprintf('Updated selectors for region %s: %s',
-            $region, json_encode($selectors)));
-    }
-    
-    /**
-     * Parse a date string into a MySQL date format with enhanced recognition
-     * 
-     * @param string $date_string The date string to parse
-     * @return string MySQL formatted date (Y-m-d)
-     */
-    private function parse_date($date_string) {
-        // Try to parse various date formats
-        $date_formats = array(
-            'F j, Y',       // January 1, 2023
-            'M j, Y',       // Jan 1, 2023
-            'Y-m-d',        // 2023-01-01
-            'm/d/Y',        // 01/01/2023
-            'd/m/Y',        // 01/01/2023
-            'j F Y',        // 1 January 2023
-            'j M Y',        // 1 Jan 2023
-            'F d, Y',       // January 01, 2023
-            'M d, Y',       // Jan 01, 2023
-            'd-m-Y',        // 01-01-2023
-            'd.m.Y',        // 01.01.2023
-        );
-        
-        foreach ($date_formats as $format) {
-            $date = date_create_from_format($format, $date_string);
-            if ($date) {
-                return $date->format('Y-m-d');
-            }
-        }
-        
-        // Try to extract a date using various regex patterns
-        $patterns = array(
-            // ISO format: 2023-01-01
-            '/\b(19|20)\d\d[-\/]\d{1,2}[-\/]\d{1,2}\b/',
-            
-            // MM/DD/YYYY or DD/MM/YYYY
-            '/\b\d{1,2}[-\/\.]\d{1,2}[-\/\.](19|20)\d\d\b/',
-            
-            // Common English format with month name: January 1, 2023
-            '/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(19|20)\d\d\b/i',
-            
-            // Date ranges - extract end date: January 1, 1950 - March 15, 2023
-            '/\s+-\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(19|20)\d\d\b/i',
-            
-            // Patterns for "died on" or "passed away on" followed by a date
-            '/(?:died|passed away)(?:\s+on)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(19|20)\d\d\b/i',
-        );
-        
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $date_string, $matches)) {
-                $extracted_date = trim($matches[0]);
-                
-                // For "died on" pattern, remove the prefix
-                $extracted_date = preg_replace('/(?:died|passed away)(?:\s+on)?\s+/i', '', $extracted_date);
-                
-                // For range pattern with dash, remove everything before the dash
-                if (strpos($extracted_date, ' - ') !== false) {
-                    $extracted_date = trim(substr($extracted_date, strpos($extracted_date, '-') + 1));
-                }
-                
-                // Try to convert to timestamp
-                $timestamp = strtotime($extracted_date);
-                if ($timestamp) {
-                    return date('Y-m-d', $timestamp);
+        // Check against filtered keywords
+        if (!empty($this->settings['filter_keywords'])) {
+            $keywords = explode(',', $this->settings['filter_keywords']);
+            foreach ($keywords as $keyword) {
+                $keyword = trim($keyword);
+                if (!empty($keyword) && stripos($data['name'] . ' ' . $data['description'], $keyword) !== false) {
+                    // Keyword found, filter this obituary
+                    return false;
                 }
             }
         }
         
-        // If still no date found, look for just year and month
-        if (preg_match('/\b(19|20)\d\d\b/', $date_string, $year_matches) && 
-            preg_match('/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b/i', $date_string, $month_matches)) {
-            
-            $year = $year_matches[0];
-            $month = $month_matches[0];
-            
-            // Construct a date string with the 1st of the month
-            $constructed_date = "$month 1, $year";
-            $timestamp = strtotime($constructed_date);
-            
-            if ($timestamp) {
-                return date('Y-m-d', $timestamp);
-            }
-        }
-        
-        // Use current date as fallback
-        return date('Y-m-d');
+        return true;
     }
     
     /**
-     * Convert a relative URL to an absolute URL
+     * Check if an obituary already exists in the database
      * 
-     * @param string $rel_url The relative URL
-     * @param string $base_url The base URL
-     * @return string The absolute URL
+     * @param array $data The obituary data
+     * @return bool Whether the obituary exists
      */
-    private function make_absolute_url($rel_url, $base_url) {
-        $parsed_url = parse_url($base_url);
-        $scheme = isset($parsed_url['scheme']) ? $parsed_url['scheme'] . '://' : '';
-        $host = isset($parsed_url['host']) ? $parsed_url['host'] : '';
-        $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
+    private function obituary_exists($data) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
         
-        // Remove filename from path if it exists
-        $path = preg_replace('/\/[^\/]*$/', '/', $path);
+        // Check for existing record with same name and date of death
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table_name WHERE name = %s AND date_of_death = %s LIMIT 1",
+            $data['name'],
+            $data['date_of_death']
+        ));
         
-        if (substr($rel_url, 0, 2) === '//') {
-            // Protocol-relative URL
-            return $scheme . ltrim($rel_url, '/');
-        }
-        
-        if (substr($rel_url, 0, 1) === '/') {
-            // Root-relative URL
-            return $scheme . $host . $rel_url;
-        }
-        
-        // Path-relative URL
-        return $scheme . $host . $path . $rel_url;
+        return !empty($existing);
     }
     
     /**
-     * Filter obituaries by max age
+     * Save obituary to database
      * 
-     * @param array $obituaries Array of obituary data
-     * @param int $max_age Maximum age in days
+     * @param array $data The obituary data
+     * @return bool Whether the save was successful
+     */
+    private function save_obituary($data) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
+        
+        // Save to database
+        $result = $wpdb->insert(
+            $table_name,
+            array(
+                'name' => $data['name'],
+                'date_of_birth' => $data['date_of_birth'],
+                'date_of_death' => $data['date_of_death'],
+                'age' => $data['age'],
+                'funeral_home' => $data['funeral_home'],
+                'location' => $data['location'],
+                'image_url' => $data['image_url'],
+                'description' => $data['description'],
+                'source_url' => $data['source_url'],
+                'created_at' => current_time('mysql')
+            ),
+            array(
+                '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s'
+            )
+        );
+        
+        return ($result !== false);
+    }
+    
+    /**
+     * Send notification email about new obituaries
+     * 
+     * @param array $results The scrape results
+     */
+    private function send_notification_email($results) {
+        $subject = sprintf(
+            __('[%s] %d New Obituaries Found', 'ontario-obituaries'),
+            get_bloginfo('name'),
+            $results['obituaries_added']
+        );
+        
+        $message = sprintf(
+            __('The Ontario Obituaries scraper has completed its run and found %d new obituaries.', 'ontario-obituaries'),
+            $results['obituaries_added']
+        ) . "\n\n";
+        
+        $message .= __('Scrape Summary:', 'ontario-obituaries') . "\n";
+        $message .= sprintf(__('- Sources scraped: %d', 'ontario-obituaries'), $results['sources_scraped']) . "\n";
+        $message .= sprintf(__('- Total obituaries found: %d', 'ontario-obituaries'), $results['obituaries_found']) . "\n";
+        $message .= sprintf(__('- New obituaries added: %d', 'ontario-obituaries'), $results['obituaries_added']) . "\n\n";
+        
+        if (!empty($results['errors'])) {
+            $message .= __('Errors encountered:', 'ontario-obituaries') . "\n";
+            foreach ($results['errors'] as $source_id => $errors) {
+                $message .= "- $source_id: " . implode(', ', (array)$errors) . "\n";
+            }
+            $message .= "\n";
+        }
+        
+        $message .= __('You can view the obituaries in the admin area:', 'ontario-obituaries') . "\n";
+        $message .= admin_url('admin.php?page=ontario-obituaries') . "\n\n";
+        
+        $message .= __('This is an automated message. Please do not reply.', 'ontario-obituaries');
+        
+        // Send email to admin
+        wp_mail(get_option('admin_email'), $subject, $message);
+    }
+}
