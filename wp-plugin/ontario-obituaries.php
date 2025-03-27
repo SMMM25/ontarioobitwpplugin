@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Plugin Name: Ontario Obituaries
@@ -226,6 +225,90 @@ function ontario_obituaries_facebook_settings_page() {
     </div>
     <?php
 }
+
+// Add admin script for debug page
+function ontario_obituaries_admin_scripts($hook) {
+    // Only load on our plugin's debug page
+    if ($hook !== 'ontario-obituaries_page_ontario-obituaries-debug') {
+        return;
+    }
+    
+    wp_enqueue_script(
+        'ontario-obituaries-debug-js',
+        ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-debug.js',
+        array('jquery'),
+        ONTARIO_OBITUARIES_VERSION,
+        true
+    );
+    
+    // Add some basic styles for the debug page
+    wp_add_inline_style('wp-admin', '
+        .ontario-obituaries-debug .card {
+            background: #fff;
+            border: 1px solid #ccd0d4;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            padding: 20px;
+        }
+        
+        .ontario-debug-actions {
+            margin-bottom: 20px;
+        }
+        
+        .ontario-debug-regions {
+            margin-bottom: 20px;
+        }
+        
+        .ontario-debug-log {
+            background: #f6f7f7;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .log-item {
+            font-family: monospace;
+            margin-bottom: 5px;
+        }
+        
+        .log-info {
+            color: #007cba;
+        }
+        
+        .log-success {
+            color: #46b450;
+        }
+        
+        .log-error {
+            color: #dc3232;
+        }
+        
+        .region-status {
+            font-weight: bold;
+        }
+        
+        .region-status.success {
+            color: #46b450;
+        }
+        
+        .region-status.error {
+            color: #dc3232;
+        }
+    ');
+    
+    // Pass data to JavaScript
+    wp_localize_script(
+        'ontario-obituaries-debug-js',
+        'ontarioObituariesData',
+        array(
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('ontario-obituaries-nonce')
+        )
+    );
+}
+add_action('admin_enqueue_scripts', 'ontario_obituaries_admin_scripts');
 
 // Update localized script data to include Facebook info
 function ontario_obituaries_enqueue_scripts() {

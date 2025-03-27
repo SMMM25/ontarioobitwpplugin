@@ -1,86 +1,141 @@
 
+/**
+ * Ontario Obituaries Debug JavaScript
+ */
 jQuery(document).ready(function($) {
-    // Test scraper button click handler
-    $('#ontario-test-scraper').on('click', function() {
-        var $button = $(this);
-        var buttonText = $button.text();
+    // Variables
+    var ajaxUrl = ontarioObituariesData.ajaxUrl;
+    var nonce = ontarioObituariesData.nonce;
+    var isTestingAll = false;
+    var regionsToTest = [];
+    var currentRegionIndex = 0;
+    
+    /**
+     * Add a log message to the debug log
+     */
+    function addLogMessage(message, type) {
+        var logClass = 'log-' + (type || 'info');
+        var timestamp = new Date().toLocaleTimeString();
+        var logItem = $('<div class="log-item ' + logClass + '"></div>');
         
-        // Show loading state
-        $button.prop('disabled', true).html('<span class="ontario-spinner"></span> Testing...');
+        logItem.text('[' + timestamp + '] ' + message);
+        $('#ontario-debug-log').prepend(logItem);
+    }
+    
+    /**
+     * Update region status
+     */
+    function updateRegionStatus(region, status, success) {
+        var statusClass = success ? 'success' : 'error';
+        $('.region-status[data-region="' + region + '"]')
+            .text(status)
+            .removeClass('success error')
+            .addClass(statusClass);
+    }
+    
+    /**
+     * Test connection to a region
+     */
+    function testRegionConnection(region, url) {
+        var data = {
+            action: 'ontario_obituaries_test_connection',
+            nonce: nonce,
+            region: region
+        };
         
-        // Clear previous results
-        $('#ontario-success-connections, #ontario-failed-connections, #ontario-debug-log-entries').empty();
-        $('#ontario-debug-results').hide();
+        if (url) {
+            data.url = url;
+        }
         
-        // Make AJAX request
+        addLogMessage('Testing connection to ' + region + '...', 'info');
+        
         $.ajax({
-            url: ajaxurl,
+            url: ajaxUrl,
             type: 'POST',
-            data: {
-                action: 'ontario_obituaries_test_scraper',
-                nonce: ontario_obituaries_admin.nonce
-            },
+            data: data,
             success: function(response) {
                 if (response.success) {
-                    // Show results container
-                    $('#ontario-debug-results').show();
-                    
-                    // Display successful connections
-                    if (response.data.successful.length > 0) {
-                        $.each(response.data.successful, function(index, region) {
-                            $('#ontario-success-connections').append(
-                                '<span class="ontario-connection-badge success">' + 
-                                '<span class="dashicons dashicons-yes"></span> ' + 
-                                region + 
-                                '</span>'
-                            );
-                        });
-                    } else {
-                        $('#ontario-success-connections').append(
-                            '<p class="description">No successful connections</p>'
-                        );
-                    }
-                    
-                    // Display failed connections
-                    if (response.data.failed.length > 0) {
-                        $.each(response.data.failed, function(index, region) {
-                            $('#ontario-failed-connections').append(
-                                '<span class="ontario-connection-badge error">' + 
-                                '<span class="dashicons dashicons-warning"></span> ' + 
-                                region + 
-                                '</span>'
-                            );
-                        });
-                    } else {
-                        $('#ontario-failed-connections').append(
-                            '<p class="description">No failed connections</p>'
-                        );
-                    }
-                    
-                    // Display log entries
-                    $.each(response.data.log, function(index, entry) {
-                        $('#ontario-debug-log-entries').append(
-                            '<div class="ontario-log-entry">' +
-                            '<span class="ontario-log-timestamp">[' + entry.timestamp + ']</span> ' +
-                            '<span class="ontario-log-message ' + entry.type + '">' + entry.message + '</span>' +
-                            '</div>'
-                        );
-                    });
-                    
-                    // Scroll log to bottom
-                    var logContainer = document.getElementById('ontario-debug-log-entries');
-                    logContainer.scrollTop = logContainer.scrollHeight;
+                    var message = response.data.message;
+                    addLogMessage(region + ': ' + message, 'success');
+                    updateRegionStatus(region, 'Success: ' + message, true);
                 } else {
-                    alert(response.data.message || 'An error occurred while testing the scraper.');
+                    var message = response.data.message;
+                    addLogMessage(region + ': ' + message, 'error');
+                    updateRegionStatus(region, 'Failed: ' + message, false);
+                }
+                
+                // If we're testing all regions, continue with the next one
+                if (isTestingAll) {
+                    currentRegionIndex++;
+                    if (currentRegionIndex < regionsToTest.length) {
+                        testNextRegion();
+                    } else {
+                        isTestingAll = false;
+                        $('#ontario-test-all-regions').text('Test All Regions').prop('disabled', false);
+                        addLogMessage('Completed testing all regions.', 'info');
+                    }
                 }
             },
-            error: function() {
-                alert('An error occurred while communicating with the server.');
-            },
-            complete: function() {
-                // Restore button state
-                $button.prop('disabled', false).text(buttonText);
+            error: function(xhr, status, error) {
+                addLogMessage(region + ': AJAX error - ' + error, 'error');
+                updateRegionStatus(region, 'Error: ' + error, false);
+                
+                // If we're testing all regions, continue with the next one
+                if (isTestingAll) {
+                    currentRegionIndex++;
+                    if (currentRegionIndex < regionsToTest.length) {
+                        testNextRegion();
+                    } else {
+                        isTestingAll = false;
+                        $('#ontario-test-all-regions').text('Test All Regions').prop('disabled', false);
+                        addLogMessage('Completed testing all regions.', 'info');
+                    }
+                }
             }
         });
+    }
+    
+    /**
+     * Test the next region in the queue
+     */
+    function testNextRegion() {
+        var region = regionsToTest[currentRegionIndex];
+        var url = $('.region-url[data-region="' + region + '"]').val();
+        testRegionConnection(region, url);
+    }
+    
+    /**
+     * Event handler for test region button
+     */
+    $('.test-region').on('click', function() {
+        var region = $(this).data('region');
+        var url = $('.region-url[data-region="' + region + '"]').val();
+        testRegionConnection(region, url);
+    });
+    
+    /**
+     * Event handler for test all regions button
+     */
+    $('#ontario-test-all-regions').on('click', function() {
+        if (isTestingAll) {
+            return;
+        }
+        
+        isTestingAll = true;
+        $(this).text('Testing...').prop('disabled', true);
+        
+        // Clear the log
+        $('#ontario-debug-log').empty();
+        addLogMessage('Starting to test all regions...', 'info');
+        
+        // Get all regions
+        regionsToTest = [];
+        $('.test-region').each(function() {
+            regionsToTest.push($(this).data('region'));
+        });
+        
+        // Reset the index and start testing
+        currentRegionIndex = 0;
+        testNextRegion();
     });
 });

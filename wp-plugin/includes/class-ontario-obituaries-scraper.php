@@ -46,39 +46,6 @@ class Ontario_Obituaries_Scraper {
      * @return array Result with success/failure and details
      */
     private function scrape_region($region) {
-        // This is where the actual scraping logic would go
-        // For now, we're just returning a simulated result
-        
-        // In a real implementation, this would use libraries like
-        // DOMDocument, Simple HTML DOM Parser, or Goutte to scrape websites
-        
-        // Simulate success/failure (for demonstration)
-        $success = rand(0, 10) > 3; // 70% success rate
-        
-        if ($success) {
-            return array(
-                'success' => true,
-                'count' => rand(0, 5),
-                'message' => 'Successfully scraped obituaries'
-            );
-        } else {
-            return array(
-                'success' => false,
-                'message' => 'Could not connect to source'
-            );
-        }
-    }
-    
-    /**
-     * Test connection to a region's obituary sources
-     * 
-     * @param string $region The region to test
-     * @return array Result with success/failure and details
-     */
-    public function test_connection($region) {
-        // This would be similar to scrape_region but just tests connectivity
-        // without saving any data
-        
         // Get the URL for the region
         $url = $this->get_region_url($region);
         
@@ -121,22 +88,303 @@ class Ontario_Obituaries_Scraper {
             );
         }
         
-        // In a real implementation, you would verify that the body contains
-        // the expected HTML structure that your scraper can parse
+        // Parse the obituaries from the HTML
+        $obituaries = $this->parse_obituaries($body, $region, $url);
         
-        // For now, we'll just check that it contains some basic HTML
-        if (strpos($body, '<html') === false) {
+        if (empty($obituaries)) {
             return array(
-                'success' => false,
-                'message' => 'Response is not a valid HTML page'
+                'success' => true,
+                'count' => 0,
+                'message' => 'No new obituaries found'
             );
         }
         
-        // Success!
+        // Save the obituaries to the database
+        $saved_count = $this->save_obituaries($obituaries);
+        
         return array(
             'success' => true,
-            'message' => sprintf('Successfully connected to %s (Response size: %d bytes)', $url, strlen($body))
+            'count' => $saved_count,
+            'message' => sprintf('Successfully scraped %d obituaries', $saved_count)
         );
+    }
+    
+    /**
+     * Parse obituaries from HTML content
+     * 
+     * @param string $html The HTML content to parse
+     * @param string $region The region
+     * @param string $url The source URL
+     * @return array Array of obituary data
+     */
+    private function parse_obituaries($html, $region, $url) {
+        $obituaries = array();
+        
+        // Create a new DOMDocument
+        $dom = new DOMDocument();
+        
+        // Suppress errors for malformed HTML
+        libxml_use_internal_errors(true);
+        
+        // Load the HTML
+        $dom->loadHTML($html);
+        
+        // Clear errors
+        libxml_clear_errors();
+        
+        // Create a new DOMXPath
+        $xpath = new DOMXPath($dom);
+        
+        // Get the selectors for this region
+        $selectors = $this->get_region_selectors($region);
+        
+        // Find all obituary elements using the container selector
+        $container_selector = $selectors['container'] ?? '//div[contains(@class, "obituary")]';
+        $obituary_elements = $xpath->query($container_selector);
+        
+        if ($obituary_elements && $obituary_elements->length > 0) {
+            foreach ($obituary_elements as $element) {
+                // Extract obituary data using selectors
+                $name_selector = $selectors['name'] ?? './/h3[contains(@class, "name")]';
+                $name_element = $xpath->query($name_selector, $element)->item(0);
+                $name = $name_element ? trim($name_element->textContent) : '';
+                
+                $date_selector = $selectors['date'] ?? './/span[contains(@class, "date")]';
+                $date_element = $xpath->query($date_selector, $element)->item(0);
+                $date_text = $date_element ? trim($date_element->textContent) : '';
+                
+                // Parse date of death from text
+                $date_of_death = $this->parse_date($date_text);
+                
+                $image_selector = $selectors['image'] ?? './/img';
+                $image_element = $xpath->query($image_selector, $element)->item(0);
+                $image_url = $image_element ? $image_element->getAttribute('src') : '';
+                
+                // Fix relative URLs
+                if ($image_url && strpos($image_url, 'http') !== 0) {
+                    $image_url = $this->make_absolute_url($image_url, $url);
+                }
+                
+                $desc_selector = $selectors['description'] ?? './/div[contains(@class, "description")]';
+                $desc_element = $xpath->query($desc_selector, $element)->item(0);
+                $description = $desc_element ? trim($desc_element->textContent) : '';
+                
+                // Only add if we have at least a name and date
+                if (!empty($name) && !empty($date_of_death)) {
+                    $obituaries[] = array(
+                        'name' => $name,
+                        'date_of_death' => $date_of_death,
+                        'funeral_home' => $this->get_funeral_home_for_region($region),
+                        'location' => $region,
+                        'image_url' => $image_url,
+                        'description' => $description,
+                        'source_url' => $url
+                    );
+                }
+            }
+        }
+        
+        return $obituaries;
+    }
+    
+    /**
+     * Parse a date string into a MySQL date format
+     * 
+     * @param string $date_string The date string to parse
+     * @return string MySQL formatted date (Y-m-d)
+     */
+    private function parse_date($date_string) {
+        // Try to parse various date formats
+        $date_formats = array(
+            'F j, Y',       // January 1, 2023
+            'M j, Y',       // Jan 1, 2023
+            'Y-m-d',        // 2023-01-01
+            'm/d/Y',        // 01/01/2023
+            'd/m/Y',        // 01/01/2023
+            'j F Y',        // 1 January 2023
+            'j M Y',        // 1 Jan 2023
+        );
+        
+        foreach ($date_formats as $format) {
+            $date = date_create_from_format($format, $date_string);
+            if ($date) {
+                return $date->format('Y-m-d');
+            }
+        }
+        
+        // If all else fails, try to extract a date using regex
+        if (preg_match('/\b(19|20)\d\d[-\/]\d{1,2}[-\/]\d{1,2}\b/', $date_string, $matches)) {
+            return date('Y-m-d', strtotime($matches[0]));
+        }
+        
+        if (preg_match('/\b\d{1,2}[-\/]\d{1,2}[-\/](19|20)\d\d\b/', $date_string, $matches)) {
+            return date('Y-m-d', strtotime($matches[0]));
+        }
+        
+        // Use current date as fallback
+        return date('Y-m-d');
+    }
+    
+    /**
+     * Convert a relative URL to an absolute URL
+     * 
+     * @param string $rel_url The relative URL
+     * @param string $base_url The base URL
+     * @return string The absolute URL
+     */
+    private function make_absolute_url($rel_url, $base_url) {
+        $parsed_url = parse_url($base_url);
+        $scheme = isset($parsed_url['scheme']) ? $parsed_url['scheme'] . '://' : '';
+        $host = isset($parsed_url['host']) ? $parsed_url['host'] : '';
+        $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
+        
+        // Remove filename from path if it exists
+        $path = preg_replace('/\/[^\/]*$/', '/', $path);
+        
+        if (substr($rel_url, 0, 2) === '//') {
+            // Protocol-relative URL
+            return $scheme . ltrim($rel_url, '/');
+        }
+        
+        if (substr($rel_url, 0, 1) === '/') {
+            // Root-relative URL
+            return $scheme . $host . $rel_url;
+        }
+        
+        // Path-relative URL
+        return $scheme . $host . $path . $rel_url;
+    }
+    
+    /**
+     * Save obituaries to the database
+     * 
+     * @param array $obituaries Array of obituary data
+     * @return int Number of obituaries saved
+     */
+    private function save_obituaries($obituaries) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
+        $count = 0;
+        
+        foreach ($obituaries as $obituary) {
+            // Check if this obituary already exists
+            $exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_name WHERE name = %s AND date_of_death = %s AND funeral_home = %s",
+                $obituary['name'],
+                $obituary['date_of_death'],
+                $obituary['funeral_home']
+            ));
+            
+            if (!$exists) {
+                // Insert the obituary
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'name' => $obituary['name'],
+                        'date_of_death' => $obituary['date_of_death'],
+                        'funeral_home' => $obituary['funeral_home'],
+                        'location' => $obituary['location'],
+                        'image_url' => $obituary['image_url'],
+                        'description' => $obituary['description'],
+                        'source_url' => $obituary['source_url'],
+                        'created_at' => current_time('mysql')
+                    )
+                );
+                
+                if ($wpdb->insert_id) {
+                    $count++;
+                    
+                    // Trigger action for new obituary
+                    do_action('ontario_obituaries_new_obituary', (object) array(
+                        'id' => $wpdb->insert_id,
+                        'name' => $obituary['name'],
+                        'date_of_death' => $obituary['date_of_death'],
+                        'funeral_home' => $obituary['funeral_home'],
+                        'location' => $obituary['location']
+                    ));
+                }
+            }
+        }
+        
+        return $count;
+    }
+    
+    /**
+     * Test connection to a region's obituary sources
+     * 
+     * @param string $region The region to test
+     * @return array Result with success/failure and details
+     */
+    public function test_connection($region) {
+        // Get the URL for the region
+        $url = $this->get_region_url($region);
+        
+        if (!$url) {
+            return array(
+                'success' => false,
+                'message' => 'No URL configured for this region'
+            );
+        }
+        
+        // Try to connect
+        $response = wp_remote_get($url, array(
+            'timeout' => 15,
+            'user-agent' => 'Ontario Obituaries Plugin/1.0 (WordPress)'
+        ));
+        
+        // Check for errors
+        if (is_wp_error($response)) {
+            return array(
+                'success' => false,
+                'message' => $response->get_error_message()
+            );
+        }
+        
+        // Check response code
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code != 200) {
+            return array(
+                'success' => false,
+                'message' => sprintf('Server returned status code %d', $response_code)
+            );
+        }
+        
+        // Get the body
+        $body = wp_remote_retrieve_body($response);
+        if (empty($body)) {
+            return array(
+                'success' => false,
+                'message' => 'Empty response from server'
+            );
+        }
+        
+        // Verify the HTML structure for scraping
+        $dom = new DOMDocument();
+        libxml_use_internal_errors(true);
+        $dom->loadHTML($body);
+        $xpath = new DOMXPath($dom);
+        
+        // Get the selectors for this region
+        $selectors = $this->get_region_selectors($region);
+        $container_selector = $selectors['container'] ?? '//div[contains(@class, "obituary")]';
+        
+        // Try to find obituary elements
+        $obituary_elements = $xpath->query($container_selector);
+        libxml_clear_errors();
+        
+        // Test if we can find obituary elements
+        if ($obituary_elements && $obituary_elements->length > 0) {
+            return array(
+                'success' => true,
+                'message' => sprintf('Successfully connected to %s. Found %d potential obituaries.', $url, $obituary_elements->length),
+                'count' => $obituary_elements->length
+            );
+        } else {
+            return array(
+                'success' => false,
+                'message' => sprintf('Connected to %s but could not find any obituary elements using selector: %s', $url, $container_selector)
+            );
+        }
     }
     
     /**
@@ -146,16 +394,77 @@ class Ontario_Obituaries_Scraper {
      * @return string|false The URL or false if not found
      */
     private function get_region_url($region) {
-        // In a real implementation, this would come from a settings table
-        // For now, we'll use hardcoded examples
+        // Get from options if available
+        $region_urls = get_option('ontario_obituaries_region_urls', array());
+        
+        if (!empty($region_urls[$region])) {
+            return $region_urls[$region];
+        }
+        
+        // Fallback to hardcoded examples
         $urls = array(
-            'Toronto' => 'https://www.example.com/toronto-obituaries',
-            'Ottawa' => 'https://www.example.com/ottawa-obituaries',
-            'Hamilton' => 'https://www.example.com/hamilton-obituaries',
-            'London' => 'https://www.example.com/london-obituaries',
-            'Windsor' => 'https://www.example.com/windsor-obituaries'
+            'Toronto' => 'https://www.legacy.com/ca/obituaries/thestar/',
+            'Ottawa' => 'https://www.legacy.com/ca/obituaries/ottawacitizen/',
+            'Hamilton' => 'https://www.legacy.com/ca/obituaries/thespec/',
+            'London' => 'https://www.legacy.com/ca/obituaries/lfpress/',
+            'Windsor' => 'https://www.legacy.com/ca/obituaries/windsorstar/'
         );
         
         return isset($urls[$region]) ? $urls[$region] : false;
+    }
+    
+    /**
+     * Get the selectors for a specific region
+     * 
+     * @param string $region The region name
+     * @return array The selectors
+     */
+    private function get_region_selectors($region) {
+        // Get from options if available
+        $region_selectors = get_option('ontario_obituaries_region_selectors', array());
+        
+        if (!empty($region_selectors[$region])) {
+            return $region_selectors[$region];
+        }
+        
+        // Fallback to default selectors for common funeral home websites
+        $selectors = array(
+            // Legacy.com selectors (works for many news sites)
+            'default' => array(
+                'container' => '//div[contains(@class, "obit-card")]',
+                'name' => './/div[contains(@class, "obit-card__header")]/a/span/text()',
+                'date' => './/div[contains(@class, "obit-card__header")]/a/time',
+                'image' => './/div[contains(@class, "obit-card__image")]/img',
+                'description' => './/div[contains(@class, "obit-card__cta")]'
+            ),
+            // Specific overrides for regions if needed
+            'Toronto' => array(
+                'container' => '//div[contains(@class, "obit-card")]',
+                'name' => './/div[contains(@class, "obit-card__header")]/a/span/text()',
+                'date' => './/div[contains(@class, "obit-card__header")]/a/time',
+                'image' => './/div[contains(@class, "obit-card__image")]/img',
+                'description' => './/div[contains(@class, "obit-card__cta")]'
+            )
+        );
+        
+        return isset($selectors[$region]) ? $selectors[$region] : $selectors['default'];
+    }
+    
+    /**
+     * Get the funeral home name for a region
+     * 
+     * @param string $region The region name
+     * @return string The funeral home name
+     */
+    private function get_funeral_home_for_region($region) {
+        // Get from options if available
+        $region_funeral_homes = get_option('ontario_obituaries_region_funeral_homes', array());
+        
+        if (!empty($region_funeral_homes[$region])) {
+            return $region_funeral_homes[$region];
+        }
+        
+        // Fallback to default naming
+        return $region . ' Funeral Services';
     }
 }
