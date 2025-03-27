@@ -1,9 +1,8 @@
-
 <?php
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Scrapes and displays obituaries from Ontario Canada - Compatible with Obituary Assistant
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ONTARIO_OBITUARIES_VERSION', '1.0.1');
+define('ONTARIO_OBITUARIES_VERSION', '1.0.2');
 define('ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url(__FILE__));
 

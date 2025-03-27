@@ -50,176 +50,245 @@ class Ontario_Obituaries_Scraper {
         
         // Toronto sources
         if (in_array('Toronto', $regions)) {
-            $this->sources['toronto_memorial'] = array(
-                'name' => 'Toronto Memorial',
-                'url' => 'https://www.torontomemorial.com/obituaries',
+            $this->sources['mount_pleasant'] = array(
+                'name' => 'Mount Pleasant Group',
+                'url' => 'https://www.mountpleasantgroup.com/en-CA/Obituaries/search',
                 'region' => 'Toronto',
                 'selectors' => array(
-                    'list' => '.obituary-list .obituary-item',
-                    'name' => '.obituary-name',
-                    'dates' => '.obituary-dates',
-                    'description' => '.obituary-description',
-                    'image' => '.obituary-image img',
-                    'link' => '.obituary-link'
+                    'list' => '.list-item-wrap .list-item',
+                    'name' => '.obit-name h3',
+                    'dates' => '.list-item-detail',
+                    'description' => '.more-less-text',
+                    'image' => '.obit-image img',
+                    'link' => '.list-item a'
                 ),
                 'date_format' => 'F j, Y',
                 'backup_selectors' => array(
-                    'list' => '.memorials-list .memorial-item, .obituaries-list .obit-item',
-                    'name' => '.memorial-name, .obit-name, h3.name',
-                    'dates' => '.memorial-dates, .obit-dates, .date-range',
-                    'description' => '.memorial-description, .obit-text, .summary',
-                    'image' => '.memorial-image img, .obit-image img, .photo img',
-                    'link' => '.memorial-link, .obit-link, a.more'
+                    'list' => '.obituaries-list .obituary, .obits-list .obituary-item',
+                    'name' => '.obituary-name, h3.name, .title',
+                    'dates' => '.obituary-dates, .date-info, .date-range',
+                    'description' => '.obituary-text, .description, .summary',
+                    'image' => '.obituary-image img, .photo img',
+                    'link' => 'a.details, a.more, a.view-more'
                 )
             );
             
-            $this->sources['mount_pleasant'] = array(
-                'name' => 'Mount Pleasant Funeral Centre',
-                'url' => 'https://www.mountpleasantgroup.com/en-CA/Obituaries.aspx',
+            $this->sources['turner_porter'] = array(
+                'name' => 'Turner & Porter',
+                'url' => 'https://www.turnerporter.ca/memorials',
                 'region' => 'Toronto',
                 'selectors' => array(
-                    'list' => '.obits-list .obit-item',
-                    'name' => '.obit-name',
-                    'dates' => '.obit-dates',
-                    'description' => '.obit-description',
-                    'image' => '.obit-image img',
-                    'link' => '.obit-link'
+                    'list' => '.memorials-list .memorials-item',
+                    'name' => '.memorials-name',
+                    'dates' => '.memorials-date',
+                    'description' => '.memorials-description',
+                    'image' => '.memorials-img img',
+                    'link' => '.memorials-btn a'
                 ),
                 'date_format' => 'F j, Y',
                 'backup_selectors' => array(
-                    'list' => '.memorials .memorial, .obituaries .obituary',
-                    'name' => '.name, h3.title',
-                    'dates' => '.dates, .date-info',
-                    'description' => '.description, .summary, .text',
+                    'list' => '.obituaries .obituary, .listings .listing',
+                    'name' => '.name, h3.title, .heading',
+                    'dates' => '.date, .dates, .lifespan',
+                    'description' => '.description, .text, .summary',
                     'image' => '.image img, .photo img',
-                    'link' => 'a.details, a.more-info'
+                    'link' => 'a.more, a.details, a.view'
                 )
             );
         }
         
         // Ottawa sources
         if (in_array('Ottawa', $regions)) {
-            $this->sources['ottawa_memorial'] = array(
-                'name' => 'Ottawa Memorial',
-                'url' => 'https://www.ottawamemorialservices.ca/obituaries',
-                'region' => 'Ottawa',
-                'selectors' => array(
-                    'list' => '.obituary-container .obituary',
-                    'name' => '.obituary-name',
-                    'dates' => '.obituary-dates',
-                    'description' => '.obituary-text',
-                    'image' => '.obituary-photo img',
-                    'link' => '.obituary-more'
-                ),
-                'date_format' => 'F j, Y',
-                'backup_selectors' => array(
-                    'list' => '.obits .obit, .memorials .memorial',
-                    'name' => '.name, h2.title, .heading',
-                    'dates' => '.dates, .date-range, .lifespan',
-                    'description' => '.text, .description, .content',
-                    'image' => '.photo img, .image img, .portrait img',
-                    'link' => 'a.more, a.details, a.view'
-                )
-            );
-            
             $this->sources['beechwood'] = array(
                 'name' => 'Beechwood Cemetery',
                 'url' => 'https://beechwoodottawa.ca/en/services/obituaries',
                 'region' => 'Ottawa',
                 'selectors' => array(
-                    'list' => '.obits-container .obit',
+                    'list' => '.obit-box',
                     'name' => '.obit-name',
-                    'dates' => '.obit-dates',
-                    'description' => '.obit-excerpt',
+                    'dates' => '.obit-date',
+                    'description' => '.obit-copy',
                     'image' => '.obit-image img',
-                    'link' => '.obit-link'
+                    'link' => '.obit-box a'
                 ),
                 'date_format' => 'F j, Y',
                 'backup_selectors' => array(
-                    'list' => '.obituaries .obituary, .memorials .memorial',
-                    'name' => '.name, h3.heading',
-                    'dates' => '.dates, .lifespan',
-                    'description' => '.excerpt, .summary',
+                    'list' => '.obituaries .obituary, .obits .obit',
+                    'name' => '.name, h3.heading, .title',
+                    'dates' => '.dates, .date-range, .date',
+                    'description' => '.excerpt, .text, .description',
+                    'image' => '.image img, .photo img, .portrait img',
+                    'link' => 'a.details, a.more, a.view'
+                )
+            );
+            
+            $this->sources['tubman'] = array(
+                'name' => 'Tubman Funeral Homes',
+                'url' => 'https://www.tubmanfuneralhomes.com/obituaries/',
+                'region' => 'Ottawa',
+                'selectors' => array(
+                    'list' => '.listing-item',
+                    'name' => 'h3.h4',
+                    'dates' => '.text-secondary',
+                    'description' => '.excerpt',
+                    'image' => '.listing-item__image img',
+                    'link' => '.listing-item a'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obits .obit, .obituaries .obituary',
+                    'name' => '.name, .title, .heading',
+                    'dates' => '.dates, .date-info, .lifespan',
+                    'description' => '.description, .summary, .content',
                     'image' => '.image img, .photo img',
-                    'link' => 'a.details, a.more'
+                    'link' => 'a.more, a.details, a.view'
                 )
             );
         }
         
         // Hamilton sources
         if (in_array('Hamilton', $regions)) {
-            $this->sources['hamilton_memorial'] = array(
-                'name' => 'Hamilton Memorial Gardens',
-                'url' => 'https://www.hamiltonmemorial.ca/obituaries',
+            $this->sources['smith_funeral'] = array(
+                'name' => 'Smith Funeral Home',
+                'url' => 'https://www.smithsfh.com/memorials',
                 'region' => 'Hamilton',
                 'selectors' => array(
-                    'list' => '.obituary-listing .obituary',
-                    'name' => '.obituary-name',
+                    'list' => '.memorials-card',
+                    'name' => '.memorials-title',
+                    'dates' => '.memorials-date',
+                    'description' => '.memorials-description',
+                    'image' => '.memorials-image img',
+                    'link' => '.memorials-card a'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obituaries .obituary, .listings .listing',
+                    'name' => '.name, h3.title',
+                    'dates' => '.date, .dates, .lifespan',
+                    'description' => '.description, .text, .summary',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more, a.read-more'
+                )
+            );
+            
+            $this->sources['bay_garden'] = array(
+                'name' => 'Bay Gardens Funeral Home',
+                'url' => 'https://www.baygardens.ca/memorials',
+                'region' => 'Hamilton',
+                'selectors' => array(
+                    'list' => '.obituary-container',
+                    'name' => '.obituary-title',
                     'dates' => '.obituary-dates',
-                    'description' => '.obituary-excerpt',
-                    'image' => '.obituary-photo img',
+                    'description' => '.obituary-description',
+                    'image' => '.obituary-image img',
                     'link' => '.obituary-link'
                 ),
                 'date_format' => 'F j, Y',
                 'backup_selectors' => array(
-                    'list' => '.obits .obit, .listings .listing',
-                    'name' => '.name, h3.title',
-                    'dates' => '.dates, .date-info',
-                    'description' => '.excerpt, .summary',
-                    'image' => '.photo img, .image img',
-                    'link' => 'a.more, a.details'
+                    'list' => '.memorials .memorial, .obits .obituary',
+                    'name' => '.name, .title, h3.heading',
+                    'dates' => '.dates, .date-info, .date-range',
+                    'description' => '.text, .excerpt, .content',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more, a.view'
                 )
             );
         }
         
         // London sources
         if (in_array('London', $regions)) {
-            $this->sources['london_memorial'] = array(
-                'name' => 'London Memorial',
-                'url' => 'https://www.londonmemorial.ca/obituaries',
+            $this->sources['westview'] = array(
+                'name' => 'Westview Funeral Chapel',
+                'url' => 'https://westviewfuneralchapel.com/current-services/',
                 'region' => 'London',
                 'selectors' => array(
-                    'list' => '.obituaries-list .obituary',
-                    'name' => '.obituary-name',
-                    'dates' => '.obituary-dates',
-                    'description' => '.obituary-text',
-                    'image' => '.obituary-image img',
-                    'link' => '.obituary-more'
+                    'list' => '.post-preview-content',
+                    'name' => 'h2.post-title',
+                    'dates' => '.post-date',
+                    'description' => '.post-excerpt',
+                    'image' => '.post-featured-image img',
+                    'link' => '.post-preview-content a'
                 ),
                 'date_format' => 'F j, Y',
                 'backup_selectors' => array(
-                    'list' => '.memorials .memorial, .obits .obit',
-                    'name' => '.name, h3.heading',
-                    'dates' => '.dates, .lifespan',
-                    'description' => '.text, .description',
+                    'list' => '.services .service, .obits .obituary',
+                    'name' => '.title, .name, h3.heading',
+                    'dates' => '.date, .dates, .service-date',
+                    'description' => '.excerpt, .description, .text',
                     'image' => '.image img, .photo img',
-                    'link' => 'a.details, a.more'
+                    'link' => 'a.more, a.details, a.view'
+                )
+            );
+            
+            $this->sources['logan_funeral'] = array(
+                'name' => 'Logan Funeral Home',
+                'url' => 'https://www.loganfh.ca/obituaries/',
+                'region' => 'London',
+                'selectors' => array(
+                    'list' => '.obit-container',
+                    'name' => '.info h3',
+                    'dates' => '.info .dates',
+                    'description' => '.info .description',
+                    'image' => '.image-container img',
+                    'link' => '.obit-container a'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.obituaries .obituary, .obits .obit',
+                    'name' => '.name, .title, h3.heading',
+                    'dates' => '.date, .dates, .lifespan',
+                    'description' => '.description, .text, .summary',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more, a.view'
                 )
             );
         }
         
         // Windsor sources
         if (in_array('Windsor', $regions)) {
-            $this->sources['windsor_memorial'] = array(
-                'name' => 'Windsor Memorial Gardens',
-                'url' => 'https://www.windsorchapel.com/obituaries',
+            $this->sources['families_first'] = array(
+                'name' => 'Families First',
+                'url' => 'https://www.familiesfirst.ca/memorials',
                 'region' => 'Windsor',
                 'selectors' => array(
-                    'list' => '.obituaries-container .obituary',
-                    'name' => '.obituary-name',
-                    'dates' => '.obituary-dates',
-                    'description' => '.obituary-description',
-                    'image' => '.obituary-photo img',
-                    'link' => '.obituary-link'
+                    'list' => '.tribute-list .tribute',
+                    'name' => '.tribute-title',
+                    'dates' => '.tribute-date',
+                    'description' => '.tribute-content',
+                    'image' => '.tribute-image img',
+                    'link' => '.tribute a'
                 ),
                 'date_format' => 'F j, Y',
                 'backup_selectors' => array(
-                    'list' => '.obits .obit, .listings .item',
-                    'name' => '.name, h3.title',
-                    'dates' => '.dates, .date-range',
-                    'description' => '.description, .summary',
-                    'image' => '.photo img, .image img',
-                    'link' => 'a.more, a.view'
+                    'list' => '.obituaries .obituary, .listings .listing',
+                    'name' => '.name, h3.title, .heading',
+                    'dates' => '.dates, .date, .lifespan',
+                    'description' => '.description, .content, .text',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.more, a.details, a.view'
+                )
+            );
+            
+            $this->sources['windsor_chapel'] = array(
+                'name' => 'Windsor Chapel',
+                'url' => 'https://www.windsorchapel.com/obituaries/',
+                'region' => 'Windsor',
+                'selectors' => array(
+                    'list' => '.obits-item',
+                    'name' => '.obits-name a',
+                    'dates' => '.obits-date',
+                    'description' => '.obits-excerpt',
+                    'image' => '.obits-image img',
+                    'link' => '.obits-name a'
+                ),
+                'date_format' => 'F j, Y',
+                'backup_selectors' => array(
+                    'list' => '.memorials .memorial, .obituaries .obituary',
+                    'name' => '.name, .title, h3.heading',
+                    'dates' => '.dates, .date, .date-range',
+                    'description' => '.excerpt, .description, .summary',
+                    'image' => '.image img, .photo img',
+                    'link' => 'a.details, a.more, a.view'
                 )
             );
         }
@@ -785,3 +854,4 @@ class Ontario_Obituaries_Scraper {
         wp_mail(get_option('admin_email'), $subject, $message);
     }
 }
+
