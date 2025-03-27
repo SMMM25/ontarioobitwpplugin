@@ -280,7 +280,7 @@ class Ontario_Obituaries_Scraper {
                     $table_name,
                     array(
                         'name' => $obituary['name'],
-                        'date_of_death' => $obitituary['date_of_death'],
+                        'date_of_death' => $obituary['date_of_death'],
                         'funeral_home' => $obituary['funeral_home'],
                         'location' => $obituary['location'],
                         'image_url' => $obituary['image_url'],
@@ -465,5 +465,116 @@ class Ontario_Obituaries_Scraper {
         
         // Fallback to default naming
         return $region . ' Funeral Services';
+    }
+    
+    /**
+     * Add test data to the database
+     * 
+     * @return array Result with success/failure and details
+     */
+    public function add_test_data() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
+        
+        // Sample test data
+        $test_data = array(
+            array(
+                'name' => 'John Test Smith',
+                'date_of_death' => date('Y-m-d', strtotime('-2 days')),
+                'funeral_home' => 'Toronto Funeral Services',
+                'location' => 'Toronto',
+                'image_url' => 'https://via.placeholder.com/150',
+                'description' => 'This is a test obituary for demonstration purposes. John enjoyed gardening, fishing, and spending time with his family.',
+                'source_url' => home_url()
+            ),
+            array(
+                'name' => 'Mary Test Johnson',
+                'date_of_death' => date('Y-m-d', strtotime('-3 days')),
+                'funeral_home' => 'Ottawa Funeral Home',
+                'location' => 'Ottawa',
+                'image_url' => 'https://via.placeholder.com/150',
+                'description' => 'This is another test obituary. Mary was a dedicated teacher for over 30 years and loved by all her students.',
+                'source_url' => home_url()
+            ),
+            array(
+                'name' => 'Robert Test Williams',
+                'date_of_death' => date('Y-m-d', strtotime('-1 day')),
+                'funeral_home' => 'Hamilton Funeral Services',
+                'location' => 'Hamilton',
+                'image_url' => 'https://via.placeholder.com/150',
+                'description' => 'Robert was a respected community leader and devoted family man. This is a test obituary for debugging purposes.',
+                'source_url' => home_url()
+            )
+        );
+        
+        $count = 0;
+        
+        // Insert test data
+        foreach ($test_data as $obituary) {
+            $wpdb->insert(
+                $table_name,
+                array(
+                    'name' => $obituary['name'],
+                    'date_of_death' => $obituary['date_of_death'],
+                    'funeral_home' => $obituary['funeral_home'],
+                    'location' => $obituary['location'],
+                    'image_url' => $obituary['image_url'],
+                    'description' => $obituary['description'],
+                    'source_url' => $obituary['source_url'],
+                    'created_at' => current_time('mysql')
+                )
+            );
+            
+            if ($wpdb->insert_id) {
+                $count++;
+            }
+        }
+        
+        if ($count > 0) {
+            return array(
+                'success' => true,
+                'count' => $count,
+                'message' => sprintf('Successfully added %d test obituaries', $count)
+            );
+        } else {
+            return array(
+                'success' => false,
+                'message' => 'Failed to add test data'
+            );
+        }
+    }
+    
+    /**
+     * Check database connection and table
+     * 
+     * @return array Result with success/failure and details
+     */
+    public function check_database() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
+        
+        // Check if table exists
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+        
+        if (!$table_exists) {
+            return array(
+                'success' => false,
+                'message' => 'Obituaries table does not exist!'
+            );
+        }
+        
+        // Check if we can query the table
+        try {
+            $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+            return array(
+                'success' => true,
+                'message' => sprintf('Database connection successful. Found %d obituaries in the database.', $count)
+            );
+        } catch (Exception $e) {
+            return array(
+                'success' => false,
+                'message' => 'Error querying database: ' . $e->getMessage()
+            );
+        }
     }
 }

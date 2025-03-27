@@ -158,6 +158,72 @@ jQuery(document).ready(function($) {
     }
     
     /**
+     * Add test data to the database
+     */
+    function addTestData() {
+        var data = {
+            action: 'ontario_obituaries_add_test_data',
+            nonce: nonce
+        };
+        
+        $('#ontario-add-test-data').text('Adding...').prop('disabled', true);
+        addLogMessage('Adding test obituaries to the database...', 'info');
+        
+        $.ajax({
+            url: ajaxUrl,
+            type: 'POST',
+            data: data,
+            dataType: 'json',
+            success: function(response) {
+                if (response && response.success) {
+                    addLogMessage(response.data.message, 'success');
+                } else {
+                    var message = response && response.data ? response.data.message : 'Unknown error';
+                    addLogMessage('Failed to add test data: ' + message, 'error');
+                }
+                $('#ontario-add-test-data').text('Add Test Data').prop('disabled', false);
+            },
+            error: function(xhr, status, error) {
+                addLogMessage('Error adding test data: ' + error, 'error');
+                $('#ontario-add-test-data').text('Add Test Data').prop('disabled', false);
+            }
+        });
+    }
+    
+    /**
+     * Check database connection
+     */
+    function checkDatabaseConnection() {
+        var data = {
+            action: 'ontario_obituaries_check_database',
+            nonce: nonce
+        };
+        
+        $('#ontario-check-database').text('Checking...').prop('disabled', true);
+        addLogMessage('Checking database connection...', 'info');
+        
+        $.ajax({
+            url: ajaxUrl,
+            type: 'POST',
+            data: data,
+            dataType: 'json',
+            success: function(response) {
+                if (response && response.success) {
+                    addLogMessage('Database check: ' + response.data.message, 'success');
+                } else {
+                    var message = response && response.data ? response.data.message : 'Unknown error';
+                    addLogMessage('Database check failed: ' + message, 'error');
+                }
+                $('#ontario-check-database').text('Check Database').prop('disabled', false);
+            },
+            error: function(xhr, status, error) {
+                addLogMessage('Error checking database: ' + error, 'error');
+                $('#ontario-check-database').text('Check Database').prop('disabled', false);
+            }
+        });
+    }
+    
+    /**
      * Event handler for URL input changes
      */
     $('.region-url').on('change', function() {
@@ -206,6 +272,52 @@ jQuery(document).ready(function($) {
         // Reset the index and start testing
         currentRegionIndex = 0;
         testNextRegion();
+    });
+    
+    /**
+     * Event handler for add test data button
+     */
+    $('#ontario-add-test-data').on('click', function() {
+        addTestData();
+    });
+    
+    /**
+     * Event handler for check database button
+     */
+    $('#ontario-check-database').on('click', function() {
+        checkDatabaseConnection();
+    });
+    
+    /**
+     * Event handler for run manual scrape button
+     */
+    $('#ontario-run-scrape').on('click', function() {
+        var $button = $(this);
+        $button.text('Running...').prop('disabled', true);
+        addLogMessage('Running manual scrape...', 'info');
+        
+        $.ajax({
+            url: ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'ontario_obituaries_run_scrape',
+                nonce: nonce
+            },
+            dataType: 'json',
+            success: function(response) {
+                if (response && response.success) {
+                    addLogMessage('Scrape completed: ' + response.data.message, 'success');
+                } else {
+                    var message = response && response.data ? response.data.message : 'Unknown error';
+                    addLogMessage('Scrape failed: ' + message, 'error');
+                }
+                $button.text('Run Manual Scrape').prop('disabled', false);
+            },
+            error: function(xhr, status, error) {
+                addLogMessage('Error during scrape: ' + error, 'error');
+                $button.text('Run Manual Scrape').prop('disabled', false);
+            }
+        });
     });
     
     // Initialize the page

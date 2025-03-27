@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Debug class for Ontario Obituaries
@@ -14,6 +13,9 @@ class Ontario_Obituaries_Debug {
         // Add AJAX handlers
         add_action('wp_ajax_ontario_obituaries_test_connection', array($this, 'ajax_test_connection'));
         add_action('wp_ajax_ontario_obituaries_save_region_url', array($this, 'ajax_save_region_url'));
+        add_action('wp_ajax_ontario_obituaries_add_test_data', array($this, 'ajax_add_test_data'));
+        add_action('wp_ajax_ontario_obituaries_check_database', array($this, 'ajax_check_database'));
+        add_action('wp_ajax_ontario_obituaries_run_scrape', array($this, 'ajax_run_scrape'));
     }
     
     /**
@@ -45,6 +47,25 @@ class Ontario_Obituaries_Debug {
         ?>
         <div class="wrap ontario-obituaries-debug">
             <h1><?php _e('Ontario Obituaries Debug Tools', 'ontario-obituaries'); ?></h1>
+            
+            <div class="card">
+                <h2><?php _e('Database Tools', 'ontario-obituaries'); ?></h2>
+                <p><?php _e('Tools to check and manage the database.', 'ontario-obituaries'); ?></p>
+                
+                <div class="ontario-debug-actions" style="margin-bottom: 20px;">
+                    <button id="ontario-check-database" class="button button-secondary">
+                        <?php _e('Check Database', 'ontario-obituaries'); ?>
+                    </button>
+                    
+                    <button id="ontario-add-test-data" class="button button-secondary">
+                        <?php _e('Add Test Data', 'ontario-obituaries'); ?>
+                    </button>
+                    
+                    <button id="ontario-run-scrape" class="button button-primary">
+                        <?php _e('Run Manual Scrape', 'ontario-obituaries'); ?>
+                    </button>
+                </div>
+            </div>
             
             <div class="card">
                 <h2><?php _e('Test Scraper Connections', 'ontario-obituaries'); ?></h2>
@@ -113,6 +134,7 @@ class Ontario_Obituaries_Debug {
                     <li><?php _e('Try increasing the "maxAge" setting to find older obituaries', 'ontario-obituaries'); ?></li>
                     <li><?php _e('Check the WordPress debug log for PHP errors', 'ontario-obituaries'); ?></li>
                     <li><?php _e('If the debug tool is not working, try temporarily disabling other plugins that might conflict with AJAX requests', 'ontario-obituaries'); ?></li>
+                    <li><?php _e('If no obituaries are showing, try adding test data using the "Add Test Data" button above', 'ontario-obituaries'); ?></li>
                 </ul>
             </div>
         </div>
@@ -191,6 +213,64 @@ class Ontario_Obituaries_Debug {
         } else {
             wp_send_json_error(array('message' => __('Failed to save URL', 'ontario-obituaries')));
         }
+    }
+    
+    /**
+     * AJAX handler for adding test data
+     */
+    public function ajax_add_test_data() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ontario-obituaries-nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed', 'ontario-obituaries')));
+        }
+        
+        // Add test data
+        $scraper = new Ontario_Obituaries_Scraper();
+        $result = $scraper->add_test_data();
+        
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result);
+        }
+    }
+    
+    /**
+     * AJAX handler for checking database
+     */
+    public function ajax_check_database() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ontario-obituaries-nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed', 'ontario-obituaries')));
+        }
+        
+        // Check database
+        $scraper = new Ontario_Obituaries_Scraper();
+        $result = $scraper->check_database();
+        
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result);
+        }
+    }
+    
+    /**
+     * AJAX handler for running manual scrape
+     */
+    public function ajax_run_scrape() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ontario-obituaries-nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed', 'ontario-obituaries')));
+        }
+        
+        // Run scrape
+        $scraper = new Ontario_Obituaries_Scraper();
+        $count = $scraper->scrape();
+        
+        wp_send_json_success(array(
+            'message' => sprintf(__('Scrape completed. Found %d new obituaries.', 'ontario-obituaries'), $count)
+        ));
     }
     
     /**
