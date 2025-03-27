@@ -22,6 +22,9 @@ $search = isset($_GET['ontario_obituaries_search']) ? sanitize_text_field($_GET[
 $location = isset($_GET['ontario_obituaries_location']) ? sanitize_text_field($_GET['ontario_obituaries_location']) : $atts['location'];
 $page = isset($_GET['ontario_obituaries_page']) ? max(1, intval($_GET['ontario_obituaries_page'])) : 1;
 
+// Debug information
+error_log('Ontario Obituaries: Rendering template with search=' . $search . ', location=' . $location . ', page=' . $page);
+
 // Set up the query
 $args = array(
     'limit' => intval($atts['limit']),
@@ -34,6 +37,7 @@ $args = array(
 
 // Get obituaries
 $obituaries = $display->get_obituaries($args);
+error_log('Ontario Obituaries: Found ' . count($obituaries) . ' obituaries');
 
 // Get total count
 $total = $display->count_obituaries(array(
@@ -55,9 +59,13 @@ wp_enqueue_script('ontario-obituaries-js');
 
 // Get site URL for sharing
 $site_url = get_site_url();
+
+// Debug - output directly to page for troubleshooting
+echo '<!-- Ontario Obituaries Debug: Template loaded with ' . count($obituaries) . ' obituaries found -->';
 ?>
 
-<div class="ontario-obituaries-container">
+<!-- Main container with explicit classes to ensure visibility -->
+<div class="ontario-obituaries-container" style="display: block; width: 100%; margin: 20px 0;">
     <div class="ontario-obituaries-filters">
         <form method="get" class="ontario-obituaries-search-form">
             <?php
@@ -215,4 +223,3 @@ $site_url = get_site_url();
         </p>
     </div>
 </div>
-
