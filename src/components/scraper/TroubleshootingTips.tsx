@@ -4,16 +4,17 @@ import { AlertCircle } from "lucide-react";
 
 const TroubleshootingTips = () => {
   return (
-    <Alert className="mt-6 bg-amber-500/10 border-amber-200">
-      <AlertCircle className="h-4 w-4" />
-      <AlertTitle>Enhanced Troubleshooting Tips</AlertTitle>
+    <Alert className="mt-6 bg-amber-50 dark:bg-amber-500/10 border-amber-200">
+      <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+      <AlertTitle className="font-medium">Enhanced Troubleshooting Tips</AlertTitle>
       <AlertDescription>
-        <ul className="list-disc pl-5 mt-2 space-y-1 text-sm">
-          <li>The scraper now includes adaptive mode to detect website structure changes</li>
-          <li>For improved reliability, the system will attempt multiple retries with exponential backoff</li>
-          <li>Historical data scraping uses specialized settings for better success with older obituaries</li>
+        <ul className="list-disc pl-5 mt-2 space-y-1.5 text-sm">
+          <li>The scraper includes adaptive mode to detect website structure changes</li>
+          <li>For improved reliability, the system automatically retries with exponential backoff</li>
+          <li>Historical data scraping uses specialized settings optimized for older obituaries</li>
           <li>Verify your server allows connections to external websites (check PHP settings like allow_url_fopen)</li>
           <li>If specific regions consistently fail, check for website changes or regional blocks</li>
+          <li>Make sure your hosting provider doesn't block outgoing connections</li>
         </ul>
       </AlertDescription>
     </Alert>
