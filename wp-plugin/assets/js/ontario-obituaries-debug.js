@@ -20,6 +20,9 @@ jQuery(document).ready(function($) {
         
         logItem.text('[' + timestamp + '] ' + message);
         $('#ontario-debug-log').prepend(logItem);
+        
+        // Also log to browser console for additional debugging
+        console.log('[Ontario Obituaries] ' + message);
     }
     
     /**
@@ -37,62 +40,84 @@ jQuery(document).ready(function($) {
      * Test connection to a region
      */
     function testRegionConnection(region, url) {
+        // Add validation for URL and region
+        if (!region) {
+            addLogMessage('Region name is required', 'error');
+            return;
+        }
+        
+        if (!url) {
+            addLogMessage('No URL provided for ' + region, 'error');
+            updateRegionStatus(region, 'Error: No URL provided', false);
+            continueTestingAll();
+            return;
+        }
+        
         var data = {
             action: 'ontario_obituaries_test_connection',
             nonce: nonce,
-            region: region
+            region: region,
+            url: url
         };
         
-        if (url) {
-            data.url = url;
-        }
-        
-        addLogMessage('Testing connection to ' + region + '...', 'info');
+        addLogMessage('Testing connection to ' + region + ' (' + url + ')...', 'info');
         
         $.ajax({
             url: ajaxUrl,
             type: 'POST',
             data: data,
+            dataType: 'json',
+            timeout: 30000, // 30 seconds timeout
             success: function(response) {
-                if (response.success) {
+                if (response && response.success) {
                     var message = response.data.message;
                     addLogMessage(region + ': ' + message, 'success');
                     updateRegionStatus(region, 'Success: ' + message, true);
                 } else {
-                    var message = response.data.message;
+                    var message = response && response.data ? response.data.message : 'Unknown error';
                     addLogMessage(region + ': ' + message, 'error');
                     updateRegionStatus(region, 'Failed: ' + message, false);
                 }
                 
-                // If we're testing all regions, continue with the next one
-                if (isTestingAll) {
-                    currentRegionIndex++;
-                    if (currentRegionIndex < regionsToTest.length) {
-                        testNextRegion();
-                    } else {
-                        isTestingAll = false;
-                        $('#ontario-test-all-regions').text('Test All Regions').prop('disabled', false);
-                        addLogMessage('Completed testing all regions.', 'info');
-                    }
-                }
+                continueTestingAll();
             },
             error: function(xhr, status, error) {
-                addLogMessage(region + ': AJAX error - ' + error, 'error');
-                updateRegionStatus(region, 'Error: ' + error, false);
+                var errorMessage = '';
                 
-                // If we're testing all regions, continue with the next one
-                if (isTestingAll) {
-                    currentRegionIndex++;
-                    if (currentRegionIndex < regionsToTest.length) {
-                        testNextRegion();
-                    } else {
-                        isTestingAll = false;
-                        $('#ontario-test-all-regions').text('Test All Regions').prop('disabled', false);
-                        addLogMessage('Completed testing all regions.', 'info');
-                    }
+                if (status === 'timeout') {
+                    errorMessage = 'Request timed out. The server took too long to respond.';
+                } else if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                    errorMessage = xhr.responseJSON.data.message;
+                } else {
+                    errorMessage = error || 'Unknown AJAX error';
                 }
+                
+                addLogMessage(region + ': AJAX error - ' + errorMessage, 'error');
+                updateRegionStatus(region, 'Error: ' + errorMessage, false);
+                
+                continueTestingAll();
             }
         });
+    }
+    
+    /**
+     * Continue testing all regions if needed
+     */
+    function continueTestingAll() {
+        if (!isTestingAll) {
+            return;
+        }
+        
+        currentRegionIndex++;
+        if (currentRegionIndex < regionsToTest.length) {
+            setTimeout(function() {
+                testNextRegion();
+            }, 1000); // Add a small delay between requests
+        } else {
+            isTestingAll = false;
+            $('#ontario-test-all-regions').text('Test All Regions').prop('disabled', false);
+            addLogMessage('Completed testing all regions.', 'info');
+        }
     }
     
     /**
@@ -105,11 +130,55 @@ jQuery(document).ready(function($) {
     }
     
     /**
+     * Save URL for a region
+     */
+    function saveRegionUrl(region, url) {
+        var data = {
+            action: 'ontario_obituaries_save_region_url',
+            nonce: nonce,
+            region: region,
+            url: url
+        };
+        
+        $.ajax({
+            url: ajaxUrl,
+            type: 'POST',
+            data: data,
+            success: function(response) {
+                if (response.success) {
+                    addLogMessage('Saved URL for ' + region, 'success');
+                } else {
+                    addLogMessage('Failed to save URL for ' + region + ': ' + (response.data ? response.data.message : 'Unknown error'), 'error');
+                }
+            },
+            error: function(xhr, status, error) {
+                addLogMessage('Error saving URL for ' + region + ': ' + error, 'error');
+            }
+        });
+    }
+    
+    /**
+     * Event handler for URL input changes
+     */
+    $('.region-url').on('change', function() {
+        var region = $(this).data('region');
+        var url = $(this).val();
+        
+        if (region && url) {
+            saveRegionUrl(region, url);
+        }
+    });
+    
+    /**
      * Event handler for test region button
      */
     $('.test-region').on('click', function() {
         var region = $(this).data('region');
         var url = $('.region-url[data-region="' + region + '"]').val();
+        
+        // Clear previous results for this region
+        updateRegionStatus(region, 'Testing...', false);
+        
         testRegionConnection(region, url);
     });
     
@@ -138,4 +207,7 @@ jQuery(document).ready(function($) {
         currentRegionIndex = 0;
         testNextRegion();
     });
+    
+    // Initialize the page
+    addLogMessage('Debug page loaded. Ready to test connections.', 'info');
 });

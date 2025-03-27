@@ -13,6 +13,7 @@ class Ontario_Obituaries_Debug {
         
         // Add AJAX handlers
         add_action('wp_ajax_ontario_obituaries_test_connection', array($this, 'ajax_test_connection'));
+        add_action('wp_ajax_ontario_obituaries_save_region_url', array($this, 'ajax_save_region_url'));
     }
     
     /**
@@ -98,7 +99,7 @@ class Ontario_Obituaries_Debug {
                 <div class="ontario-debug-logs">
                     <h3><?php _e('Debug Logs', 'ontario-obituaries'); ?></h3>
                     <div id="ontario-debug-log" class="ontario-debug-log">
-                        <p><?php _e('Test connections to see logs here.', 'ontario-obituaries'); ?></p>
+                        <div class="log-item log-info">[<?php echo date('H:i:s'); ?>] <?php _e('Debug interface loaded. Test connections to see logs.', 'ontario-obituaries'); ?></div>
                     </div>
                 </div>
             </div>
@@ -111,6 +112,7 @@ class Ontario_Obituaries_Debug {
                     <li><?php _e('Verify the scraper selectors in the plugin settings match the current structure of the funeral home websites', 'ontario-obituaries'); ?></li>
                     <li><?php _e('Try increasing the "maxAge" setting to find older obituaries', 'ontario-obituaries'); ?></li>
                     <li><?php _e('Check the WordPress debug log for PHP errors', 'ontario-obituaries'); ?></li>
+                    <li><?php _e('If the debug tool is not working, try temporarily disabling other plugins that might conflict with AJAX requests', 'ontario-obituaries'); ?></li>
                 </ul>
             </div>
         </div>
@@ -133,28 +135,83 @@ class Ontario_Obituaries_Debug {
         
         $region = sanitize_text_field($_POST['region']);
         
-        // Update URL if provided
-        if (isset($_POST['url']) && !empty($_POST['url'])) {
-            $url = esc_url_raw($_POST['url']);
-            
-            // Get existing URLs
-            $region_urls = get_option('ontario_obituaries_region_urls', array());
-            
-            // Update the URL for this region
-            $region_urls[$region] = $url;
-            
-            // Save the updated URLs
-            update_option('ontario_obituaries_region_urls', $region_urls);
+        // Check if we have a URL
+        if (!isset($_POST['url']) || empty($_POST['url'])) {
+            wp_send_json_error(array('message' => __('No URL specified', 'ontario-obituaries')));
         }
+        
+        $url = esc_url_raw($_POST['url']);
+        
+        // Update URL for this region
+        $this->save_region_url($region, $url);
         
         // Test the connection
-        $scraper = new Ontario_Obituaries_Scraper();
-        $result = $scraper->test_connection($region);
-        
-        if ($result['success']) {
-            wp_send_json_success($result);
-        } else {
-            wp_send_json_error($result);
+        try {
+            $scraper = new Ontario_Obituaries_Scraper();
+            $result = $scraper->test_connection($region);
+            
+            if ($result['success']) {
+                wp_send_json_success($result);
+            } else {
+                wp_send_json_error($result);
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => $e->getMessage()));
         }
+    }
+    
+    /**
+     * AJAX handler for saving region URL
+     */
+    public function ajax_save_region_url() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ontario-obituaries-nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed', 'ontario-obituaries')));
+        }
+        
+        // Check if we have a region
+        if (!isset($_POST['region']) || empty($_POST['region'])) {
+            wp_send_json_error(array('message' => __('No region specified', 'ontario-obituaries')));
+        }
+        
+        $region = sanitize_text_field($_POST['region']);
+        
+        // Check if we have a URL
+        if (!isset($_POST['url']) || empty($_POST['url'])) {
+            wp_send_json_error(array('message' => __('No URL specified', 'ontario-obituaries')));
+        }
+        
+        $url = esc_url_raw($_POST['url']);
+        
+        // Save the URL
+        $result = $this->save_region_url($region, $url);
+        
+        if ($result) {
+            wp_send_json_success(array('message' => __('URL saved successfully', 'ontario-obituaries')));
+        } else {
+            wp_send_json_error(array('message' => __('Failed to save URL', 'ontario-obituaries')));
+        }
+    }
+    
+    /**
+     * Save a region URL
+     * 
+     * @param string $region Region name
+     * @param string $url URL to save
+     * @return bool Success or failure
+     */
+    private function save_region_url($region, $url) {
+        if (empty($region) || empty($url)) {
+            return false;
+        }
+        
+        // Get existing URLs
+        $region_urls = get_option('ontario_obituaries_region_urls', array());
+        
+        // Update the URL for this region
+        $region_urls[$region] = $url;
+        
+        // Save the updated URLs
+        return update_option('ontario_obituaries_region_urls', $region_urls);
     }
 }

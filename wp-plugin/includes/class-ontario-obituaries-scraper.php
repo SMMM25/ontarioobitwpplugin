@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Scraper class for Ontario Obituaries
@@ -281,7 +280,7 @@ class Ontario_Obituaries_Scraper {
                     $table_name,
                     array(
                         'name' => $obituary['name'],
-                        'date_of_death' => $obituary['date_of_death'],
+                        'date_of_death' => $obitituary['date_of_death'],
                         'funeral_home' => $obituary['funeral_home'],
                         'location' => $obituary['location'],
                         'image_url' => $obituary['image_url'],
@@ -366,7 +365,7 @@ class Ontario_Obituaries_Scraper {
         
         // Get the selectors for this region
         $selectors = $this->get_region_selectors($region);
-        $container_selector = $selectors['container'] ?? '//div[contains(@class, "obituary")]';
+        $container_selector = $selectors['container'] ?? '//div[contains(@class, "obit-card")]';
         
         // Try to find obituary elements
         $obituary_elements = $xpath->query($container_selector);
@@ -388,12 +387,12 @@ class Ontario_Obituaries_Scraper {
     }
     
     /**
-     * Get the URL for a specific region
+     * Get the URL for a specific region - public method
      * 
      * @param string $region The region name
      * @return string|false The URL or false if not found
      */
-    private function get_region_url($region) {
+    public function get_region_url($region) {
         // Get from options if available
         $region_urls = get_option('ontario_obituaries_region_urls', array());
         
