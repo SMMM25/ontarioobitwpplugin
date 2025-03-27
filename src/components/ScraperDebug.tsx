@@ -1,15 +1,16 @@
 
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { scrapeObituaries, DEFAULT_SCRAPER_CONFIG, scrapePreviousMonthObituaries } from "@/utils/scraperUtils";
-import { AlertCircle, CheckCircle, History, Loader2, RefreshCw, Settings, Shield } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
+
+// Import refactored components
+import ScraperConfigPanel from "./scraper/ScraperConfigPanel";
+import ScraperActionButtons from "./scraper/ScraperActionButtons";
+import SourcesStatusPanel from "./scraper/SourcesStatusPanel";
+import ScraperLogView from "./scraper/ScraperLogView";
+import TroubleshootingTips from "./scraper/TroubleshootingTips";
 
 const ScraperDebug = () => {
   const [isScrapingNow, setIsScrapingNow] = useState(false);
@@ -174,160 +175,36 @@ const ScraperDebug = () => {
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2">
-          {/* Scraper config options */}
-          <div className="bg-muted/20 p-3 rounded-md mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium flex items-center">
-                <Settings className="h-4 w-4 mr-2" />
-                Scraper Configuration
-              </h3>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex items-center space-x-2">
-                <Switch 
-                  id="adaptive-mode" 
-                  checked={useAdaptiveMode} 
-                  onCheckedChange={setUseAdaptiveMode}
-                />
-                <label htmlFor="adaptive-mode" className="text-sm cursor-pointer flex items-center">
-                  <Shield className="h-3.5 w-3.5 mr-1" />
-                  Adaptive Structure Detection
-                </label>
-              </div>
-            </div>
-          </div>
+          {/* Scraper config panel */}
+          <ScraperConfigPanel 
+            useAdaptiveMode={useAdaptiveMode}
+            setUseAdaptiveMode={setUseAdaptiveMode}
+            scraperConfig={scraperConfig}
+          />
           
-          <div className="flex flex-wrap gap-2 mb-4">
-            <Button 
-              variant="default" 
-              onClick={handleTestScrape}
-              disabled={isScrapingNow || isHistoricalScraping}
-            >
-              {isScrapingNow ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Testing Sources...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Test Scraper Sources
-                </>
-              )}
-            </Button>
-            
-            <Button 
-              variant="outline" 
-              onClick={handleHistoricalScrape}
-              disabled={isScrapingNow || isHistoricalScraping}
-            >
-              {isHistoricalScraping ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Retrieving...
-                </>
-              ) : (
-                <>
-                  <History className="h-4 w-4 mr-2" />
-                  Test Historical Scrape
-                </>
-              )}
-            </Button>
-          </div>
+          {/* Action buttons */}
+          <ScraperActionButtons 
+            isScrapingNow={isScrapingNow}
+            isHistoricalScraping={isHistoricalScraping}
+            onTestScrape={handleTestScrape}
+            onHistoricalScrape={handleHistoricalScrape}
+          />
           
-          {/* Display scraping status */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <Card className="border-border/50">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-sm font-medium">Successful Connections</CardTitle>
-              </CardHeader>
-              <CardContent className="py-3 px-4">
-                {scrapedSources.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {scrapedSources.map((source) => (
-                      <Badge key={source} variant="outline" className="bg-green-500/10 text-green-700 border-green-200">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        {source}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {isScrapingNow || isHistoricalScraping ? "Testing connections..." : "No successful connections yet"}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-            
-            <Card className="border-border/50">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-sm font-medium">Failed Connections</CardTitle>
-              </CardHeader>
-              <CardContent className="py-3 px-4">
-                {connectionErrors.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {connectionErrors.map((source) => (
-                      <Badge key={source} variant="outline" className="bg-red-500/10 text-red-700 border-red-200">
-                        <AlertCircle className="h-3 w-3 mr-1" />
-                        {source}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {isScrapingNow || isHistoricalScraping ? "Testing connections..." : "No connection errors yet"}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+          {/* Source status panels */}
+          <SourcesStatusPanel 
+            scrapedSources={scrapedSources}
+            connectionErrors={connectionErrors}
+            isLoading={isScrapingNow || isHistoricalScraping}
+          />
           
           {/* Separator */}
           <Separator className="my-4" />
           
-          {/* Debug log */}
-          <div>
-            <h3 className="text-sm font-medium mb-3">Scraper Log</h3>
-            <ScrollArea className="h-[250px] border rounded-md bg-muted/10 p-4">
-              {scraperLog.length > 0 ? (
-                <div className="space-y-2">
-                  {scraperLog.map((log, index) => (
-                    <div key={index} className="text-xs">
-                      <span className="text-muted-foreground">[{log.timestamp}]</span>{" "}
-                      <span className={
-                        log.type === "error" ? "text-red-500 font-medium" : 
-                        log.type === "success" ? "text-green-500 font-medium" : 
-                        log.type === "warning" ? "text-amber-500 font-medium" :
-                        "text-foreground"
-                      }>
-                        {log.message}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  Run the test to see scraper logs
-                </p>
-              )}
-            </ScrollArea>
-          </div>
+          {/* Scraper log */}
+          <ScraperLogView logs={scraperLog} />
           
-          {/* Help section */}
-          <Alert className="mt-6 bg-amber-500/10 border-amber-200">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Enhanced Troubleshooting Tips</AlertTitle>
-            <AlertDescription>
-              <ul className="list-disc pl-5 mt-2 space-y-1 text-sm">
-                <li>The scraper now includes adaptive mode to detect website structure changes</li>
-                <li>For improved reliability, the system will attempt multiple retries with exponential backoff</li>
-                <li>Historical data scraping uses specialized settings for better success with older obituaries</li>
-                <li>Verify your server allows connections to external websites (check PHP settings like allow_url_fopen)</li>
-                <li>If specific regions consistently fail, check for website changes or regional blocks</li>
-              </ul>
-            </AlertDescription>
-          </Alert>
+          {/* Troubleshooting tips */}
+          <TroubleshootingTips />
         </div>
       </CardContent>
     </Card>

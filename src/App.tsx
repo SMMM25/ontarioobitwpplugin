@@ -1,9 +1,8 @@
 
 import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { memo } from "react";
 import Index from "./pages/Index";
 import Settings from "./pages/Settings";
@@ -38,9 +37,8 @@ const App = () => (
           <Route path="*" element={<MemoizedNotFound />} />
         </Routes>
       </BrowserRouter>
-      {/* Place toasters outside of route structure to prevent remounting */}
+      {/* Using only one toast provider - standardized on Sonner via our custom Toaster component */}
       <Toaster />
-      <Sonner />
     </TooltipProvider>
   </QueryClientProvider>
 );
