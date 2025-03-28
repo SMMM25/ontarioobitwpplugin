@@ -1,3 +1,4 @@
+
 <?php
 /**
  * Ontario Obituaries Scraper
@@ -27,6 +28,13 @@ class Ontario_Obituaries_Scraper {
     private $retry_attempts;
     
     /**
+     * Request timeout in seconds
+     * 
+     * @var int
+     */
+    private $timeout;
+    
+    /**
      * Constructor
      */
     public function __construct() {
@@ -34,6 +42,7 @@ class Ontario_Obituaries_Scraper {
         $this->regions = get_option('ontario_obituaries_regions', array('toronto', 'ottawa', 'hamilton'));
         $this->max_age = get_option('ontario_obituaries_max_age', 7);
         $this->retry_attempts = get_option('ontario_obituaries_retry_attempts', 3);
+        $this->timeout = get_option('ontario_obituaries_timeout', 30);
     }
     
     /**
@@ -65,6 +74,13 @@ class Ontario_Obituaries_Scraper {
         // Add rate limiting to prevent overloading sources
         $this->enable_rate_limiting();
         
+        // Check if the table exists
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+        if (!$table_exists) {
+            $results['errors']['database'] = 'Obituaries table does not exist';
+            return $results;
+        }
+        
         // Loop through regions
         foreach ($this->regions as $region) {
             // Initialize region results
@@ -83,6 +99,11 @@ class Ontario_Obituaries_Scraper {
                 
                 // Process obituaries
                 foreach ($obituaries as $obituary) {
+                    // Validate required fields
+                    if (empty($obituary['name']) || empty($obituary['date_of_death'])) {
+                        continue;
+                    }
+                    
                     // Check if obituary already exists
                     $exists = $wpdb->get_var($wpdb->prepare(
                         "SELECT COUNT(*) FROM $table_name WHERE name = %s AND date_of_death = %s AND funeral_home = %s",
@@ -96,8 +117,8 @@ class Ontario_Obituaries_Scraper {
                         continue;
                     }
                     
-                    // Insert obituary
-                    $wpdb->insert(
+                    // Insert obituary with error handling
+                    $insert_result = $wpdb->insert(
                         $table_name,
                         array(
                             'name' => $obituary['name'],
@@ -114,6 +135,11 @@ class Ontario_Obituaries_Scraper {
                             '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s'
                         )
                     );
+                    
+                    if ($insert_result === false) {
+                        error_log('Ontario Obituaries: Database insert error: ' . $wpdb->last_error);
+                        continue;
+                    }
                     
                     // Update added count
                     $results['regions'][$region]['added']++;
@@ -150,6 +176,12 @@ class Ontario_Obituaries_Scraper {
             
             // Update last request time
             $last_request_time = microtime(true);
+            
+            // Set timeout
+            if ($this->timeout > 0) {
+                curl_setopt($handle, CURLOPT_TIMEOUT, $this->timeout);
+                curl_setopt($handle, CURLOPT_CONNECTTIMEOUT, $this->timeout);
+            }
             
             return $handle;
         });
@@ -261,8 +293,26 @@ class Ontario_Obituaries_Scraper {
                     continue;
                 }
                 
+                // Get historical obituaries with timeout handling
+                $timeout_occurred = false;
+                set_time_limit(max(120, $this->timeout * 2)); // Double the timeout for historical data
+                
+                // Register shutdown function to detect timeouts
+                register_shutdown_function(function() use (&$timeout_occurred, $region) {
+                    $error = error_get_last();
+                    if ($error && str_contains($error['message'], 'Maximum execution time')) {
+                        $timeout_occurred = true;
+                        error_log("Ontario Obituaries: Timeout occurred while processing historical data for $region");
+                    }
+                });
+                
                 // Get historical obituaries
                 $obituaries = $scraper->get_historical_obituaries($start_date, $end_date);
+                
+                if ($timeout_occurred) {
+                    $results['errors'][$region] = 'Timeout occurred during historical data retrieval';
+                    continue;
+                }
                 
                 // Process obituaries
                 $this->process_obituaries($obituaries, $region, $results);

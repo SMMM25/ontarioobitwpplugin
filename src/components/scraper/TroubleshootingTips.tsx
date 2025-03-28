@@ -15,6 +15,7 @@ const TroubleshootingTips = () => {
           <li>Verify your server allows connections to external websites (check PHP settings like allow_url_fopen)</li>
           <li>If specific regions consistently fail, check for website changes or regional blocks</li>
           <li>Make sure your hosting provider doesn't block outgoing connections</li>
+          <li>Check your PHP memory_limit if you encounter timeout issues with large datasets</li>
         </ul>
       </AlertDescription>
     </Alert>

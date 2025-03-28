@@ -1,7 +1,7 @@
 
 import { useState } from "react";
 import { Switch } from "@/components/ui/switch";
-import { Shield, AlertCircle, Clock, Globe } from "lucide-react";
+import { Shield, AlertCircle, Clock, Globe, Timer } from "lucide-react";
 import { DEFAULT_SCRAPER_CONFIG } from "@/utils/scraperUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -32,6 +32,7 @@ const ScraperConfigPanel = ({
               id="adaptive-mode" 
               checked={useAdaptiveMode} 
               onCheckedChange={setUseAdaptiveMode}
+              aria-label="Toggle adaptive structure detection"
             />
             <label htmlFor="adaptive-mode" className="text-sm cursor-pointer flex items-center">
               <Shield className="h-3.5 w-3.5 mr-1 text-primary/80" />
@@ -56,6 +57,11 @@ const ScraperConfigPanel = ({
         <div className="flex items-center space-x-2 text-sm text-muted-foreground">
           <Globe className="h-3.5 w-3.5 text-primary/80" />
           <span>Active Regions: {scraperConfig.regions.length}</span>
+        </div>
+        
+        <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+          <Timer className="h-3.5 w-3.5 text-primary/80" />
+          <span>Timeout: {(scraperConfig.timeout || 30000) / 1000}s</span>
         </div>
       </div>
     </div>
