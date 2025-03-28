@@ -1,3 +1,4 @@
+
 // This file contains scraper utilities for the obituary scraper
 // In a real implementation, this would handle the actual scraping logic
 
@@ -716,4 +717,23 @@ const generateObituaryDescription = (firstName: string, lastName: string, age: n
   const template = templates[Math.floor(Math.random() * templates.length)];
   return template
     .replace(/{firstName}/g, firstName)
-    .replace(/{lastName}/g,
+    .replace(/{lastName}/g, lastName)
+    .replace(/{age}/g, age.toString())
+    .replace(/{location}/g, location)
+    .replace(/{deathDate}/g, new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
+};
+
+// Add missing deduplicateObituaries function
+const deduplicateObituaries = (obituaries: Obituary[]): Obituary[] => {
+  const uniqueIds = new Set<string>();
+  const dedupedObituaries: Obituary[] = [];
+  
+  for (const obituary of obituaries) {
+    if (!uniqueIds.has(obituary.id)) {
+      uniqueIds.add(obituary.id);
+      dedupedObituaries.push(obituary);
+    }
+  }
+  
+  return dedupedObituaries;
+};
