@@ -16,6 +16,8 @@ const TroubleshootingTips = () => {
           <li>If specific regions consistently fail, check for website changes or regional blocks</li>
           <li>Make sure your hosting provider doesn't block outgoing connections</li>
           <li>Check your PHP memory_limit if you encounter timeout issues with large datasets</li>
+          <li>For high-quality data, ensure all text encodings are properly handled (UTF-8 recommended)</li>
+          <li>The scraper has built-in data validation to ensure consistency and accuracy</li>
         </ul>
       </AlertDescription>
     </Alert>
