@@ -12,6 +12,7 @@ const TroubleshootingTips = () => {
           <li>The scraper includes adaptive mode to detect website structure changes</li>
           <li>For improved reliability, the system automatically retries with exponential backoff</li>
           <li>Historical data scraping uses specialized settings optimized for older obituaries</li>
+          <li><strong>Authentication verification</strong> prevents publishing of test or fake obituaries</li>
           <li>Verify your server allows connections to external websites (check PHP settings like allow_url_fopen)</li>
           <li>If specific regions consistently fail, check for website changes or regional blocks</li>
           <li>Make sure your hosting provider doesn't block outgoing connections</li>

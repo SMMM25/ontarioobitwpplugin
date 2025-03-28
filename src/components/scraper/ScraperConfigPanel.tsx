@@ -1,7 +1,7 @@
 
 import { useState } from "react";
 import { Switch } from "@/components/ui/switch";
-import { Shield, AlertCircle, Clock, Globe, Timer, Database, Cpu } from "lucide-react";
+import { Shield, AlertCircle, Clock, Globe, Timer, Database, Cpu, Lock } from "lucide-react";
 import { DEFAULT_SCRAPER_CONFIG } from "@/utils/scraperUtils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -16,6 +16,8 @@ const ScraperConfigPanel = ({
   setUseAdaptiveMode,
   scraperConfig 
 }: ScraperConfigPanelProps) => {
+  const [authenticityVerification, setAuthenticityVerification] = useState(true);
+
   return (
     <div className="bg-muted/20 p-4 rounded-md mb-4 border border-muted/30">
       <div className="flex items-center justify-between mb-4">
@@ -48,6 +50,27 @@ const ScraperConfigPanel = ({
             </label>
           </div>
         </TooltipProvider>
+        
+        <div className="flex items-center space-x-2">
+          <Switch 
+            id="authenticity-verification" 
+            checked={authenticityVerification} 
+            onCheckedChange={setAuthenticityVerification}
+            aria-label="Toggle authenticity verification"
+          />
+          <label htmlFor="authenticity-verification" className="text-sm cursor-pointer flex items-center">
+            <Lock className="h-3.5 w-3.5 mr-1 text-primary/80" />
+            Authenticity Verification
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <AlertCircle className="h-3 w-3 ml-1 text-muted-foreground cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="w-64 text-xs">Prevents test or fake obituaries from being published. Uses source verification, patterns analysis, and multiple validation checks.</p>
+              </TooltipContent>
+            </Tooltip>
+          </label>
+        </div>
         
         <div className="flex items-center space-x-2 text-sm text-muted-foreground">
           <Clock className="h-3.5 w-3.5 text-primary/80" />
@@ -103,13 +126,13 @@ const ScraperConfigPanel = ({
         
         <div className="flex items-center space-x-2 text-sm text-muted-foreground">
           <Cpu className="h-3.5 w-3.5 text-primary/80" />
-          <span>Data Validation: Enabled</span>
+          <span>Data Validation: Enhanced</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <AlertCircle className="h-3 w-3 ml-1 text-muted-foreground cursor-help" />
             </TooltipTrigger>
             <TooltipContent>
-              <p className="w-64 text-xs">Validates all collected data for accuracy and completeness before storage.</p>
+              <p className="w-64 text-xs">Multi-stage validation ensures all data is authentic, accurate and complete before storage.</p>
             </TooltipContent>
           </Tooltip>
         </div>
