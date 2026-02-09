@@ -2,9 +2,12 @@
  * Ontario Obituaries Frontend JavaScript
  *
  * Handles:
- *   - Obituary detail modal (AJAX)
+ *   - Per-card "Request removal" link (populates form with obituary ID)
+ *   - Disclaimer "Request a removal or correction" link (general request)
  *   - Removal request form (AJAX) — P0-SUP FIX
  *
+ * v3.10.1: Modal handlers removed (Quick View button no longer exists in template).
+ *          Per-card removal-link handler preserved (now a text link, not flag icon).
  * FIX-C  : Removed the duplicate Facebook share handler; sharing is now
  *          handled exclusively by ontario-obituaries-facebook.js.
  * P0-SUP : Added removal-request form handling with honeypot + AJAX POST.
@@ -18,89 +21,10 @@
         var $removalForm = $('#ontario-obituaries-removal-form');
         var $removalSubmit = $('#ontario-obituaries-removal-submit');
 
-        // ── Modal: load obituary detail via AJAX ──────────────────────────
-
-        // Use delegation so dynamically-rendered buttons also work
-        $container.on('click', '.ontario-obituaries-read-more', function() {
-            var obituaryId = $(this).data('id');
-
-            // Show modal with loading spinner
-            $('#ontario-obituaries-modal').fadeIn(300);
-            $('#ontario-obituaries-modal-body').html(
-                '<div class="ontario-obituaries-modal-loading">' +
-                '<div class="ontario-obituaries-spinner"></div>' +
-                '<p>Loading...</p></div>'
-            );
-
-            // BUG-01 FIX: action name, GET method, param name
-            $.ajax({
-                url:  ontario_obituaries_ajax.ajax_url,
-                type: 'GET',
-                data: {
-                    action: 'ontario_obituaries_get_detail',
-                    id:     obituaryId,
-                    nonce:  ontario_obituaries_ajax.nonce
-                },
-                timeout: 15000,
-                success: function(response) {
-                    if (response.success && response.data && response.data.html) {
-                        $('#ontario-obituaries-modal-body').html(response.data.html);
-                    } else {
-                        var errorMsg = (response.data && response.data.message)
-                            ? response.data.message
-                            : 'Error loading obituary details.';
-                        $('#ontario-obituaries-modal-body').html(
-                            '<p class="ontario-obituaries-error">' + errorMsg + '</p>'
-                        );
-                    }
-                },
-                error: function(xhr, status) {
-                    var errorMsg = (status === 'timeout')
-                        ? 'Request timed out. Please try again.'
-                        : 'Error loading obituary details.';
-                    $('#ontario-obituaries-modal-body').html(
-                        '<p class="ontario-obituaries-error">' + errorMsg + '</p>'
-                    );
-                }
-            });
-        });
-
-        // ── Modal: close behaviour ────────────────────────────────────────
-
-        $('.ontario-obituaries-modal-close').on('click', function() {
-            $('#ontario-obituaries-modal').fadeOut(300);
-        });
-
-        $(window).on('click', function(event) {
-            if ($(event.target).is('#ontario-obituaries-modal')) {
-                $('#ontario-obituaries-modal').fadeOut(300);
-            }
-        });
-
-        $(document).on('keydown', function(event) {
-            if (event.key === 'Escape' && $('#ontario-obituaries-modal').is(':visible')) {
-                $('#ontario-obituaries-modal').fadeOut(300);
-            }
-            // Tab trap inside modal for accessibility
-            if (event.key === 'Tab' && $('#ontario-obituaries-modal').is(':visible')) {
-                var $modal = $('#ontario-obituaries-modal');
-                var $focusable = $modal.find('a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])').filter(':visible');
-                if ($focusable.length === 0) return;
-                var $first = $focusable.first();
-                var $last  = $focusable.last();
-                if (event.shiftKey && document.activeElement === $first[0]) {
-                    event.preventDefault();
-                    $last.focus();
-                } else if (!event.shiftKey && document.activeElement === $last[0]) {
-                    event.preventDefault();
-                    $first.focus();
-                }
-            }
-        });
-
         // ── Removal Request Form (P0-SUP FIX) ────────────────────────────
 
-        // Show form when "Request removal" link is clicked (per-card flag icon)
+        // Show form when per-card "Request removal" text link is clicked
+        // v3.10.1: link changed from flag icon to text; same class + data attrs
         $container.on('click', '.ontario-obituaries-remove-link', function(e) {
             e.preventDefault();
             var $link = $(this);
@@ -122,7 +46,7 @@
             $('html, body').animate({ scrollTop: $removalForm.offset().top - 100 }, 400);
         });
 
-        // Also show form from the disclaimer "Request a removal or correction" link
+        // Show form from the disclaimer "Request a removal or correction" link (general request)
         $container.on('click', '.ontario-obituaries-request-removal', function(e) {
             e.preventDefault();
             $('#removal-obituary-id').val('');
