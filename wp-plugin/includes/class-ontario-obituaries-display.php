@@ -240,7 +240,7 @@ class Ontario_Obituaries_Display {
         }
 
         $locations = $wpdb->get_col(
-            "SELECT DISTINCT location FROM `{$this->table_name()}` WHERE location != '' ORDER BY location"
+            "SELECT DISTINCT location FROM `{$this->table_name()}` WHERE location != '' AND suppressed_at IS NULL ORDER BY location"
         );
 
         $locations = $locations ? $locations : array();
@@ -266,7 +266,7 @@ class Ontario_Obituaries_Display {
         }
 
         $homes = $wpdb->get_col(
-            "SELECT DISTINCT funeral_home FROM `{$this->table_name()}` WHERE funeral_home != '' ORDER BY funeral_home"
+            "SELECT DISTINCT funeral_home FROM `{$this->table_name()}` WHERE funeral_home != '' AND suppressed_at IS NULL ORDER BY funeral_home"
         );
 
         $homes = $homes ? $homes : array();

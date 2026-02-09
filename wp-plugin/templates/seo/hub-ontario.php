@@ -75,7 +75,8 @@ get_header();
         <h2><?php esc_html_e( 'Recent Obituary Notices', 'ontario-obituaries' ); ?></h2>
         <div class="ontario-obituaries-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px;">
             <?php foreach ( $recent as $obit ) :
-                $city_slug = sanitize_title( ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location );
+                $city_raw  = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
+                $city_slug = ! empty( $city_raw ) ? sanitize_title( $city_raw ) : 'ontario';
                 $name_slug = sanitize_title( $obit->name ) . '-' . $obit->id;
             ?>
                 <div class="ontario-obituary-card" style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">

@@ -15,14 +15,17 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// Output noindex before headers are sent (wp_head hook handles it)
+if ( ! $should_index ) {
+    add_action( 'wp_head', function() {
+        echo '<meta name="robots" content="noindex, follow">' . "\n";
+    }, 1 );
+}
+
 get_header();
 
 $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : $obituary->location;
 ?>
-
-<?php if ( ! $should_index ) : ?>
-<meta name="robots" content="noindex, follow">
-<?php endif; ?>
 
 <div class="ontario-obituary-individual" style="max-width: 800px; margin: 0 auto; padding: 20px;" itemscope itemtype="https://schema.org/Person">
 
@@ -41,6 +44,15 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
     <article class="ontario-obituary-page">
         <header style="margin-bottom: 30px;">
             <h1 itemprop="name" style="margin-bottom: 10px;"><?php echo esc_html( $obituary->name ); ?></h1>
+
+            <?php if ( ! empty( $obituary->image_url ) ) : ?>
+            <div class="ontario-obituary-image" style="margin-bottom: 20px;">
+                <img src="<?php echo esc_url( $obituary->image_url ); ?>"
+                     alt="<?php echo esc_attr( sprintf( __( 'Photo of %s', 'ontario-obituaries' ), $obituary->name ) ); ?>"
+                     style="max-width: 300px; height: auto; border-radius: 8px;"
+                     loading="lazy">
+            </div>
+            <?php endif; ?>
 
             <div class="ontario-obituary-dates" style="color: #555; font-size: 1.1em; margin-bottom: 10px;">
                 <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>

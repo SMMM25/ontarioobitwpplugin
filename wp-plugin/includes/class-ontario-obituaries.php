@@ -465,8 +465,16 @@ class Ontario_Obituaries {
 
     /**
      * Render the [ontario_obituaries] shortcode.
+     *
+     * Sets DONOTCACHEPAGE to prevent W3 Total Cache and LiteSpeed from
+     * serving stale versions after dedup or template changes.
      */
     public function render_shortcode( $atts ) {
+        // Prevent page caching — obituary data changes frequently
+        if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+            define( 'DONOTCACHEPAGE', true );
+        }
+
         $atts = shortcode_atts( array(
             'limit'        => 20,
             'location'     => '',
