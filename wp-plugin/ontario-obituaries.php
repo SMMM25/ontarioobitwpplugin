@@ -2,51 +2,140 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Displays obituaries from Ontario Canada - Compatible with Obituary Assistant
- * Version: 1.0.3
+ * Version: 2.2.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
+ * Domain Path: /languages
  */
 
 // Exit if accessed directly
-if (!defined('ABSPATH')) {
+if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
 // Define plugin constants
-define('ONTARIO_OBITUARIES_VERSION', '1.0.3');
-define('ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url(__FILE__));
+define( 'ONTARIO_OBITUARIES_VERSION', '2.2.0' );
+define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
+
+/**
+ * Load plugin textdomain for translations (ARCH-05 FIX)
+ */
+function ontario_obituaries_load_textdomain() {
+    load_plugin_textdomain( 'ontario-obituaries', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+}
+add_action( 'plugins_loaded', 'ontario_obituaries_load_textdomain', 5 );
 
 /**
  * Check if Obituary Assistant plugin is active
- * 
+ *
  * @return bool Whether Obituary Assistant is active
  */
 function ontario_obituaries_check_dependency() {
-    include_once(ABSPATH . 'wp-admin/includes/plugin.php');
-    return is_plugin_active('obituary-assistant/obituary-assistant.php');
+    if ( ! function_exists( 'is_plugin_active' ) ) {
+        include_once ABSPATH . 'wp-admin/includes/plugin.php';
+    }
+    return is_plugin_active( 'obituary-assistant/obituary-assistant.php' );
+}
+
+/**
+ * Get default plugin settings (centralized defaults - ARCH-03 FIX)
+ *
+ * @return array Default settings
+ */
+function ontario_obituaries_get_defaults() {
+    return array(
+        'enabled'        => true,
+        'frequency'      => 'daily',
+        'time'           => '03:00',
+        'regions'        => array( 'Toronto', 'Ottawa', 'Hamilton' ),
+        'max_age'        => 7,
+        'filter_keywords' => '',
+        'auto_publish'   => true,
+        'notify_admin'   => true,
+        'retry_attempts' => 3,
+        'timeout'        => 30,
+        'adaptive_mode'  => true,
+        'debug_logging'  => false,
+        'fuzzy_dedupe'   => false,
+    );
+}
+
+/**
+ * Get plugin settings (single source of truth - ARCH-03 FIX)
+ *
+ * @return array Merged settings with defaults
+ */
+function ontario_obituaries_get_settings() {
+    $defaults = ontario_obituaries_get_defaults();
+    $settings = get_option( 'ontario_obituaries_settings', array() );
+    return wp_parse_args( $settings, $defaults );
+}
+
+/**
+ * Plugin logging wrapper (P2-12 FIX)
+ *
+ * - 'error' level messages are ALWAYS logged regardless of the debug_logging setting.
+ * - 'info' and 'warning' messages are only logged when debug_logging is enabled.
+ *
+ * @param string $message Log message.
+ * @param string $level   One of: info, warning, error.
+ */
+function ontario_obituaries_log( $message, $level = 'info' ) {
+    $settings = ontario_obituaries_get_settings();
+    if ( empty( $settings['debug_logging'] ) && 'error' !== $level ) {
+        return;
+    }
+    error_log( sprintf( '[Ontario Obituaries][%s] %s', strtoupper( $level ), $message ) );
 }
 
 /**
  * Include required files
  */
 function ontario_obituaries_includes() {
-    // Core plugin class
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries.php';
-    
-    // Display class for frontend rendering
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-display.php';
-    
-    // AJAX handler
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-ajax.php';
-    
-    // Add the data processor class
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-admin.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-debug.php';
 
-    // Initialize AJAX handler
     $ajax_handler = new Ontario_Obituaries_Ajax();
     $ajax_handler->init();
+
+    $admin = new Ontario_Obituaries_Admin();
+    $admin->init();
+
+    $debug = new Ontario_Obituaries_Debug();
+    $debug->init();
+}
+
+/**
+ * Compute the next cron timestamp honouring the configured time.
+ * (P0-4 FIX)
+ *
+ * @param string $time_setting HH:MM in 24-hour format.
+ * @return int Unix timestamp for the next occurrence.
+ */
+function ontario_obituaries_next_cron_timestamp( $time_setting = '03:00' ) {
+    $tz  = wp_timezone();
+    $now = new DateTimeImmutable( 'now', $tz );
+
+    // Parse the desired hour:minute
+    $parts = explode( ':', $time_setting );
+    $hour  = isset( $parts[0] ) ? intval( $parts[0] ) : 3;
+    $min   = isset( $parts[1] ) ? intval( $parts[1] ) : 0;
+
+    $target = $now->setTime( $hour, $min, 0 );
+
+    // If the target time already passed today, schedule for tomorrow
+    if ( $target <= $now ) {
+        $target = $target->modify( '+1 day' );
+    }
+
+    return $target->getTimestamp();
 }
 
 /**
@@ -55,163 +144,183 @@ function ontario_obituaries_includes() {
 function ontario_obituaries_activate() {
     global $wpdb;
     $charset_collate = $wpdb->get_charset_collate();
-    $table_name = $wpdb->prefix . 'ontario_obituaries';
-    
-    // SQL to create the obituaries table - optimized schema
+    $table_name      = $wpdb->prefix . 'ontario_obituaries';
+
+    // P0-3 FIX: funeral_home and location are NOT NULL DEFAULT ''
     $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        name varchar(100) NOT NULL,
+        id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+        name varchar(200) NOT NULL,
         date_of_birth date DEFAULT NULL,
         date_of_death date NOT NULL,
-        age int(3) DEFAULT NULL,
-        funeral_home varchar(100) DEFAULT NULL,
-        location varchar(100) DEFAULT NULL,
-        image_url varchar(255) DEFAULT NULL,
+        age smallint(3) UNSIGNED DEFAULT NULL,
+        funeral_home varchar(200) NOT NULL DEFAULT '',
+        location varchar(100) NOT NULL DEFAULT '',
+        image_url varchar(2083) DEFAULT NULL,
         description text DEFAULT NULL,
-        source_url varchar(255) DEFAULT NULL,
+        source_url varchar(2083) DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
         KEY idx_date_death (date_of_death),
         KEY idx_location (location),
-        KEY idx_funeral_home (funeral_home)
+        KEY idx_funeral_home (funeral_home),
+        KEY idx_name (name(100)),
+        KEY idx_created_at (created_at),
+        UNIQUE KEY idx_unique_obituary (name(100), date_of_death, funeral_home(100))
     ) $charset_collate;";
-    
-    // Include WordPress database upgrade functions
-    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-    dbDelta($sql);
-    
-    // Set a transient to show an admin notice
-    set_transient('ontario_obituaries_activation_notice', true, 60 * 5);
-    
-    // Schedule the cron events for collection
-    if (!wp_next_scheduled('ontario_obituaries_collection_event')) {
-        // Schedule the event to run twice daily
-        wp_schedule_event(time(), 'twicedaily', 'ontario_obituaries_collection_event');
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    dbDelta( $sql );
+
+    // P0-2 QC FIX: Explicit column migration for existing installs
+    // dbDelta does NOT reliably alter NULL/DEFAULT constraints on existing columns,
+    // so we explicitly ALTER TABLE when upgrading from a previous version.
+    $current_db_version = get_option( 'ontario_obituaries_db_version', '0' );
+
+    if ( version_compare( $current_db_version, '2.2.0', '<' ) ) {
+        // Check if funeral_home needs correction (nullable OR wrong default)
+        $fh_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$table_name}` LIKE 'funeral_home'" );
+        if ( $fh_col && ( 'YES' === $fh_col->Null || '' !== (string) $fh_col->Default ) ) {
+            $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY funeral_home varchar(200) NOT NULL DEFAULT ''" );
+        }
+
+        // Check if location needs correction (nullable OR wrong default)
+        $loc_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$table_name}` LIKE 'location'" );
+        if ( $loc_col && ( 'YES' === $loc_col->Null || '' !== (string) $loc_col->Default ) ) {
+            $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY location varchar(100) NOT NULL DEFAULT ''" );
+        }
+
+        // Migrate any existing NULL data to empty string
+        $wpdb->query( "UPDATE `{$table_name}` SET funeral_home = '' WHERE funeral_home IS NULL" );
+        $wpdb->query( "UPDATE `{$table_name}` SET location = '' WHERE location IS NULL" );
     }
-    
-    // Run an initial collection to populate data immediately
-    if (class_exists('Ontario_Obituaries_Scraper')) {
+
+    update_option( 'ontario_obituaries_db_version', ONTARIO_OBITUARIES_VERSION );
+    set_transient( 'ontario_obituaries_activation_notice', true, 300 );
+
+    // P0-4 FIX: Schedule cron at the configured time
+    $settings  = ontario_obituaries_get_settings();
+    $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'daily';
+    $time      = isset( $settings['time'] ) ? $settings['time'] : '03:00';
+
+    // P0-1 QC FIX: Clear any stale/duplicate schedules, then schedule fresh
+    wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
+    $scheduled = wp_schedule_event(
+        ontario_obituaries_next_cron_timestamp( $time ),
+        $frequency,
+        'ontario_obituaries_collection_event'
+    );
+    if ( false === $scheduled || is_wp_error( $scheduled ) ) {
+        ontario_obituaries_log( 'Failed to schedule cron on activation (frequency: ' . $frequency . ', time: ' . $time . ')', 'error' );
+    }
+
+    // BUG-05 FIX: Load scraper explicitly before use at activation
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
+    if ( class_exists( 'Ontario_Obituaries_Scraper' ) ) {
         $scraper = new Ontario_Obituaries_Scraper();
         $scraper->run_now();
     }
-    
-    // Force-flush rewrite rules
-    flush_rewrite_rules();
 }
-register_activation_hook(__FILE__, 'ontario_obituaries_activate');
+register_activation_hook( __FILE__, 'ontario_obituaries_activate' );
 
 /**
  * Deactivation hook
  */
 function ontario_obituaries_deactivate() {
-    // Clean up transients
-    delete_transient('ontario_obituaries_activation_notice');
-    
-    // Unschedule the cron event
-    $timestamp = wp_next_scheduled('ontario_obituaries_collection_event');
-    if ($timestamp) {
-        wp_unschedule_event($timestamp, 'ontario_obituaries_collection_event');
-    }
-    
-    // Flush rewrite rules
-    flush_rewrite_rules();
+    delete_transient( 'ontario_obituaries_activation_notice' );
+    delete_transient( 'ontario_obituaries_table_exists' );
+    delete_transient( 'ontario_obituaries_locations_cache' );
+    delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+    // P0-1 QC FIX: Clear ALL scheduled instances, not just the next one
+    wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
 }
-register_deactivation_hook(__FILE__, 'ontario_obituaries_deactivate');
+register_deactivation_hook( __FILE__, 'ontario_obituaries_deactivate' );
 
 /**
  * Scheduled task hook for collecting obituaries
  */
 function ontario_obituaries_scheduled_collection() {
-    // Load the collection class if not already loaded
-    if (!class_exists('Ontario_Obituaries_Scraper')) {
+    if ( ! class_exists( 'Ontario_Obituaries_Scraper' ) ) {
         require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
     }
-    
-    // Initialize and run the collection
+
     $scraper = new Ontario_Obituaries_Scraper();
     $results = $scraper->collect();
-    
-    // Log the results
-    error_log('Ontario Obituaries Scheduled Collection: ' . print_r($results, true));
-    
-    // Update the last collection timestamp and data
-    update_option('ontario_obituaries_last_collection', array(
-        'timestamp' => current_time('timestamp'),
-        'completed' => current_time('mysql'),
-        'results' => $results
-    ));
+
+    update_option( 'ontario_obituaries_last_collection', array(
+        'timestamp' => current_time( 'mysql' ),
+        'completed' => current_time( 'mysql' ),
+        'results'   => $results,
+    ) );
+
+    delete_transient( 'ontario_obituaries_locations_cache' );
+    delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+    // P2-13: errors are stored by the scraper; clear stale errors if scrape succeeded
+    if ( empty( $results['errors'] ) ) {
+        delete_option( 'ontario_obituaries_last_scrape_errors' );
+    }
 }
-add_action('ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection');
+add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection' );
 
 /**
  * Admin notices hook
+ * P1-7 FIX: Guard get_current_screen()
  */
 function ontario_obituaries_admin_notices() {
-    // Activation notice
-    if (get_transient('ontario_obituaries_activation_notice')) {
+    if ( get_transient( 'ontario_obituaries_activation_notice' ) ) {
         ?>
         <div class="notice notice-success is-dismissible">
-            <p><?php _e('Ontario Obituaries plugin has been activated successfully!', 'ontario-obituaries'); ?></p>
-            <p><?php _e('An initial collection has been triggered to populate obituaries data.', 'ontario-obituaries'); ?></p>
+            <p><?php esc_html_e( 'Ontario Obituaries plugin has been activated successfully!', 'ontario-obituaries' ); ?></p>
+            <p><?php esc_html_e( 'An initial collection has been triggered to populate obituaries data.', 'ontario-obituaries' ); ?></p>
         </div>
         <?php
-        delete_transient('ontario_obituaries_activation_notice');
+        delete_transient( 'ontario_obituaries_activation_notice' );
     }
-    
-    // Dependency notice
-    if (!ontario_obituaries_check_dependency()) {
-        ?>
-        <div class="notice notice-warning is-dismissible">
-            <p><?php _e('Ontario Obituaries plugin works best with Obituary Assistant plugin. Please install and activate it for full functionality.', 'ontario-obituaries'); ?></p>
-        </div>
-        <?php
+
+    // P1-7 FIX: guard get_current_screen
+    if ( ! function_exists( 'get_current_screen' ) ) {
+        return;
     }
-    
-    // Check for failed collections
-    $last_collection = get_option('ontario_obituaries_last_collection');
-    if ($last_collection && isset($last_collection['results']) && !empty($last_collection['results']['errors'])) {
+    $screen = get_current_screen();
+    if ( $screen && false !== strpos( $screen->id, 'ontario-obituaries' ) && ! ontario_obituaries_check_dependency() ) {
         ?>
-        <div class="notice notice-warning is-dismissible">
-            <p><?php _e('Ontario Obituaries encountered some issues during the last collection. Check the logs for details.', 'ontario-obituaries'); ?></p>
+        <div class="notice notice-info is-dismissible">
+            <p><?php esc_html_e( 'Ontario Obituaries plugin works best with Obituary Assistant plugin. Please install and activate it for full functionality.', 'ontario-obituaries' ); ?></p>
         </div>
         <?php
     }
 }
-add_action('admin_notices', 'ontario_obituaries_admin_notices');
+add_action( 'admin_notices', 'ontario_obituaries_admin_notices' );
 
 /**
  * Initialize the plugin
  */
 function ontario_obituaries_init() {
-    // Include required files
     ontario_obituaries_includes();
-    
-    // Initialize the main plugin class
-    $plugin = new Ontario_Obituaries();
+    new Ontario_Obituaries();
 }
-add_action('plugins_loaded', 'ontario_obituaries_init');
+add_action( 'plugins_loaded', 'ontario_obituaries_init' );
 
 /**
  * Add integration with Obituary Assistant
  */
 function ontario_obituaries_integration() {
-    if (ontario_obituaries_check_dependency()) {
-        // Add integration filters and actions here
-        add_filter('obituary_assistant_sources', 'ontario_obituaries_register_source');
+    if ( ontario_obituaries_check_dependency() ) {
+        add_filter( 'obituary_assistant_sources', 'ontario_obituaries_register_source' );
     }
 }
-add_action('plugins_loaded', 'ontario_obituaries_integration', 20);
+add_action( 'plugins_loaded', 'ontario_obituaries_integration', 20 );
 
 /**
  * Register as a source for Obituary Assistant
  */
-function ontario_obituaries_register_source($sources) {
+function ontario_obituaries_register_source( $sources ) {
     $sources['ontario'] = array(
-        'name' => 'Ontario Obituaries',
+        'name'        => 'Ontario Obituaries',
         'description' => 'Obituaries from Ontario, Canada',
-        'callback' => 'ontario_obituaries_get_data_for_assistant'
+        'callback'    => 'ontario_obituaries_get_data_for_assistant',
     );
-    
     return $sources;
 }
 
@@ -220,100 +329,20 @@ function ontario_obituaries_register_source($sources) {
  */
 function ontario_obituaries_get_data_for_assistant() {
     $display = new Ontario_Obituaries_Display();
-    return $display->get_obituaries(array('limit' => 50));
+    return $display->get_obituaries( array( 'limit' => 50 ) );
 }
 
 /**
- * Add a new menu item in the WP Admin
- */
-function ontario_obituaries_add_admin_menu() {
-    add_management_page(
-        __('Run Ontario Obituaries Collection', 'ontario-obituaries'),
-        __('Run Obituaries Collection', 'ontario-obituaries'),
-        'manage_options',
-        'run-ontario-collection',
-        'ontario_obituaries_render_collection_page'
-    );
-}
-add_action('admin_menu', 'ontario_obituaries_add_admin_menu');
-
-/**
- * Render the manual collection page
- */
-function ontario_obituaries_render_collection_page() {
-    ?>
-    <div class="wrap">
-        <h1><?php _e('Run Ontario Obituaries Collection', 'ontario-obituaries'); ?></h1>
-        <p><?php _e('Click the button below to manually run the obituaries collection right now.', 'ontario-obituaries'); ?></p>
-        
-        <form method="post" action="">
-            <?php wp_nonce_field('run_ontario_collection', 'ontario_collection_nonce'); ?>
-            <input type="submit" name="run_collection" class="button button-primary" value="<?php _e('Run Collection Now', 'ontario-obituaries'); ?>">
-        </form>
-        
-        <?php
-        // Handle the form submission
-        if (isset($_POST['run_collection']) && check_admin_referer('run_ontario_collection', 'ontario_collection_nonce')) {
-            // Load the collection class if not already loaded
-            if (!class_exists('Ontario_Obituaries_Scraper')) {
-                require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
-            }
-            
-            // Initialize and run the collection
-            $scraper = new Ontario_Obituaries_Scraper();
-            $results = $scraper->run_now();
-            
-            // Display the results
-            echo '<h2>' . __('Collection Results', 'ontario-obituaries') . '</h2>';
-            echo '<div class="notice notice-success inline"><p>' . sprintf(__('Collection completed. Found %d obituaries, added %d new entries.', 'ontario-obituaries'), $results['obituaries_found'], $results['obituaries_added']) . '</p></div>';
-            
-            // Display any errors
-            if (!empty($results['errors'])) {
-                echo '<h3>' . __('Errors', 'ontario-obituaries') . '</h3>';
-                echo '<div class="notice notice-warning inline"><ul>';
-                foreach ($results['errors'] as $region_id => $errors) {
-                    $error_messages = is_array($errors) ? implode(', ', $errors) : $errors;
-                    echo '<li><strong>' . esc_html($region_id) . ':</strong> ' . esc_html($error_messages) . '</li>';
-                }
-                echo '</ul></div>';
-            }
-            
-            // Display collection details for each region
-            echo '<h3>' . __('Region Details', 'ontario-obituaries') . '</h3>';
-            echo '<table class="widefat striped">';
-            echo '<thead><tr><th>' . __('Region', 'ontario-obituaries') . '</th><th>' . __('Found', 'ontario-obituaries') . '</th><th>' . __('Added', 'ontario-obituaries') . '</th></tr></thead>';
-            echo '<tbody>';
-            
-            if (!empty($results['regions'])) {
-                foreach ($results['regions'] as $region_id => $region_results) {
-                    echo '<tr>';
-                    echo '<td>' . esc_html($region_id) . '</td>';
-                    echo '<td>' . intval($region_results['found']) . '</td>';
-                    echo '<td>' . intval($region_results['added']) . '</td>';
-                    echo '</tr>';
-                }
-            } else {
-                echo '<tr><td colspan="3">' . __('No region details available', 'ontario-obituaries') . '</td></tr>';
-            }
-            
-            echo '</tbody></table>';
-        }
-        ?>
-    </div>
-    <?php
-}
-
-/**
- * Add a new dashboard widget for obituary statistics
+ * Add a dashboard widget for obituary statistics
  */
 function ontario_obituaries_add_dashboard_widget() {
     wp_add_dashboard_widget(
-        'ontario_obituaries_stats', 
-        __('Ontario Obituaries Statistics', 'ontario-obituaries'),
+        'ontario_obituaries_stats',
+        __( 'Ontario Obituaries Statistics', 'ontario-obituaries' ),
         'ontario_obituaries_render_dashboard_widget'
     );
 }
-add_action('wp_dashboard_setup', 'ontario_obituaries_add_dashboard_widget');
+add_action( 'wp_dashboard_setup', 'ontario_obituaries_add_dashboard_widget' );
 
 /**
  * Render the dashboard widget
@@ -321,51 +350,50 @@ add_action('wp_dashboard_setup', 'ontario_obituaries_add_dashboard_widget');
 function ontario_obituaries_render_dashboard_widget() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'ontario_obituaries';
-    
-    // Get total count
-    $total_count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
-    
-    // Get count from the last 7 days
-    $last_week_count = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(*) FROM $table_name WHERE date_of_death >= %s",
-        date('Y-m-d', strtotime('-7 days'))
-    ));
-    
-    // Get counts by source
+
+    if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) !== $table_name ) {
+        echo '<p>' . esc_html__( 'Obituaries table not found. Please deactivate and reactivate the plugin.', 'ontario-obituaries' ) . '</p>';
+        return;
+    }
+
+    $total_count     = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table_name}`" );
+    $last_week_count = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM `{$table_name}` WHERE date_of_death >= %s",
+        gmdate( 'Y-m-d', strtotime( '-7 days' ) )
+    ) );
     $source_counts = $wpdb->get_results(
-        "SELECT funeral_home, COUNT(*) as count FROM $table_name GROUP BY funeral_home ORDER BY count DESC LIMIT 10"
+        "SELECT funeral_home, COUNT(*) as count FROM `{$table_name}` WHERE funeral_home != '' GROUP BY funeral_home ORDER BY count DESC LIMIT 10"
     );
-    
-    // Get the last collection result
-    $last_collection = get_option('ontario_obituaries_last_collection');
-    
+    $last_collection = get_option( 'ontario_obituaries_last_collection' );
+
     echo '<div class="ontario-obituaries-widget">';
-    echo '<p>' . sprintf(__('Total Obituaries: <strong>%d</strong>', 'ontario-obituaries'), $total_count) . '</p>';
-    echo '<p>' . sprintf(__('Added in Last 7 Days: <strong>%d</strong>', 'ontario-obituaries'), $last_week_count) . '</p>';
-    
-    if (!empty($source_counts)) {
-        echo '<h4>' . __('Top Sources:', 'ontario-obituaries') . '</h4>';
-        echo '<ul>';
-        foreach ($source_counts as $source) {
-            echo '<li>' . esc_html($source->funeral_home) . ': ' . esc_html($source->count) . '</li>';
+    echo '<p>' . sprintf( esc_html__( 'Total Obituaries: %s', 'ontario-obituaries' ), '<strong>' . intval( $total_count ) . '</strong>' ) . '</p>';
+    echo '<p>' . sprintf( esc_html__( 'Added in Last 7 Days: %s', 'ontario-obituaries' ), '<strong>' . intval( $last_week_count ) . '</strong>' ) . '</p>';
+
+    if ( ! empty( $source_counts ) ) {
+        echo '<h4>' . esc_html__( 'Top Sources:', 'ontario-obituaries' ) . '</h4><ul>';
+        foreach ( $source_counts as $source ) {
+            echo '<li>' . esc_html( $source->funeral_home ) . ': ' . intval( $source->count ) . '</li>';
         }
         echo '</ul>';
     }
-    
-    if (!empty($last_collection)) {
-        $time_ago = human_time_diff(strtotime($last_collection['timestamp']), current_time('timestamp'));
-        echo '<p>' . sprintf(__('Last Collection: <strong>%s ago</strong>', 'ontario-obituaries'), $time_ago) . '</p>';
-        
-        if (isset($last_collection['results'])) {
-            $results = $last_collection['results'];
+
+    if ( ! empty( $last_collection ) && isset( $last_collection['completed'] ) ) {
+        $completed_ts = strtotime( $last_collection['completed'] );
+        if ( $completed_ts ) {
+            $time_ago = human_time_diff( $completed_ts, current_time( 'U' ) );
+            echo '<p>' . sprintf( esc_html__( 'Last Collection: %s ago', 'ontario-obituaries' ), '<strong>' . esc_html( $time_ago ) . '</strong>' ) . '</p>';
+        }
+        if ( isset( $last_collection['results'] ) ) {
+            $r = $last_collection['results'];
             echo '<p>' . sprintf(
-                __('Last Run: %d found, %d added', 'ontario-obituaries'),
-                $results['obituaries_found'],
-                $results['obituaries_added']
+                esc_html__( 'Last Run: %1$d found, %2$d added', 'ontario-obituaries' ),
+                intval( $r['obituaries_found'] ),
+                intval( $r['obituaries_added'] )
             ) . '</p>';
         }
     }
-    
-    echo '<p><a href="' . admin_url('tools.php?page=run-ontario-collection') . '">' . __('Run Collection Now', 'ontario-obituaries') . '</a></p>';
+
+    echo '<p><a href="' . esc_url( admin_url( 'admin.php?page=ontario-obituaries' ) ) . '">' . esc_html__( 'Manage Obituaries', 'ontario-obituaries' ) . '</a></p>';
     echo '</div>';
 }

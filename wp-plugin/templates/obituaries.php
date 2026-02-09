@@ -1,225 +1,222 @@
-
 <?php
 /**
- * Template for displaying obituaries
- * 
- * @var array $atts Shortcode attributes
+ * Template for displaying obituaries (shortcode output).
+ *
+ * Variables are provided by Ontario_Obituaries_Display::render_obituaries():
+ *   $obituaries   - array of obituary objects
+ *   $total        - int total count
+ *   $total_pages  - int total pages
+ *   $locations    - array of unique locations
+ *   $location     - string current location filter value
+ *   $search       - string current search value
+ *   $page         - int current page number
+ *   $atts         - array shortcode attributes (limit, location, funeral_home, days)
+ *
+ * FIX LOG:
+ *  P1-2  : Removed error_log() and HTML debug comments from production output
+ *  P1-6  : Hidden field loop now sanitizes array values and skips arrays
+ *  P1-10 : Template no longer creates its own Display instance or re-queries
+ *  P2-4  : Images use loading="lazy" for performance
  */
 
 // Exit if accessed directly
-if (!defined('ABSPATH')) {
+if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-// Get settings
-$settings = get_option('ontario_obituaries_settings', array());
-
-// Get display object
-$display = new Ontario_Obituaries_Display();
-
-// Get query args from request
-$search = isset($_GET['ontario_obituaries_search']) ? sanitize_text_field($_GET['ontario_obituaries_search']) : '';
-$location = isset($_GET['ontario_obituaries_location']) ? sanitize_text_field($_GET['ontario_obituaries_location']) : $atts['location'];
-$page = isset($_GET['ontario_obituaries_page']) ? max(1, intval($_GET['ontario_obituaries_page'])) : 1;
-
-// Debug information
-error_log('Ontario Obituaries: Rendering template with search=' . $search . ', location=' . $location . ', page=' . $page);
-
-// Set up the query
-$args = array(
-    'limit' => intval($atts['limit']),
-    'offset' => (intval($atts['limit']) * ($page - 1)),
-    'location' => $location,
-    'funeral_home' => $atts['funeral_home'],
-    'days' => intval($atts['days']),
-    'search' => $search
-);
-
-// Get obituaries
-$obituaries = $display->get_obituaries($args);
-error_log('Ontario Obituaries: Found ' . count($obituaries) . ' obituaries');
-
-// Get total count
-$total = $display->count_obituaries(array(
-    'location' => $location,
-    'funeral_home' => $atts['funeral_home'],
-    'days' => intval($atts['days']),
-    'search' => $search
-));
-
-// Calculate pagination
-$total_pages = ceil($total / intval($atts['limit']));
-
-// Get locations for filter
-$locations = $display->get_locations();
-
-// Add plugin CSS
-wp_enqueue_style('ontario-obituaries-css');
-wp_enqueue_script('ontario-obituaries-js');
-
-// Get site URL for sharing
+// All data is provided by render_obituaries() – no re-queries needed (P1-10 FIX).
 $site_url = get_site_url();
-
-// Debug - output directly to page for troubleshooting
-echo '<!-- Ontario Obituaries Debug: Template loaded with ' . count($obituaries) . ' obituaries found -->';
 ?>
 
-<!-- Main container with explicit classes to ensure visibility -->
+<!-- Main container -->
 <div class="ontario-obituaries-container" style="display: block; width: 100%; margin: 20px 0;">
     <div class="ontario-obituaries-filters">
         <form method="get" class="ontario-obituaries-search-form">
             <?php
-            // Preserve existing query params
-            foreach ($_GET as $key => $value) {
-                if (!in_array($key, array('ontario_obituaries_search', 'ontario_obituaries_location', 'ontario_obituaries_page'))) {
-                    echo '<input type="hidden" name="' . esc_attr($key) . '" value="' . esc_attr($value) . '">';
+            // P1-6 FIX: Preserve existing GET params safely – skip arrays and plugin-controlled params
+            $skip_keys = array( 'ontario_obituaries_search', 'ontario_obituaries_location', 'ontario_obituaries_page' );
+            foreach ( $_GET as $key => $value ) {
+                if ( in_array( $key, $skip_keys, true ) ) {
+                    continue;
                 }
+                if ( is_array( $value ) ) {
+                    continue; // skip array-valued params to avoid PHP warnings
+                }
+                echo '<input type="hidden" name="' . esc_attr( $key ) . '" value="' . esc_attr( $value ) . '">';
             }
             ?>
-            
+
             <div class="ontario-obituaries-search">
-                <input type="text" name="ontario_obituaries_search" placeholder="<?php esc_attr_e('Search obituaries...', 'ontario-obituaries'); ?>" value="<?php echo esc_attr($search); ?>">
-                <button type="submit" class="ontario-obituaries-search-button">
+                <input type="text"
+                       name="ontario_obituaries_search"
+                       placeholder="<?php esc_attr_e( 'Search obituaries...', 'ontario-obituaries' ); ?>"
+                       value="<?php echo esc_attr( $search ); ?>">
+                <button type="submit" class="ontario-obituaries-search-button" aria-label="<?php esc_attr_e( 'Search', 'ontario-obituaries' ); ?>">
                     <span class="dashicons dashicons-search"></span>
                 </button>
             </div>
-            
-            <?php if (!empty($locations)): ?>
+
+            <?php if ( ! empty( $locations ) ) : ?>
                 <div class="ontario-obituaries-location-filter">
-                    <select name="ontario_obituaries_location">
-                        <option value=""><?php _e('All Locations', 'ontario-obituaries'); ?></option>
-                        <?php foreach ($locations as $loc): ?>
-                            <option value="<?php echo esc_attr($loc); ?>" <?php selected($location, $loc); ?>><?php echo esc_html($loc); ?></option>
+                    <label for="ontario-obituaries-location-select" class="screen-reader-text">
+                        <?php esc_html_e( 'Filter by location', 'ontario-obituaries' ); ?>
+                    </label>
+                    <select id="ontario-obituaries-location-select" name="ontario_obituaries_location">
+                        <option value=""><?php esc_html_e( 'All Locations', 'ontario-obituaries' ); ?></option>
+                        <?php foreach ( $locations as $loc ) : ?>
+                            <option value="<?php echo esc_attr( $loc ); ?>" <?php selected( $location, $loc ); ?>><?php echo esc_html( $loc ); ?></option>
                         <?php endforeach; ?>
                     </select>
                     <button type="submit" class="ontario-obituaries-filter-button">
-                        <?php _e('Filter', 'ontario-obituaries'); ?>
+                        <?php esc_html_e( 'Filter', 'ontario-obituaries' ); ?>
                     </button>
                 </div>
             <?php endif; ?>
-            
-            <?php if ($search || $location): ?>
+
+            <?php if ( $search || $location ) : ?>
                 <div class="ontario-obituaries-clear-filters">
-                    <a href="<?php echo esc_url(remove_query_arg(array('ontario_obituaries_search', 'ontario_obituaries_location', 'ontario_obituaries_page'))); ?>">
-                        <?php _e('Clear Filters', 'ontario-obituaries'); ?>
+                    <a href="<?php echo esc_url( remove_query_arg( array( 'ontario_obituaries_search', 'ontario_obituaries_location', 'ontario_obituaries_page' ) ) ); ?>">
+                        <?php esc_html_e( 'Clear Filters', 'ontario-obituaries' ); ?>
                     </a>
                 </div>
             <?php endif; ?>
         </form>
-        
+
         <div class="ontario-obituaries-count">
-            <?php printf(_n('%d obituary found', '%d obituaries found', $total, 'ontario-obituaries'), $total); ?>
+            <?php
+            printf(
+                /* translators: %d: number of obituaries */
+                _n( '%d obituary found', '%d obituaries found', $total, 'ontario-obituaries' ),
+                $total
+            );
+            ?>
         </div>
     </div>
-    
-    <?php if (empty($obituaries)): ?>
+
+    <?php if ( empty( $obituaries ) ) : ?>
         <div class="ontario-obituaries-empty">
-            <p><?php _e('No obituaries found.', 'ontario-obituaries'); ?></p>
-            <?php if ($search || $location): ?>
-                <p><?php _e('Try adjusting your search or filters.', 'ontario-obituaries'); ?></p>
+            <p><?php esc_html_e( 'No obituaries found.', 'ontario-obituaries' ); ?></p>
+            <?php if ( $search || $location ) : ?>
+                <p><?php esc_html_e( 'Try adjusting your search or filters.', 'ontario-obituaries' ); ?></p>
             <?php endif; ?>
         </div>
-    <?php else: ?>
+    <?php else : ?>
         <div class="ontario-obituaries-grid">
-            <?php foreach ($obituaries as $index => $obituary): ?>
-                <div class="ontario-obituaries-card" data-index="<?php echo esc_attr($index); ?>">
-                    <?php if (!empty($obituary->image_url)): ?>
+            <?php foreach ( $obituaries as $index => $obituary ) : ?>
+                <div class="ontario-obituaries-card" data-index="<?php echo esc_attr( $index ); ?>">
+                    <?php if ( ! empty( $obituary->image_url ) ) : ?>
                         <div class="ontario-obituaries-card-image">
-                            <img src="<?php echo esc_url($obituary->image_url); ?>" alt="<?php echo esc_attr(sprintf(__('Photo of %s', 'ontario-obituaries'), $obituary->name)); ?>">
+                            <!-- P2-4 FIX: lazy loading -->
+                            <img src="<?php echo esc_url( $obituary->image_url ); ?>"
+                                 alt="<?php echo esc_attr( sprintf( __( 'Photo of %s', 'ontario-obituaries' ), $obituary->name ) ); ?>"
+                                 loading="lazy">
                         </div>
                     <?php endif; ?>
-                    
+
                     <div class="ontario-obituaries-card-content">
                         <div class="ontario-obituaries-card-meta">
-                            <span class="ontario-obituaries-location"><?php echo esc_html($obituary->location); ?></span>
-                            <span class="ontario-obituaries-funeral-home"><?php echo esc_html($obituary->funeral_home); ?></span>
+                            <?php if ( ! empty( $obituary->location ) ) : ?>
+                                <span class="ontario-obituaries-location"><?php echo esc_html( $obituary->location ); ?></span>
+                            <?php endif; ?>
+                            <?php if ( ! empty( $obituary->funeral_home ) ) : ?>
+                                <span class="ontario-obituaries-funeral-home"><?php echo esc_html( $obituary->funeral_home ); ?></span>
+                            <?php endif; ?>
                         </div>
-                        
-                        <h3 class="ontario-obituaries-name"><?php echo esc_html($obituary->name); ?></h3>
-                        
+
+                        <h3 class="ontario-obituaries-name"><?php echo esc_html( $obituary->name ); ?></h3>
+
                         <div class="ontario-obituaries-dates">
-                            <?php if (!empty($obituary->date_of_birth)): ?>
-                                <span><?php echo esc_html($obituary->date_of_birth); ?> - </span>
+                            <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
+                                <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_birth ) ) ); ?> &ndash; </span>
                             <?php endif; ?>
-                            <span><?php echo esc_html($obituary->date_of_death); ?></span>
-                            <?php if (!empty($obituary->age)): ?>
-                                <span>(<?php echo esc_html($obituary->age); ?> <?php _e('years', 'ontario-obituaries'); ?>)</span>
+                            <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_death ) ) ); ?></span>
+                            <?php if ( ! empty( $obituary->age ) ) : ?>
+                                <span>(<?php echo esc_html( $obituary->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>
                             <?php endif; ?>
                         </div>
-                        
+
                         <div class="ontario-obituaries-description">
-                            <p><?php echo wp_trim_words(esc_html($obituary->description), 30, '...'); ?></p>
+                            <p><?php echo esc_html( wp_trim_words( $obituary->description, 30, '...' ) ); ?></p>
                         </div>
-                        
+
                         <div class="ontario-obituaries-actions">
-                            <button class="ontario-obituaries-read-more" data-id="<?php echo esc_attr($obituary->id); ?>">
-                                <?php _e('Read More', 'ontario-obituaries'); ?>
+                            <button class="ontario-obituaries-read-more" data-id="<?php echo esc_attr( $obituary->id ); ?>">
+                                <?php esc_html_e( 'Read More', 'ontario-obituaries' ); ?>
                             </button>
-                            
-                            <?php if (!empty($obituary->source_url)): ?>
-                                <a href="<?php echo esc_url($obituary->source_url); ?>" target="_blank" rel="noopener noreferrer" class="ontario-obituaries-source-link">
-                                    <?php _e('View Original', 'ontario-obituaries'); ?>
+
+                            <?php if ( ! empty( $obituary->source_url ) ) : ?>
+                                <a href="<?php echo esc_url( $obituary->source_url ); ?>"
+                                   target="_blank"
+                                   rel="noopener noreferrer"
+                                   class="ontario-obituaries-source-link">
+                                    <?php esc_html_e( 'View Original', 'ontario-obituaries' ); ?>
                                 </a>
                             <?php endif; ?>
-                            
-                            <!-- Share to Facebook Button -->
-                            <button class="ontario-obituaries-share-fb" 
-                                    data-id="<?php echo esc_attr($obituary->id); ?>"
-                                    data-name="<?php echo esc_attr($obituary->name); ?>"
-                                    data-url="<?php echo esc_url(add_query_arg(array('obituary_id' => $obituary->id), $site_url)); ?>"
-                                    data-description="<?php echo esc_attr(wp_trim_words($obituary->description, 50, '...')); ?>">
-                                <span class="ontario-obituaries-fb-icon"></span>
-                                <?php _e('Share to Facebook', 'ontario-obituaries'); ?>
+
+                            <?php
+                            // P1-3 QC FIX: Share the source_url when available (renders meaningful content on Facebook).
+                            // Falls back to site URL + query arg if no source_url exists.
+                            $share_url = ! empty( $obituary->source_url )
+                                ? $obituary->source_url
+                                : add_query_arg( array( 'obituary_id' => $obituary->id ), $site_url );
+                            ?>
+                            <button class="ontario-obituaries-share-fb"
+                                    data-id="<?php echo esc_attr( $obituary->id ); ?>"
+                                    data-name="<?php echo esc_attr( $obituary->name ); ?>"
+                                    data-url="<?php echo esc_url( $share_url ); ?>"
+                                    data-description="<?php echo esc_attr( wp_trim_words( $obituary->description, 50, '...' ) ); ?>">
+                                <span class="dashicons dashicons-facebook-alt" aria-hidden="true"></span>
+                                <?php esc_html_e( 'Share', 'ontario-obituaries' ); ?>
                             </button>
                         </div>
                     </div>
                 </div>
             <?php endforeach; ?>
         </div>
-        
-        <?php if ($total_pages > 1): ?>
-            <div class="ontario-obituaries-pagination">
+
+        <?php if ( $total_pages > 1 ) : ?>
+            <nav class="ontario-obituaries-pagination" aria-label="<?php esc_attr_e( 'Obituary pages', 'ontario-obituaries' ); ?>">
                 <?php
-                $pagination_links = paginate_links(array(
-                    'base' => add_query_arg('ontario_obituaries_page', '%#%'),
-                    'format' => '',
-                    'prev_text' => __('&laquo; Previous', 'ontario-obituaries'),
-                    'next_text' => __('Next &raquo;', 'ontario-obituaries'),
-                    'total' => $total_pages,
-                    'current' => $page,
-                    'type' => 'array'
-                ));
-                
-                if (!empty($pagination_links)) {
+                $pagination_links = paginate_links( array(
+                    'base'      => add_query_arg( 'ontario_obituaries_page', '%#%' ),
+                    'format'    => '',
+                    'prev_text' => __( '&laquo; Previous', 'ontario-obituaries' ),
+                    'next_text' => __( 'Next &raquo;', 'ontario-obituaries' ),
+                    'total'     => $total_pages,
+                    'current'   => $page,
+                    'type'      => 'array',
+                ) );
+
+                if ( ! empty( $pagination_links ) ) {
                     echo '<div class="ontario-obituaries-pagination-links">';
-                    foreach ($pagination_links as $link) {
-                        echo $link;
+                    foreach ( $pagination_links as $link ) {
+                        echo $link; // already escaped by paginate_links
                     }
                     echo '</div>';
                 }
                 ?>
-            </div>
+            </nav>
         <?php endif; ?>
-        
-        <div id="ontario-obituaries-modal" class="ontario-obituaries-modal">
+
+        <!-- Modal for obituary detail -->
+        <div id="ontario-obituaries-modal" class="ontario-obituaries-modal" role="dialog" aria-modal="true" aria-label="<?php esc_attr_e( 'Obituary Details', 'ontario-obituaries' ); ?>">
             <div class="ontario-obituaries-modal-content">
-                <span class="ontario-obituaries-modal-close">&times;</span>
+                <button class="ontario-obituaries-modal-close" aria-label="<?php esc_attr_e( 'Close', 'ontario-obituaries' ); ?>">&times;</button>
                 <div id="ontario-obituaries-modal-body" class="ontario-obituaries-modal-body">
-                    <!-- Modal content will be loaded here via AJAX -->
                     <div class="ontario-obituaries-modal-loading">
                         <div class="ontario-obituaries-spinner"></div>
-                        <p><?php _e('Loading...', 'ontario-obituaries'); ?></p>
+                        <p><?php esc_html_e( 'Loading...', 'ontario-obituaries' ); ?></p>
                     </div>
                 </div>
             </div>
         </div>
     <?php endif; ?>
-    
-    <!-- Disclaimer section -->
+
+    <!-- Disclaimer -->
     <div class="ontario-obituaries-disclaimer">
         <hr class="ontario-obituaries-disclaimer-divider">
         <p class="ontario-obituaries-disclaimer-text">
-            <?php _e('Disclaimer: All obituary information posted has been obtained via public data. If you wish to have your family\'s data removed, please contact the site administrator.', 'ontario-obituaries'); ?>
+            <?php esc_html_e( 'Disclaimer: All obituary information posted has been obtained via publicly available data. If you wish to have your family\'s data removed, please contact the site administrator.', 'ontario-obituaries' ); ?>
         </p>
     </div>
 </div>
