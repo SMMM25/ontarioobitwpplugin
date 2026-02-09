@@ -1,0 +1,68 @@
+/**
+ * Ontario Obituaries — Reset & Rescan Tool (Admin CSS)
+ *
+ * Minimal styling for the Reset & Rescan admin page.
+ *
+ * @package Ontario_Obituaries
+ * @since   3.11.0
+ */
+
+/* Page wrapper */
+#ontario-reset-rescan-wrap .card {
+    padding: 20px 24px;
+    margin-top: 20px;
+}
+
+/* Danger zone heading */
+#ontario-reset-rescan-wrap h2[style*="color:#d63638"] {
+    margin-top: 0;
+}
+
+/* Confirmation gates */
+#ontario-reset-rescan-wrap #gate-phrase {
+    font-family: monospace;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+}
+
+/* Start button (hero) */
+#ontario-reset-rescan-wrap .button-hero {
+    font-size: 15px !important;
+    padding: 10px 30px !important;
+}
+
+#ontario-reset-rescan-wrap .button-hero:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Progress log */
+#progress-log div {
+    padding: 2px 0;
+    border-bottom: 1px solid #eee;
+}
+
+#progress-log div:last-child {
+    border-bottom: none;
+    font-weight: 600;
+}
+
+/* Results panel */
+#reset-results-panel .widefat {
+    max-width: 700px;
+}
+
+#reset-results-panel h3 {
+    margin-top: 16px;
+    margin-bottom: 8px;
+}
+
+/* Per-source breakdown in last result banner */
+.notice details summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.notice details[open] summary {
+    margin-bottom: 8px;
+}

@@ -21,6 +21,19 @@ class Ontario_Obituaries {
     /** @var Ontario_Obituaries_Display */
     private $display;
 
+    /** @var Ontario_Obituaries_Reset_Rescan|null Shared instance (set by ontario_obituaries_includes). */
+    private static $reset_rescan_instance = null;
+
+    /**
+     * Store the shared Reset & Rescan instance.
+     * Called once from ontario_obituaries_includes() to avoid double instantiation.
+     *
+     * @param Ontario_Obituaries_Reset_Rescan $instance The initialized instance.
+     */
+    public static function set_reset_rescan_instance( $instance ) {
+        self::$reset_rescan_instance = $instance;
+    }
+
     /**
      * Initialize the plugin.
      */
@@ -67,6 +80,16 @@ class Ontario_Obituaries {
             'manage_options',
             'ontario-obituaries-settings',
             array( $this, 'settings_page' )
+        );
+
+        // v3.11.0: Reset & Rescan tool
+        add_submenu_page(
+            'ontario-obituaries',
+            __( 'Reset & Rescan', 'ontario-obituaries' ),
+            __( 'Reset & Rescan', 'ontario-obituaries' ),
+            'manage_options',
+            'ontario-obituaries-reset-rescan',
+            array( $this, 'reset_rescan_page' )
         );
     }
 
@@ -459,6 +482,22 @@ class Ontario_Obituaries {
             ?>
         </div>
         <?php
+    }
+
+    /* ────────────────────── RESET & RESCAN PAGE ───────────────────────── */
+
+    /**
+     * Render the Reset & Rescan admin page.
+     * v3.11.0: Delegates to the shared Ontario_Obituaries_Reset_Rescan instance
+     *          (set by ontario_obituaries_includes) to avoid double instantiation.
+     */
+    public function reset_rescan_page() {
+        if ( self::$reset_rescan_instance ) {
+            self::$reset_rescan_instance->render_page();
+        } else {
+            // Defensive fallback — should never happen in normal flow.
+            wp_die( esc_html__( 'Reset & Rescan handler not initialized.', 'ontario-obituaries' ) );
+        }
     }
 
     /* ────────────────────────── SHORTCODE ──────────────────────────────── */
@@ -865,6 +904,42 @@ class Ontario_Obituaries {
             wp_localize_script( 'ontario-obituaries-debug-js', 'ontarioObituariesData', array(
                 'ajaxUrl' => admin_url( 'admin-ajax.php' ),
                 'nonce'   => wp_create_nonce( 'ontario-obituaries-admin-nonce' ),
+            ) );
+        }
+
+        // v3.11.0: Reset & Rescan page JS + CSS
+        // Tight match: only enqueue on the exact admin page, not on any page
+        // whose hook-suffix happens to contain the substring.
+        $is_reset_page = isset( $_GET['page'] ) && 'ontario-obituaries-reset-rescan' === $_GET['page'];
+        if ( $is_reset_page ) {
+            $rr_css_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/css/ontario-obituaries-reset-rescan.css';
+            $rr_css_ver  = file_exists( $rr_css_file ) ? filemtime( $rr_css_file ) : ONTARIO_OBITUARIES_VERSION;
+
+            wp_enqueue_style(
+                'ontario-obituaries-reset-rescan-css',
+                ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/css/ontario-obituaries-reset-rescan.css',
+                array(),
+                $rr_css_ver
+            );
+
+            $rr_js_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/js/ontario-obituaries-reset-rescan.js';
+            $rr_js_ver  = file_exists( $rr_js_file ) ? filemtime( $rr_js_file ) : ONTARIO_OBITUARIES_VERSION;
+
+            wp_enqueue_script(
+                'ontario-obituaries-reset-rescan-js',
+                ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-reset-rescan.js',
+                array( 'jquery' ),
+                $rr_js_ver,
+                true
+            );
+
+            wp_localize_script( 'ontario-obituaries-reset-rescan-js', 'ontarioResetRescan', array(
+                'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
+                'nonce'       => wp_create_nonce( 'ontario_obituaries_reset_rescan' ),
+                'viewUrl'     => admin_url( 'admin.php?page=ontario-obituaries' ),
+                'debugUrl'    => admin_url( 'admin.php?page=ontario-obituaries-debug' ),
+                'frontendUrl' => home_url( '/obituaries/ontario/' ),
+                'progress'    => get_option( 'ontario_obituaries_reset_progress', array() ),
             ) );
         }
     }
