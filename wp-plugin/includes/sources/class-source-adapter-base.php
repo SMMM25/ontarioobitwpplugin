@@ -192,6 +192,14 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
             return $date_string;
         }
 
+        // v3.6.0 FIX: Reject bare 4-digit years ("1926", "2025").
+        // strtotime("1926") returns today's date which corrupts death dates.
+        // A bare year is NOT a valid date — return empty so the caller can
+        // decide what to do (e.g. store as birth-year-only).
+        if ( preg_match( '/^\d{4}$/', $date_string ) ) {
+            return '';
+        }
+
         // Common formats
         $formats = array(
             'F j, Y',      // January 15, 2026
@@ -219,10 +227,17 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
             }
         }
 
-        // Last resort: strtotime
+        // Last resort: strtotime — but guard against it returning today for
+        // ambiguous strings like month-names-only or partial dates.
         $ts = strtotime( $cleaned );
         if ( false !== $ts && $ts > 0 ) {
-            return gmdate( 'Y-m-d', $ts );
+            $result = gmdate( 'Y-m-d', $ts );
+            // Reject if strtotime returned today's date for a short/ambiguous input.
+            $today = gmdate( 'Y-m-d' );
+            if ( $result === $today && strlen( $cleaned ) < 10 ) {
+                return ''; // Ambiguous short input resolved to today — reject
+            }
+            return $result;
         }
 
         return '';

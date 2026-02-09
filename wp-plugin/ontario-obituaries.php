@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.5.0
+ * Version: 3.6.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.5.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.6.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -481,6 +481,16 @@ function ontario_obituaries_cleanup_duplicates() {
     }
 
     $removed = 0;
+
+    // v3.6.0: Auto-clean test data on production (records with 'Test' in name
+    // and source_url pointing to home_url — added via add_test_data() debug action).
+    $test_removed = $wpdb->query(
+        "DELETE FROM `{$table}` WHERE name LIKE '%Test %' AND ( source_url = '' OR source_url LIKE '%monacomonuments.ca%' OR source_url LIKE '%example.com%' )"
+    );
+    if ( $test_removed > 0 ) {
+        ontario_obituaries_log( sprintf( 'Removed %d test data records', $test_removed ), 'info' );
+        $removed += $test_removed;
+    }
 
     // ── Pass 1: Exact duplicates (same name + date_of_death) ──────────
     $duplicates = $wpdb->get_results(
@@ -1023,6 +1033,34 @@ function ontario_obituaries_on_plugin_update() {
 
     // Mark this version as deployed
     update_option( 'ontario_obituaries_deployed_version', ONTARIO_OBITUARIES_VERSION );
+
+    // v3.6.0: One-time data repair — previous versions stored today's date as
+    // date_of_death because normalize_date("1926") → strtotime → today.
+    // Delete these corrupt records so the next scrape can re-insert with correct dates.
+    if ( version_compare( $stored_version, '3.6.0', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $today = gmdate( 'Y-m-d' );
+        // Delete records where date_of_death = today AND date_of_birth = today
+        // (both dates being today is a clear sign of the strtotime corruption).
+        $corrupt_removed = $wpdb->query( $wpdb->prepare(
+            "DELETE FROM `{$table}` WHERE date_of_death = %s AND date_of_birth = %s",
+            $today, $today
+        ) );
+        if ( $corrupt_removed > 0 ) {
+            ontario_obituaries_log( sprintf( 'v3.6.0 data repair: removed %d records with corrupted dates (DoD=DoB=today)', $corrupt_removed ), 'info' );
+        }
+        // Also fix records where only date_of_death = today but source shows it shouldn't be
+        // (records from yorkregion.com whose actual deaths were months ago).
+        // We can't fix the dates without re-scraping, but we can clear them to trigger re-insert.
+        $stale_removed = $wpdb->query( $wpdb->prepare(
+            "DELETE FROM `{$table}` WHERE date_of_death = %s AND source_domain = 'obituaries.yorkregion.com'",
+            $today
+        ) );
+        if ( $stale_removed > 0 ) {
+            ontario_obituaries_log( sprintf( 'v3.6.0 data repair: removed %d yorkregion records with date_of_death=today (will re-scrape)', $stale_removed ), 'info' );
+        }
+    }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
 }

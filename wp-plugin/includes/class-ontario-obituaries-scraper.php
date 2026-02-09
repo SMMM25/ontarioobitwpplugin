@@ -149,10 +149,22 @@ class Ontario_Obituaries_Scraper {
 
                     // P1-9 FIX: INSERT IGNORE — relies on UNIQUE KEY (name, date_of_death, funeral_home)
                     // P0-3 FIX: No data_quality column
+                    // v3.6.0 FIX: Include v3 columns (city_normalized, source_domain, source_type)
+                    $city_normalized = '';
+                    if ( ! empty( $obituary['location'] ) ) {
+                        $city_normalized = ucwords( strtolower( trim( $obituary['location'] ) ) );
+                    }
+                    $source_domain = '';
+                    if ( ! empty( $obituary['source_url'] ) ) {
+                        $parsed_url = wp_parse_url( $obituary['source_url'] );
+                        $source_domain = isset( $parsed_url['host'] ) ? preg_replace( '/^www\./i', '', $parsed_url['host'] ) : '';
+                    }
+
                     $sql = $wpdb->prepare(
                         "INSERT IGNORE INTO `{$table_name}`
-                            (name, date_of_birth, date_of_death, age, funeral_home, location, image_url, description, source_url)
-                         VALUES (%s, %s, %s, %d, %s, %s, %s, %s, %s)",
+                            (name, date_of_birth, date_of_death, age, funeral_home, location,
+                             image_url, description, source_url, city_normalized, source_domain, source_type)
+                         VALUES (%s, %s, %s, %d, %s, %s, %s, %s, %s, %s, %s, %s)",
                         $obituary['name'],
                         $obituary['date_of_birth'],
                         $obituary['date_of_death'],
@@ -161,7 +173,10 @@ class Ontario_Obituaries_Scraper {
                         $obituary['location'],
                         $obituary['image_url'],
                         $obituary['description'],
-                        $obituary['source_url']
+                        $obituary['source_url'],
+                        $city_normalized,
+                        $source_domain,
+                        'legacy_scraper'
                     );
 
                     $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
@@ -565,10 +580,17 @@ class Ontario_Obituaries_Scraper {
         $results['obituaries_found']           += count( $obituaries );
 
         foreach ( $obituaries as $obituary ) {
+            // v3.6.0: Compute v3 columns for historical inserts
+            $city_normalized = '';
+            if ( ! empty( $obituary['location'] ) ) {
+                $city_normalized = ucwords( strtolower( trim( $obituary['location'] ) ) );
+            }
+
             $sql = $wpdb->prepare(
                 "INSERT IGNORE INTO `{$table_name}`
-                    (name, date_of_birth, date_of_death, age, funeral_home, location, image_url, description, source_url)
-                 VALUES (%s, %s, %s, %d, %s, %s, %s, %s, %s)",
+                    (name, date_of_birth, date_of_death, age, funeral_home, location,
+                     image_url, description, source_url, city_normalized, source_type)
+                 VALUES (%s, %s, %s, %d, %s, %s, %s, %s, %s, %s, %s)",
                 $obituary['name'],
                 $obituary['date_of_birth'],
                 $obituary['date_of_death'],
@@ -577,7 +599,9 @@ class Ontario_Obituaries_Scraper {
                 $obituary['location'],
                 $obituary['image_url'],
                 $obituary['description'],
-                $obituary['source_url']
+                $obituary['source_url'],
+                $city_normalized,
+                'legacy_scraper'
             );
 
             $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
