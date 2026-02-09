@@ -64,19 +64,12 @@ if (!defined('ABSPATH')) {
     ?>
     <div class="ontario-obituary-detail-footer">
         <div class="ontario-obituary-detail-actions">
-            <!-- Link to full SEO page (keeps traffic on-site) -->
+            <!-- v3.10.0 FIX: "View Full Obituary" points to our internal SEO page.
+                 External source_url link REMOVED per PLATFORM_OVERSIGHT_HUB Rule 6 #9:
+                 "No external obituary links". Source record retained in DB for provenance. -->
             <a href="<?php echo esc_url( $detail_internal_url ); ?>" class="ontario-obituary-detail-full-page-link">
                 <?php esc_html_e( 'View Full Obituary', 'ontario-obituaries' ); ?>
             </a>
-
-            <?php if ( ! empty( $obituary->source_url ) ) : ?>
-                <span class="ontario-obituary-detail-source">
-                    <?php esc_html_e( 'Source:', 'ontario-obituaries' ); ?>
-                    <a href="<?php echo esc_url( $obituary->source_url ); ?>" target="_blank" rel="noopener noreferrer nofollow">
-                        <?php echo esc_html( wp_parse_url( $obituary->source_url, PHP_URL_HOST ) ); ?>
-                    </a>
-                </span>
-            <?php endif; ?>
 
             <!-- Print button -->
             <button class="ontario-obituary-print-button" onclick="window.print();">

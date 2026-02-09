@@ -89,11 +89,11 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
 
         <footer style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 30px;">
             <?php if ( ! empty( $obituary->source_url ) ) : ?>
+                <!-- v3.10.0 FIX: Source attribution is text-only (no clickable external link).
+                     Per PLATFORM_OVERSIGHT_HUB Rule 6 #9: no external obituary links.
+                     source_url retained in DB for provenance/audit. -->
                 <p style="font-size: 0.8em; color: #999;">
-                    <?php esc_html_e( 'Source:', 'ontario-obituaries' ); ?>
-                    <a href="<?php echo esc_url( $obituary->source_url ); ?>" target="_blank" rel="noopener noreferrer nofollow" style="color: #999;">
-                        <?php echo esc_html( wp_parse_url( $obituary->source_url, PHP_URL_HOST ) ); ?>
-                    </a>
+                    <?php esc_html_e( 'Source record retained internally for provenance.', 'ontario-obituaries' ); ?>
                 </p>
             <?php endif; ?>
 
