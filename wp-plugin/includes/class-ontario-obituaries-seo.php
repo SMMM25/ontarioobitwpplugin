@@ -118,6 +118,14 @@ class Ontario_Obituaries_SEO {
             return;
         }
 
+        // Prevent page-level caching so WP Pusher changes appear immediately
+        if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+            define( 'DONOTCACHEPAGE', true );
+        }
+        if ( ! headers_sent() ) {
+            nocache_headers();
+        }
+
         if ( ! empty( $id ) ) {
             $this->render_individual_page( intval( $id ), $city );
         } elseif ( ! empty( $city ) ) {
@@ -404,12 +412,24 @@ class Ontario_Obituaries_SEO {
     public function custom_page_title( $title_parts ) {
         $hub  = get_query_var( 'ontario_obituaries_hub' );
         $city = get_query_var( 'ontario_obituaries_city' );
+        $id   = get_query_var( 'ontario_obituaries_id' );
 
         if ( empty( $hub ) ) {
             return $title_parts;
         }
 
-        if ( ! empty( $city ) ) {
+        // Individual obituary page — use the person's name
+        if ( ! empty( $id ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d", intval( $id ) ) );
+            if ( $obit ) {
+                $city_name = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
+                $title_parts['title'] = sprintf( '%s — %s, Ontario | Monaco Monuments', $obit->name, $city_name );
+            } else {
+                $title_parts['title'] = 'Obituary — Ontario | Monaco Monuments';
+            }
+        } elseif ( ! empty( $city ) ) {
             $city_name = ucwords( str_replace( '-', ' ', $city ) );
             $title_parts['title'] = sprintf( '%s Obituaries — Ontario | Monaco Monuments', $city_name );
         } else {
@@ -425,12 +445,34 @@ class Ontario_Obituaries_SEO {
     public function output_meta_description() {
         $hub  = get_query_var( 'ontario_obituaries_hub' );
         $city = get_query_var( 'ontario_obituaries_city' );
+        $id   = get_query_var( 'ontario_obituaries_id' );
 
         if ( empty( $hub ) ) {
             return;
         }
 
-        if ( ! empty( $city ) ) {
+        // Individual obituary — person-specific description
+        if ( ! empty( $id ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            $obit  = $wpdb->get_row( $wpdb->prepare(
+                "SELECT name, description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d",
+                intval( $id )
+            ) );
+            if ( $obit ) {
+                $city_name = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
+                $snippet   = ! empty( $obit->description ) ? wp_trim_words( $obit->description, 25, '...' ) : '';
+                $desc = sprintf(
+                    'Obituary for %s of %s, Ontario (%s). %s Monaco Monuments — Newmarket, serving York Region.',
+                    $obit->name,
+                    $city_name,
+                    date_i18n( 'F j, Y', strtotime( $obit->date_of_death ) ),
+                    $snippet
+                );
+            } else {
+                $desc = 'Obituary notice from Ontario, Canada. Monaco Monuments — Newmarket, serving York Region & Southern Ontario.';
+            }
+        } elseif ( ! empty( $city ) ) {
             $city_name = ucwords( str_replace( '-', ' ', $city ) );
             $desc = sprintf(
                 'Recent obituary notices from %s, Ontario. Browse obituaries, find funeral home information, and memorial services. Monaco Monuments — Newmarket, serving York Region & Southern Ontario.',
@@ -549,7 +591,14 @@ class Ontario_Obituaries_SEO {
 
         if ( $obits ) {
             foreach ( $obits as $obit ) {
-                $city_slug = sanitize_title( ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location );
+                $city_raw  = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
+                $city_slug = sanitize_title( $city_raw );
+
+                // Skip obituaries with no city — produces malformed /ontario//name/ URLs
+                if ( empty( $city_slug ) ) {
+                    continue;
+                }
+
                 $name_slug = sanitize_title( $obit->name ) . '-' . $obit->id;
                 printf(
                     "<url><loc>%s</loc><lastmod>%s</lastmod><changefreq>weekly</changefreq><priority>0.5</priority></url>\n",

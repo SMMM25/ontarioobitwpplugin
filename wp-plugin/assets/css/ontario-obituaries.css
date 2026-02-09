@@ -122,6 +122,10 @@
     color: #777;
 }
 
+.ontario-obituaries-funeral-home {
+    font-style: italic;
+}
+
 .ontario-obituaries-name {
     margin: 0 0 5px 0;
     font-size: 18px;
@@ -247,6 +251,14 @@
     font-size: 28px;
     font-weight: bold;
     cursor: pointer;
+    background: none;
+    border: none;
+    line-height: 1;
+    z-index: 10;
+}
+
+.ontario-obituaries-modal-close:hover {
+    color: #333;
 }
 
 .ontario-obituaries-modal-loading {
@@ -460,5 +472,14 @@
     .ontario-obituaries-modal-content {
         width: 95%;
         margin: 10% auto;
+    }
+
+    .ontario-obituaries-actions {
+        flex-direction: column;
+    }
+
+    .ontario-obituaries-actions .ontario-obituaries-read-more-link,
+    .ontario-obituaries-actions .ontario-obituaries-read-more {
+        text-align: center;
     }
 }

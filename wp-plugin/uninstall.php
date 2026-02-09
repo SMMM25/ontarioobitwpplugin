@@ -47,6 +47,9 @@ $option_keys = array(
     'ontario_obituaries_dedup_v1',
 );
 
+// Also delete versioned dedup flags (e.g., ontario_obituaries_dedup_3.1.0)
+$wpdb->query( "DELETE FROM `{$wpdb->options}` WHERE option_name LIKE 'ontario\_obituaries\_dedup\_%'" );
+
 foreach ( $option_keys as $key ) {
     delete_option( $key );
 }

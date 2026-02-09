@@ -81,6 +81,21 @@
             if (event.key === 'Escape' && $('#ontario-obituaries-modal').is(':visible')) {
                 $('#ontario-obituaries-modal').fadeOut(300);
             }
+            // Tab trap inside modal for accessibility
+            if (event.key === 'Tab' && $('#ontario-obituaries-modal').is(':visible')) {
+                var $modal = $('#ontario-obituaries-modal');
+                var $focusable = $modal.find('a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])').filter(':visible');
+                if ($focusable.length === 0) return;
+                var $first = $focusable.first();
+                var $last  = $focusable.last();
+                if (event.shiftKey && document.activeElement === $first[0]) {
+                    event.preventDefault();
+                    $last.focus();
+                } else if (!event.shiftKey && document.activeElement === $last[0]) {
+                    event.preventDefault();
+                    $first.focus();
+                }
+            }
         });
 
         // ── Removal Request Form (P0-SUP FIX) ────────────────────────────
