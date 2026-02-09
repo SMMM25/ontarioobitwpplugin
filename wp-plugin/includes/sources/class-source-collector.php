@@ -158,6 +158,10 @@ class Ontario_Obituaries_Source_Collector {
             $listing_urls = $adapter->discover_listing_urls( $source, $this->max_age );
             $listing_urls = array_slice( $listing_urls, 0, $max_pages ); // Enforce page budget
 
+            // v3.10.0: Allow callers to cap discovered URLs (e.g., first-page-only
+            // for synchronous scrapes during on_plugin_update).
+            $listing_urls = apply_filters( 'ontario_obituaries_discovered_urls', $listing_urls, $source );
+
             foreach ( $listing_urls as $listing_url ) {
                 $source_result['pages']++;
 

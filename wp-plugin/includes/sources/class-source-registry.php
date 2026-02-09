@@ -387,6 +387,9 @@ class Ontario_Obituaries_Source_Registry {
             // PRIORITY 1 — York Region / Newmarket (Monaco Monuments home turf)
             // These run FIRST and drive local SEO + funeral home referrals.
             // ══════════════════════════════════════════════════════════════
+            // v3.10.0: DISABLED — FrontRunner JS-rendered site; server-side HTML
+            // contains only {name}/{date} template placeholders. The FrontRunner
+            // JSON API (obituaries.frontrunnerpro.com) returns 0 records server-side.
             array(
                 'domain'       => 'roadhouseandrose.com',
                 'name'         => 'Roadhouse & Rose Funeral Home',
@@ -394,6 +397,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'frontrunner',
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             array(
                 'domain'       => 'arbormemorial.ca/taylor',
@@ -403,6 +407,7 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
             ),
+            // v3.10.0: DISABLED — FrontRunner JS-rendered site (same issue as roadhouseandrose).
             array(
                 'domain'       => 'forrestandtaylor.com',
                 'name'         => 'Forrest & Taylor Funeral Home',
@@ -410,14 +415,18 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'frontrunner',
                 'city'         => 'Sutton',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
+            // v3.10.0: DISABLED — marshallfuneralhome.com redirects to arbormemorial.ca
+            // (React SPA, not FrontRunner). Updated base_url + adapter_type for accuracy.
             array(
                 'domain'       => 'marshallfuneralhome.com',
                 'name'         => 'Marshall Funeral Home',
-                'base_url'     => 'https://www.marshallfuneralhome.com/obituaries',
-                'adapter_type' => 'frontrunner',
+                'base_url'     => 'https://www.arbormemorial.ca/en/marshall/obituaries.html',
+                'adapter_type' => 'generic_html',
                 'city'         => 'Richmond Hill',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             // v3.9.0: DISABLED — thompsonfh-aurora.com redirects to dignitymemorial.com (403).
             // Kept in seed so domain key is preserved; re-enable when site is reachable.
@@ -438,6 +447,7 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
             ),
+            // v3.10.0: DISABLED — FrontRunner JS-rendered site (same issue as roadhouseandrose).
             array(
                 'domain'       => 'wardfuneralhome.com',
                 'name'         => 'Ward Funeral Home - Brampton/Bolton',
@@ -445,6 +455,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'frontrunner',
                 'city'         => 'Brampton',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             // v3.9.0: DISABLED — skinnerfuneralhome.ca DNS timeout / unreachable.
             array(

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.9.0
+ * Version: 3.10.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.9.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.10.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1129,6 +1129,99 @@ function ontario_obituaries_on_plugin_update() {
         // Log the current record count so we can verify data state post-deploy.
         $current_count = $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL" );
         ontario_obituaries_log( sprintf( 'v3.9.0 post-repair: %d active obituary records in database.', intval( $current_count ) ), 'info' );
+    }
+
+    // v3.10.0: Disable broken FrontRunner/redirect sources in the registry and
+    // run an immediate synchronous scrape if the obituaries table is empty.
+    //
+    // Why synchronous instead of WP-Cron:
+    //   WP-Cron only fires on page visits. On LiteSpeed-cached sites, cached
+    //   page loads skip PHP entirely, so wp_schedule_single_event() may never
+    //   fire. A synchronous scrape on deploy guarantees data appears immediately.
+    //
+    // Timeout safety:
+    //   The synchronous scrape caps each source to 1 page via a temporary filter
+    //   on discover_listing_urls(). With broken sources disabled, only
+    //   yorkregion.com is active → 1 page × ~1s = ~1s. Well within the
+    //   typical 30s PHP max_execution_time. The full multi-page scrape is
+    //   then scheduled via WP-Cron for background completion.
+    if ( version_compare( $stored_version, '3.10.0', '<' ) ) {
+        // Re-seed to pick up enabled=0 changes for broken FrontRunner/redirect sources.
+        //
+        // IDEMPOTENCE NOTE: upsert_source() checks for an existing row by 'domain'
+        // (UNIQUE KEY) and does a full UPDATE if found. This means every field in
+        // seed_defaults() is overwritten on re-seed — including 'enabled'. This is
+        // the desired behavior for v3.10.0: we WANT to force-disable broken
+        // FrontRunner/redirect sources even if an admin previously re-enabled them.
+        // Sources without an explicit 'enabled' key in seed_defaults() default to
+        // enabled=1 via wp_parse_args(), so they are unaffected.
+        if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
+            Ontario_Obituaries_Source_Registry::seed_defaults();
+            ontario_obituaries_log( 'v3.10.0: Re-seeded source registry to disable broken FrontRunner/redirect sources.', 'info' );
+        }
+
+        // Guard: verify the obituaries table exists before querying it.
+        // On a fresh install where activation didn't complete, the table may be missing.
+        // Treat a missing table as 0 records (no data to show) so the synchronous
+        // scrape can attempt to create it via the collector's own table-check.
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+        $current_count = $table_exists
+            ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL" )
+            : 0;
+
+        if ( 0 === $current_count && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+            ontario_obituaries_log( 'v3.10.0: Obituaries table is empty — running synchronous first-page scrape.', 'info' );
+
+            // Cap the synchronous scrape to 1 page per source to avoid timeouts.
+            // The filter limits discover_listing_urls() to return only the first
+            // page URL (~25 cards on yorkregion.com). The full multi-page scrape
+            // is scheduled via WP-Cron below for background completion.
+            $cap_pages = function( $urls ) {
+                return array_slice( (array) $urls, 0, 1 );
+            };
+            add_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+
+            $collector    = new Ontario_Obituaries_Source_Collector();
+            $sync_results = $collector->collect();
+
+            remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+
+            ontario_obituaries_log(
+                sprintf(
+                    'v3.10.0: Synchronous first-page scrape complete — %d found, %d added.',
+                    isset( $sync_results['obituaries_found'] ) ? intval( $sync_results['obituaries_found'] ) : 0,
+                    isset( $sync_results['obituaries_added'] ) ? intval( $sync_results['obituaries_added'] ) : 0
+                ),
+                'info'
+            );
+
+            // Purge caches so new data appears immediately.
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+            delete_transient( 'ontario_obituaries_locations_cache' );
+            delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+        }
+
+        // Schedule a full multi-page background scrape via WP-Cron so the
+        // remaining pages (2–5) are collected without blocking the current request.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+            wp_schedule_single_event( time() + 120, 'ontario_obituaries_initial_collection' );
+            ontario_obituaries_log( 'v3.10.0: Scheduled full background scrape (all pages) in 2 minutes.', 'info' );
+        }
+
+        // Schedule the recurring cron event if not already scheduled.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_collection_event' ) ) {
+            $settings  = ontario_obituaries_get_settings();
+            $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'twicedaily';
+            $time      = isset( $settings['time'] ) ? $settings['time'] : '03:00';
+            wp_schedule_event(
+                ontario_obituaries_next_cron_timestamp( $time ),
+                $frequency,
+                'ontario_obituaries_collection_event'
+            );
+            ontario_obituaries_log( 'v3.10.0: Recurring collection cron was missing — re-scheduled.', 'info' );
+        }
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
