@@ -41,6 +41,9 @@ $option_keys = array(
     'ontario_obituaries_region_urls',
     'ontario_obituaries_enable_facebook',
     'ontario_obituaries_fb_app_id',
+    'ontario_obituaries_page_id',
+    'ontario_obituaries_menu_added',
+    'ontario_obituaries_menu_v2',
 );
 
 foreach ( $option_keys as $key ) {

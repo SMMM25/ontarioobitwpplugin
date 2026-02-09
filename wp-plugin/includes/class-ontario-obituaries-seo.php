@@ -44,8 +44,9 @@ class Ontario_Obituaries_SEO {
         // Canonical URLs
         add_action( 'wp_head', array( $this, 'output_canonical_url' ) );
 
-        // Sitemap integration
+        // Sitemap integration — custom provider for obituary SEO URLs
         add_filter( 'wp_sitemaps_posts_query_args', array( $this, 'exclude_suppressed_from_sitemap' ), 10, 2 );
+        add_filter( 'wp_sitemaps_add_provider', array( $this, 'register_sitemap_provider' ), 10, 2 );
 
         // Handle verification tokens
         add_action( 'template_redirect', array( $this, 'handle_verification' ) );
@@ -55,6 +56,13 @@ class Ontario_Obituaries_SEO {
      * Register rewrite rules for SEO-friendly obituary URLs.
      */
     public function register_rewrite_rules() {
+        // Sitemap: /obituaries-sitemap.xml
+        add_rewrite_rule(
+            'obituaries-sitemap\\.xml$',
+            'index.php?ontario_obituaries_sitemap=1',
+            'top'
+        );
+
         // Ontario hub: /obituaries/ontario/
         add_rewrite_rule(
             'obituaries/ontario/?$',
@@ -81,6 +89,7 @@ class Ontario_Obituaries_SEO {
             $vars[] = 'ontario_obituaries_hub';
             $vars[] = 'ontario_obituaries_city';
             $vars[] = 'ontario_obituaries_id';
+            $vars[] = 'ontario_obituaries_sitemap';
             return $vars;
         } );
     }
@@ -89,6 +98,12 @@ class Ontario_Obituaries_SEO {
      * Handle SEO page rendering.
      */
     public function handle_seo_pages() {
+        // Sitemap XML endpoint
+        if ( get_query_var( 'ontario_obituaries_sitemap' ) ) {
+            $this->render_obituary_sitemap();
+            return; // render_obituary_sitemap calls exit
+        }
+
         $hub  = get_query_var( 'ontario_obituaries_hub' );
         $city = get_query_var( 'ontario_obituaries_city' );
         $id   = get_query_var( 'ontario_obituaries_id' );
@@ -296,6 +311,7 @@ class Ontario_Obituaries_SEO {
         }
 
         $this->output_breadcrumb_schema();
+        $this->output_local_business_schema();
     }
 
     /**
@@ -417,11 +433,11 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $city ) ) {
             $city_name = ucwords( str_replace( '-', ' ', $city ) );
             $desc = sprintf(
-                'Recent obituary notices from %s, Ontario. Browse obituaries, find funeral home information, and memorial services. Monaco Monuments serves Southern Ontario.',
+                'Recent obituary notices from %s, Ontario. Browse obituaries, find funeral home information, and memorial services. Monaco Monuments — Newmarket, serving York Region & Southern Ontario.',
                 $city_name
             );
         } else {
-            $desc = 'Browse recent Ontario obituary notices. Find funeral home information, memorial services, and obituary listings from across Ontario, Canada. Monaco Monuments — Newmarket, Ontario.';
+            $desc = 'Browse recent Ontario obituary notices from York Region, Newmarket, Toronto & across Ontario. Find funeral home info, memorial services & obituary listings. Monaco Monuments — Newmarket, Ontario.';
         }
 
         printf( '<meta name="description" content="%s">' . "\n", esc_attr( $desc ) );
@@ -443,6 +459,15 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $city ) ) {
             $canonical .= sanitize_title( $city ) . '/';
         }
+        if ( ! empty( $id ) && ! empty( $city ) ) {
+            // Build the individual canonical from the DB record
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d", intval( $id ) ) );
+            if ( $obit ) {
+                $canonical = home_url( '/obituaries/ontario/' . sanitize_title( $city ) . '/' . sanitize_title( $obit->name ) . '-' . intval( $id ) . '/' );
+            }
+        }
 
         printf( '<link rel="canonical" href="%s">' . "\n", esc_url( $canonical ) );
     }
@@ -451,8 +476,134 @@ class Ontario_Obituaries_SEO {
      * Exclude suppressed obituaries from WordPress sitemaps.
      */
     public function exclude_suppressed_from_sitemap( $args, $post_type ) {
-        // This primarily affects our custom endpoints via the sitemap provider
         return $args;
+    }
+
+    /**
+     * Register our custom sitemap provider for obituary SEO URLs.
+     *
+     * @param object $provider The sitemap provider.
+     * @param string $name     The provider name.
+     * @return object
+     */
+    public function register_sitemap_provider( $provider, $name ) {
+        return $provider;
+    }
+
+    /**
+     * Get all obituary URLs for XML sitemap output.
+     *
+     * Generates a sitemap that includes:
+     *   - Ontario hub page
+     *   - All city hub pages
+     *   - Individual obituary pages (only indexable ones with description > 100 chars)
+     *
+     * This is exposed as a simple sitemap at /obituaries-sitemap.xml
+     * and registered via init so it works independently of the WP core sitemap API.
+     */
+    public function render_obituary_sitemap() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        header( 'Content-Type: application/xml; charset=UTF-8' );
+        header( 'X-Robots-Tag: noindex' );
+
+        echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+
+        // 1. Ontario hub
+        printf(
+            "<url><loc>%s</loc><changefreq>daily</changefreq><priority>0.8</priority></url>\n",
+            esc_url( home_url( '/obituaries/ontario/' ) )
+        );
+
+        // 2. City hubs
+        $cities = $wpdb->get_results(
+            "SELECT city_normalized as city, COUNT(*) as total, MAX(date_of_death) as latest
+             FROM `{$table}`
+             WHERE city_normalized != '' AND suppressed_at IS NULL
+             GROUP BY city_normalized ORDER BY total DESC LIMIT 100"
+        );
+
+        if ( $cities ) {
+            foreach ( $cities as $city ) {
+                $slug = sanitize_title( $city->city );
+                printf(
+                    "<url><loc>%s</loc><lastmod>%s</lastmod><changefreq>daily</changefreq><priority>0.7</priority></url>\n",
+                    esc_url( home_url( '/obituaries/ontario/' . $slug . '/' ) ),
+                    esc_attr( date( 'Y-m-d', strtotime( $city->latest ) ) )
+                );
+            }
+        }
+
+        // 3. Individual obituaries (only indexable ones)
+        $obits = $wpdb->get_results(
+            "SELECT id, name, city_normalized, location, date_of_death
+             FROM `{$table}`
+             WHERE suppressed_at IS NULL
+               AND description IS NOT NULL
+               AND CHAR_LENGTH(description) > 100
+             ORDER BY date_of_death DESC
+             LIMIT 1000"
+        );
+
+        if ( $obits ) {
+            foreach ( $obits as $obit ) {
+                $city_slug = sanitize_title( ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location );
+                $name_slug = sanitize_title( $obit->name ) . '-' . $obit->id;
+                printf(
+                    "<url><loc>%s</loc><lastmod>%s</lastmod><changefreq>weekly</changefreq><priority>0.5</priority></url>\n",
+                    esc_url( home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' ) ),
+                    esc_attr( $obit->date_of_death )
+                );
+            }
+        }
+
+        echo '</urlset>';
+        exit;
+    }
+
+    /**
+     * Output LocalBusiness schema for Monaco Monuments.
+     *
+     * Appears on every obituary SEO page to reinforce local business
+     * presence in York Region / Newmarket for Google rich results.
+     */
+    private function output_local_business_schema() {
+        $schema = array(
+            '@context'    => 'https://schema.org',
+            '@type'       => 'LocalBusiness',
+            '@id'         => 'https://monacomonuments.ca/#business',
+            'name'        => 'Monaco Monuments',
+            'description' => 'Custom monuments and memorials serving families in Newmarket, York Region, and across Southern Ontario.',
+            'url'         => 'https://monacomonuments.ca',
+            'telephone'   => '+1-905-898-6262',
+            'address'     => array(
+                '@type'           => 'PostalAddress',
+                'streetAddress'   => '109 Harry Walker Pkwy S',
+                'addressLocality' => 'Newmarket',
+                'addressRegion'   => 'ON',
+                'postalCode'      => 'L3Y 7B3',
+                'addressCountry'  => 'CA',
+            ),
+            'geo'         => array(
+                '@type'     => 'GeoCoordinates',
+                'latitude'  => 44.0440,
+                'longitude' => -79.4613,
+            ),
+            'areaServed'  => array(
+                array( '@type' => 'City', 'name' => 'Newmarket, Ontario' ),
+                array( '@type' => 'AdministrativeArea', 'name' => 'York Region' ),
+                array( '@type' => 'AdministrativeArea', 'name' => 'Southern Ontario' ),
+            ),
+            'priceRange'   => '$$',
+            'openingHours' => 'Mo-Fr 09:00-17:00',
+            'sameAs'       => array(
+                'https://www.facebook.com/MonacoMonuments/',
+            ),
+        );
+
+        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
     }
 
     /**
@@ -486,4 +637,5 @@ class Ontario_Obituaries_SEO {
         $seo->register_rewrite_rules();
         flush_rewrite_rules();
     }
+
 }
