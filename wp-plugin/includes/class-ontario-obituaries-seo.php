@@ -946,7 +946,11 @@ class Ontario_Obituaries_SEO {
         }
 
         echo "\n<style id=\"ontario-obituaries-litho-fix\">\n";
-        echo "/* v3.10.0: Hide Litho blog page-title bar on Ontario Obituaries SEO pages */\n";
+        echo "/* v3.10.0: Hide Litho blog page-title bar on Ontario Obituaries SEO pages.\n";
+        echo "   The Litho theme wraps its page-title bar in a <section> with class\n";
+        echo "   'litho-main-title-wrappper' (triple 'p' — typo in the theme).\n";
+        echo "   We hide the outer wrapper and all known inner selectors. */\n";
+        echo ".ontario-obituaries-seo-page .litho-main-title-wrappper,\n";
         echo ".ontario-obituaries-seo-page .litho-main-title-wrap,\n";
         echo ".ontario-obituaries-seo-page .page-title-section,\n";
         echo ".ontario-obituaries-seo-page .litho-page-title-wrap {\n";
