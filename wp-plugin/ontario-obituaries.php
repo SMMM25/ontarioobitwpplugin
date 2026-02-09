@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.3.0
+ * Version: 3.4.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.3.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.4.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -436,8 +436,8 @@ function ontario_obituaries_create_page() {
 function ontario_obituaries_normalize_name( $name ) {
     // Lowercase
     $name = function_exists( 'mb_strtolower' ) ? mb_strtolower( $name, 'UTF-8' ) : strtolower( $name );
-    // Remove common suffix
-    $name = preg_replace( '/\s+obituary$/i', '', $name );
+    // Remove common suffixes
+    $name = preg_replace( '/\s+(obituary|obit)\.?$/i', '', $name );
     // Remove punctuation except hyphens and spaces
     $name = preg_replace( '/[^a-z0-9\s\-]/u', '', $name );
     // Collapse whitespace
@@ -452,18 +452,21 @@ function ontario_obituaries_normalize_name( $name ) {
  *   Pass 1 — Exact match: same name + same date_of_death (fast SQL GROUP BY).
  *   Pass 2 — Fuzzy match: normalized name + same date_of_death (catches
  *            case/punctuation differences like "Ronald McLEOD" vs "Ronald McLeod").
+ *            Runs even when records have different funeral_home values.
  *
  * For each group, keeps the record with the longest description and enriches
- * it with funeral_home, city_normalized, location, and image_url from dupes.
+ * it with funeral_home, city_normalized, location, image_url, and source_url
+ * from duplicates.
  *
  * Runs:
  *   - On every admin page load (lightweight — the COUNT query exits fast).
  *   - On frontend: once per plugin version via option flag.
  *   - After every scheduled scrape (hooked to the collection event).
+ *   - After WP Pusher deploy via on_plugin_update() clearing the flag.
  */
 function ontario_obituaries_cleanup_duplicates() {
     // On frontend: run once per version to avoid slowing every page load.
-    // On admin: always check (admin pages are not public-facing).
+    // On admin/cron: always check.
     $version_key = 'ontario_obituaries_dedup_' . ONTARIO_OBITUARIES_VERSION;
     if ( ! is_admin() && ! wp_doing_cron() && get_option( $version_key ) ) {
         return;
@@ -542,7 +545,7 @@ function ontario_obituaries_merge_duplicate_group( $table, $name, $date_of_death
     global $wpdb;
 
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, funeral_home, location, city_normalized, image_url, description,
+        "SELECT id, funeral_home, location, city_normalized, image_url, source_url, description,
                 CHAR_LENGTH(COALESCE(description, '')) as desc_len
          FROM `{$table}`
          WHERE name = %s AND date_of_death = %s AND suppressed_at IS NULL
@@ -574,7 +577,7 @@ function ontario_obituaries_merge_duplicate_ids( $table, $ids ) {
 
     $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, funeral_home, location, city_normalized, image_url, description,
+        "SELECT id, funeral_home, location, city_normalized, image_url, source_url, description,
                 CHAR_LENGTH(COALESCE(description, '')) as desc_len
          FROM `{$table}`
          WHERE id IN ({$placeholders}) AND suppressed_at IS NULL
@@ -630,8 +633,16 @@ function ontario_obituaries_merge_rows( $table, $rows ) {
             $keep->image_url = $dupe->image_url;
         }
 
-        // Enrich: prefer longer description
-        if ( ! empty( $dupe->description ) && strlen( $dupe->description ) > strlen( (string) $keep->description ) ) {
+        // Enrich: fill empty source_url from duplicate
+        if ( empty( $keep->source_url ) && ! empty( $dupe->source_url ) ) {
+            $enrichments['source_url'] = $dupe->source_url;
+            $keep->source_url = $dupe->source_url;
+        }
+
+        // Enrich: prefer longer description (use mb_strlen for multibyte safety)
+        $keep_desc_len = function_exists( 'mb_strlen' ) ? mb_strlen( (string) $keep->description, 'UTF-8' ) : strlen( (string) $keep->description );
+        $dupe_desc_len = function_exists( 'mb_strlen' ) ? mb_strlen( (string) $dupe->description, 'UTF-8' ) : strlen( (string) $dupe->description );
+        if ( ! empty( $dupe->description ) && $dupe_desc_len > $keep_desc_len ) {
             $enrichments['description'] = $dupe->description;
             $keep->description = $dupe->description;
         }
@@ -874,11 +885,11 @@ function ontario_obituaries_init() {
 add_action( 'plugins_loaded', 'ontario_obituaries_init' );
 
 /**
- * v3.3.0: WP Pusher / plugin-update integration.
+ * v3.4.0: WP Pusher / plugin-update integration.
  *
  * When WP Pusher pushes a new version, the activation hook does NOT re-fire.
- * This callback flushes rewrite rules and purges known cache plugins so that
- * template and version changes take effect immediately.
+ * This callback re-registers rewrite rules, flushes them, and purges known
+ * cache plugins so that template and version changes take effect immediately.
  */
 function ontario_obituaries_on_plugin_update() {
     $stored_version = get_option( 'ontario_obituaries_deployed_version', '' );
@@ -886,8 +897,14 @@ function ontario_obituaries_on_plugin_update() {
         return; // Already deployed this version.
     }
 
-    // Flush rewrite rules so new SEO URL patterns work
-    flush_rewrite_rules();
+    // Re-register rewrite rules BEFORE flushing so they are included in the
+    // regeneration. This is critical for WP Pusher deploys where the activation
+    // hook does not fire and rules would otherwise be missing.
+    if ( class_exists( 'Ontario_Obituaries_SEO' ) ) {
+        Ontario_Obituaries_SEO::flush_rules();
+    } else {
+        flush_rewrite_rules();
+    }
 
     // Purge known cache plugins
     // LiteSpeed Cache

@@ -70,9 +70,9 @@ if (!defined('ABSPATH')) {
             </a>
 
             <?php if ( ! empty( $obituary->source_url ) ) : ?>
-                <span style="font-size: 0.8em; color: #999; margin-left: 10px;">
+                <span class="ontario-obituary-detail-source">
                     <?php esc_html_e( 'Source:', 'ontario-obituaries' ); ?>
-                    <a href="<?php echo esc_url( $obituary->source_url ); ?>" target="_blank" rel="noopener noreferrer nofollow" style="color: #999;">
+                    <a href="<?php echo esc_url( $obituary->source_url ); ?>" target="_blank" rel="noopener noreferrer nofollow">
                         <?php echo esc_html( wp_parse_url( $obituary->source_url, PHP_URL_HOST ) ); ?>
                     </a>
                 </span>
@@ -86,7 +86,7 @@ if (!defined('ABSPATH')) {
 
         <!-- Integration with Obituary Assistant if available -->
         <?php if ( function_exists( 'ontario_obituaries_check_dependency' ) && ontario_obituaries_check_dependency() ) : ?>
-        <div class="ontario-obituary-assistant-actions" style="margin-top: 10px;">
+        <div class="ontario-obituary-assistant-actions">
             <a href="<?php echo esc_url( add_query_arg( array( 'source' => 'ontario', 'obituary_id' => $obituary->id ), site_url( '/obituary-assistant/' ) ) ); ?>" class="button ontario-obituary-assistant-button">
                 <?php esc_html_e( 'Open in Obituary Assistant', 'ontario-obituaries' ); ?>
             </a>
@@ -94,7 +94,7 @@ if (!defined('ABSPATH')) {
         <?php endif; ?>
 
         <!-- Social sharing links -->
-        <div class="ontario-obituary-social-sharing" style="margin-top: 10px;">
+        <div class="ontario-obituary-social-sharing">
             <?php if ( get_option( 'ontario_obituaries_enable_facebook', '1' ) ) : ?>
             <a href="#" class="ontario-obituary-share-facebook" data-id="<?php echo esc_attr( $obituary->id ); ?>" data-name="<?php echo esc_attr( $obituary->name ); ?>" data-url="<?php echo esc_url( $detail_internal_url ); ?>">
                 <span class="dashicons dashicons-facebook"></span> <?php esc_html_e( 'Share on Facebook', 'ontario-obituaries' ); ?>
