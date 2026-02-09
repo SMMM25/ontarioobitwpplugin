@@ -466,13 +466,17 @@ class Ontario_Obituaries {
     /**
      * Render the [ontario_obituaries] shortcode.
      *
-     * Sets DONOTCACHEPAGE to prevent W3 Total Cache and LiteSpeed from
-     * serving stale versions after dedup or template changes.
+     * Sends LiteSpeed-specific cache-control headers to keep listing pages
+     * fresh after dedup or scrape changes.  The shortcode page is set to
+     * a short TTL (10 min) so LiteSpeed serves cached copies but refreshes
+     * quickly when new obituaries arrive.
      */
     public function render_shortcode( $atts ) {
-        // Prevent page caching — obituary data changes frequently
-        if ( ! defined( 'DONOTCACHEPAGE' ) ) {
-            define( 'DONOTCACHEPAGE', true );
+        // Tell LiteSpeed Cache to use a short TTL for this page
+        // (keeps pages cached for performance, but refreshes after 10 min).
+        if ( ! headers_sent() ) {
+            header( 'X-LiteSpeed-Cache-Control: public,max-age=600' );
+            header( 'X-LiteSpeed-Tag: ontario_obits,ontario_obits_listing' );
         }
 
         $atts = shortcode_atts( array(

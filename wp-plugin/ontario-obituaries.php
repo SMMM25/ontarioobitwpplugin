@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.4.0
+ * Version: 3.5.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.4.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.5.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -529,6 +529,9 @@ function ontario_obituaries_cleanup_duplicates() {
 
     if ( $removed > 0 ) {
         ontario_obituaries_log( sprintf( 'Duplicate cleanup v%s: removed %d duplicate obituaries', ONTARIO_OBITUARIES_VERSION, $removed ), 'info' );
+
+        // v3.5.0: Purge LiteSpeed listing caches so deduped results appear immediately.
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
     }
 }
 add_action( 'init', 'ontario_obituaries_cleanup_duplicates', 5 );
@@ -832,6 +835,10 @@ function ontario_obituaries_scheduled_collection() {
         delete_option( 'ontario_obituaries_last_scrape_errors' );
     }
 
+    // v3.5.0: Purge LiteSpeed listing/hub caches after scrape so new obituaries
+    // appear immediately.  Uses tag-based purge to avoid clearing the entire site.
+    ontario_obituaries_purge_litespeed( 'ontario_obits' );
+
     // v3.3.0: Run dedup after every scrape to catch cross-source duplicates immediately
     ontario_obituaries_cleanup_duplicates();
 }
@@ -885,7 +892,101 @@ function ontario_obituaries_init() {
 add_action( 'plugins_loaded', 'ontario_obituaries_init' );
 
 /**
- * v3.4.0: WP Pusher / plugin-update integration.
+ * v3.5.0: Centralized LiteSpeed Cache purge.
+ *
+ * LiteSpeed is the ONLY cache layer on monacomonuments.ca.
+ * W3 Total Cache must not be active — see ontario_obituaries_cache_conflict_notice().
+ *
+ * Supports two modes:
+ *   1) Full purge (default)  — clears everything; used on deploy/version update.
+ *   2) Tag-based purge       — clears only pages tagged with 'ontario_obits*';
+ *      used after scrape/dedup so the rest of the site cache is preserved.
+ *
+ * @param string $tag  Optional. A LiteSpeed tag to purge (e.g. 'ontario_obits').
+ *                     When empty, does a full purge_all.
+ * @return bool Whether a purge was executed.
+ */
+function ontario_obituaries_purge_litespeed( $tag = '' ) {
+    // LiteSpeed Cache plugin API (v3.x+)
+    if ( class_exists( 'LiteSpeed_Cache_API' ) ) {
+        if ( ! empty( $tag ) && method_exists( 'LiteSpeed_Cache_API', 'purge' ) ) {
+            // Tag-based purge: only the pages we tagged with X-LiteSpeed-Tag
+            LiteSpeed_Cache_API::purge( $tag );
+            ontario_obituaries_log( 'LiteSpeed Cache purged tag: ' . $tag, 'info' );
+        } else {
+            LiteSpeed_Cache_API::purge_all();
+            ontario_obituaries_log( 'LiteSpeed Cache purged (full).', 'info' );
+        }
+        return true;
+    }
+
+    // Legacy LiteSpeed function (no tag support)
+    if ( function_exists( 'litespeed_purge_all' ) ) {
+        litespeed_purge_all();
+        ontario_obituaries_log( 'LiteSpeed Cache purged via legacy function.', 'info' );
+        return true;
+    }
+
+    // LiteSpeed server is running but the WP plugin might not be active —
+    // send a purge header so the server-level cache is cleared too.
+    if ( ! headers_sent() ) {
+        if ( ! empty( $tag ) ) {
+            header( 'X-LiteSpeed-Purge: tag=' . sanitize_text_field( $tag ) );
+        } else {
+            header( 'X-LiteSpeed-Purge: *' );
+        }
+        ontario_obituaries_log( 'LiteSpeed Cache: sent X-LiteSpeed-Purge header (no WP plugin detected).', 'info' );
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * v3.5.0: Warn if W3 Total Cache is active alongside LiteSpeed.
+ *
+ * Decision: LiteSpeed Cache is the sole caching layer (server-native on
+ * monacomonuments.ca). W3 Total Cache MUST be deactivated because its page
+ * cache serves stale HTML that LiteSpeed has already purged, causing version
+ * mismatches, persistent "View Original" buttons, and duplicate obituaries.
+ */
+function ontario_obituaries_cache_conflict_notice() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    // Check if W3 Total Cache is active
+    if ( ! function_exists( 'is_plugin_active' ) ) {
+        include_once ABSPATH . 'wp-admin/includes/plugin.php';
+    }
+
+    $w3tc_active = is_plugin_active( 'w3-total-cache/w3-total-cache.php' );
+    if ( ! $w3tc_active ) {
+        return;
+    }
+
+    // Check if LiteSpeed Cache is also active
+    $litespeed_active = is_plugin_active( 'litespeed-cache/litespeed-cache.php' );
+    $is_litespeed_server = ( isset( $_SERVER['SERVER_SOFTWARE'] ) && stripos( $_SERVER['SERVER_SOFTWARE'], 'litespeed' ) !== false );
+
+    if ( $litespeed_active || $is_litespeed_server ) {
+        ?>
+        <div class="notice notice-error">
+            <p><strong><?php esc_html_e( 'Ontario Obituaries — Cache Conflict Detected', 'ontario-obituaries' ); ?></strong></p>
+            <p><?php esc_html_e( 'W3 Total Cache and LiteSpeed Cache are both active. This causes stale HTML, version mismatches, and persistent display bugs (e.g., old "View Original" buttons, duplicated cards).', 'ontario-obituaries' ); ?></p>
+            <p><?php printf(
+                /* translators: %s: link to plugins page */
+                esc_html__( 'Please %s W3 Total Cache and use LiteSpeed Cache exclusively — it is the native cache layer for this server.', 'ontario-obituaries' ),
+                '<a href="' . esc_url( admin_url( 'plugins.php' ) ) . '"><strong>' . esc_html__( 'deactivate', 'ontario-obituaries' ) . '</strong></a>'
+            ); ?></p>
+        </div>
+        <?php
+    }
+}
+add_action( 'admin_notices', 'ontario_obituaries_cache_conflict_notice' );
+
+/**
+ * v3.5.0: WP Pusher / plugin-update integration.
  *
  * When WP Pusher pushes a new version, the activation hook does NOT re-fire.
  * This callback re-registers rewrite rules, flushes them, and purges known
@@ -906,23 +1007,9 @@ function ontario_obituaries_on_plugin_update() {
         flush_rewrite_rules();
     }
 
-    // Purge known cache plugins
-    // LiteSpeed Cache
-    if ( class_exists( 'LiteSpeed_Cache_API' ) ) {
-        LiteSpeed_Cache_API::purge_all();
-    } elseif ( function_exists( 'litespeed_purge_all' ) ) {
-        litespeed_purge_all();
-    }
-
-    // W3 Total Cache
-    if ( function_exists( 'w3tc_flush_all' ) ) {
-        w3tc_flush_all();
-    }
-
-    // WP Super Cache
-    if ( function_exists( 'wp_cache_clear_cache' ) ) {
-        wp_cache_clear_cache();
-    }
+    // Purge LiteSpeed Cache — the sole cache layer on monacomonuments.ca.
+    // Full purge on version update to ensure all pages serve the new HTML/CSS/JS.
+    ontario_obituaries_purge_litespeed();
 
     // Clear WordPress object cache
     wp_cache_flush();

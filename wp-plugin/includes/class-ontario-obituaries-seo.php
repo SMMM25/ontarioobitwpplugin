@@ -206,12 +206,21 @@ class Ontario_Obituaries_SEO {
             return;
         }
 
-        // Prevent page-level caching so WP Pusher changes appear immediately
-        if ( ! defined( 'DONOTCACHEPAGE' ) ) {
-            define( 'DONOTCACHEPAGE', true );
-        }
+        // LiteSpeed-specific cache control:
+        // Hub and city pages get a moderate TTL (10 min); individual pages
+        // get a longer TTL (1 hour) since their content rarely changes.
+        // Tag-based purge headers let us selectively invalidate after scrape/dedup.
         if ( ! headers_sent() ) {
-            nocache_headers();
+            if ( ! empty( $id ) ) {
+                header( 'X-LiteSpeed-Cache-Control: public,max-age=3600' );
+                header( 'X-LiteSpeed-Tag: ontario_obits,ontario_obits_individual,ontario_obits_id_' . intval( $id ) );
+            } elseif ( ! empty( $city ) ) {
+                header( 'X-LiteSpeed-Cache-Control: public,max-age=600' );
+                header( 'X-LiteSpeed-Tag: ontario_obits,ontario_obits_city,ontario_obits_city_' . sanitize_title( $city ) );
+            } else {
+                header( 'X-LiteSpeed-Cache-Control: public,max-age=600' );
+                header( 'X-LiteSpeed-Tag: ontario_obits,ontario_obits_hub' );
+            }
         }
 
         if ( ! empty( $id ) ) {
