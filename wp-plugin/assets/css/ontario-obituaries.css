@@ -147,6 +147,26 @@
     flex-wrap: wrap;
 }
 
+/* "Read More" link — SEO-friendly link to full obituary page */
+.ontario-obituaries-read-more-link {
+    display: inline-block;
+    padding: 8px 15px;
+    background-color: #2c6e49;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.ontario-obituaries-read-more-link:hover {
+    background-color: #245a3a;
+    color: white;
+    text-decoration: none;
+}
+
+/* "Quick View" button — opens AJAX modal */
 .ontario-obituaries-read-more {
     padding: 8px 15px;
     background-color: #0073aa;
@@ -157,6 +177,11 @@
     font-size: 14px;
 }
 
+.ontario-obituaries-read-more:hover {
+    background-color: #005f8d;
+}
+
+/* Source link — kept for backward compatibility */
 .ontario-obituaries-source-link {
     padding: 8px 15px;
     background-color: #f7f7f7;
@@ -242,6 +267,153 @@
 @keyframes ontario-spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* Facebook Share button */
+.ontario-obituaries-share-fb {
+    padding: 6px 12px;
+    background-color: #1877F2;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ontario-obituaries-share-fb:hover {
+    background-color: #1565c0;
+}
+
+.ontario-obituaries-share-fb .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+/* Remove/flag link on cards */
+.ontario-obituaries-remove-link {
+    color: #999;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    padding: 6px;
+}
+
+.ontario-obituaries-remove-link:hover {
+    color: #c00;
+}
+
+.ontario-obituaries-remove-link .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+/* Removal request form */
+.ontario-obituaries-removal-form {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 20px;
+    margin-top: 20px;
+}
+
+.ontario-obituaries-removal-form h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 18px;
+    color: #333;
+}
+
+.ontario-obituaries-removal-form label {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #333;
+}
+
+.ontario-obituaries-removal-form label .required {
+    color: #c00;
+}
+
+.ontario-obituaries-removal-form input[type="text"],
+.ontario-obituaries-removal-form input[type="email"],
+.ontario-obituaries-removal-form select,
+.ontario-obituaries-removal-form textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.ontario-obituaries-removal-form textarea {
+    resize: vertical;
+}
+
+.ontario-obituaries-removal-btn {
+    padding: 10px 20px;
+    background-color: #c00;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-right: 10px;
+}
+
+.ontario-obituaries-removal-btn:hover {
+    background-color: #a00;
+}
+
+.ontario-obituaries-removal-btn:disabled {
+    background-color: #999;
+    cursor: not-allowed;
+}
+
+.ontario-obituaries-removal-cancel {
+    padding: 10px 20px;
+    background-color: #f7f7f7;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #555;
+}
+
+.ontario-obituaries-removal-cancel:hover {
+    background-color: #eee;
+}
+
+.ontario-obituaries-removal-message {
+    padding: 10px 15px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+
+.ontario-obituaries-removal-success {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.ontario-obituaries-removal-error {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+/* Empty state */
+.ontario-obituaries-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: #666;
 }
 
 .ontario-obituaries-disclaimer {
