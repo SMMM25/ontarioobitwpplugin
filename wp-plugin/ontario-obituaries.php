@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.10.1
+ * Version: 3.10.2
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.10.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.10.2' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -27,6 +27,39 @@ function ontario_obituaries_load_textdomain() {
     load_plugin_textdomain( 'ontario-obituaries', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
 }
 add_action( 'plugins_loaded', 'ontario_obituaries_load_textdomain', 5 );
+
+/**
+ * v3.10.2: Smart date display helper.
+ *
+ * Handles dates that may have been fabricated as YYYY-01-01 for year-only records.
+ * When the date is Jan 1 of any year AND no birth date exists (suggesting
+ * it was fabricated from a year-only source like "1930 - 2025"), displays
+ * only the year instead of the full misleading date.
+ *
+ * @param string $date      Date in Y-m-d format.
+ * @param string $alt_date  Optional alternate date (e.g., birth date) to check
+ *                          if both are Jan 1 (suggesting year-only source data).
+ * @param bool   $is_year_only_likely Whether context suggests year-only data.
+ * @return string Formatted date string.
+ */
+function ontario_obituaries_format_date( $date, $alt_date = '', $is_year_only_likely = false ) {
+    if ( empty( $date ) || '0000-00-00' === $date ) {
+        return '';
+    }
+
+    // Check if this looks like a fabricated Jan 1 date from year-only source data.
+    // Heuristic: if the date is Jan 1 AND the alternate date is also Jan 1 of a
+    // different year (both fabricated from "YYYY - YYYY"), show year only.
+    $month_day = substr( $date, 5 ); // 'MM-DD'
+    $alt_month_day = ! empty( $alt_date ) && '0000-00-00' !== $alt_date ? substr( $alt_date, 5 ) : '';
+
+    if ( '01-01' === $month_day && ( '01-01' === $alt_month_day || $is_year_only_likely ) ) {
+        return substr( $date, 0, 4 ); // Return just the year
+    }
+
+    // Normal formatting using WP date_i18n
+    return date_i18n( get_option( 'date_format' ), strtotime( $date ) );
+}
 
 /**
  * Check if Obituary Assistant plugin is active

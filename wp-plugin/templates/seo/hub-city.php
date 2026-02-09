@@ -13,6 +13,9 @@
  *
  * @package Ontario_Obituaries
  * @since   3.0.0
+ *
+ * v3.10.2: Updated date display to use ontario_obituaries_format_date()
+ *          for smart year-only handling.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -60,13 +63,20 @@ get_header();
                     </h3>
 
                     <div style="color: #666; margin: 8px 0;">
-                        <?php if ( ! empty( $obit->date_of_birth ) && '0000-00-00' !== $obit->date_of_birth ) : ?>
+                        <?php
+                        // v3.10.2: Smart date formatting
+                        $dob = ! empty( $obit->date_of_birth ) ? $obit->date_of_birth : '';
+                        $dod = ! empty( $obit->date_of_death ) ? $obit->date_of_death : '';
+                        $dob_display = ontario_obituaries_format_date( $dob, $dod );
+                        $dod_display = ontario_obituaries_format_date( $dod, $dob );
+                        ?>
+                        <?php if ( ! empty( $dob_display ) ) : ?>
                             <span itemprop="birthDate" content="<?php echo esc_attr( $obit->date_of_birth ); ?>">
-                                <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obit->date_of_birth ) ) ); ?>
+                                <?php echo esc_html( $dob_display ); ?>
                             </span> &ndash;
                         <?php endif; ?>
                         <span itemprop="deathDate" content="<?php echo esc_attr( $obit->date_of_death ); ?>">
-                            <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obit->date_of_death ) ) ); ?>
+                            <?php echo esc_html( $dod_display ); ?>
                         </span>
                         <?php if ( ! empty( $obit->age ) && $obit->age > 0 ) : ?>
                             <span>(<?php echo esc_html( $obit->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>

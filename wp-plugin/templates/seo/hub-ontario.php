@@ -87,7 +87,11 @@ get_header();
                         </a>
                     </h3>
                     <p style="color: #666; margin: 5px 0;">
-                        <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obit->date_of_death ) ) ); ?>
+                        <?php
+                        // v3.10.2: Smart date formatting
+                        $dod_display = ontario_obituaries_format_date( $obit->date_of_death );
+                        echo esc_html( $dod_display );
+                        ?>
                         <?php if ( ! empty( $obit->location ) ) : ?>
                             &mdash; <?php echo esc_html( $obit->location ); ?>
                         <?php endif; ?>

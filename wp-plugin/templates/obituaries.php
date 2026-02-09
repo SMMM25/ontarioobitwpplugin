@@ -21,6 +21,8 @@
  *           Read More link preserved for SEO internal linking.
  *           Per-card "Request removal" text link preserved (populates removal form).
  *           Modal markup removed (no Quick View trigger exists).
+ *  v3.10.2: Updated date display to use ontario_obituaries_format_date()
+ *           for smart year-only handling (no more fabricated Jan 1 dates).
  */
 
 // Exit if accessed directly
@@ -130,10 +132,20 @@ $site_url = get_site_url();
                         <h3 class="ontario-obituaries-name"><?php echo esc_html( $obituary->name ); ?></h3>
 
                         <div class="ontario-obituaries-dates">
-                            <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
-                                <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_birth ) ) ); ?> &ndash; </span>
+                            <?php
+                            // v3.10.2: Use smart date formatting to avoid displaying
+                            // fabricated Jan 1 dates from year-only source data.
+                            $dob = ! empty( $obituary->date_of_birth ) ? $obituary->date_of_birth : '';
+                            $dod = ! empty( $obituary->date_of_death ) ? $obituary->date_of_death : '';
+                            $dob_display = ontario_obituaries_format_date( $dob, $dod );
+                            $dod_display = ontario_obituaries_format_date( $dod, $dob );
+                            ?>
+                            <?php if ( ! empty( $dob_display ) ) : ?>
+                                <span><?php echo esc_html( $dob_display ); ?> &ndash; </span>
                             <?php endif; ?>
-                            <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_death ) ) ); ?></span>
+                            <?php if ( ! empty( $dod_display ) ) : ?>
+                                <span><?php echo esc_html( $dod_display ); ?></span>
+                            <?php endif; ?>
                             <?php if ( ! empty( $obituary->age ) ) : ?>
                                 <span>(<?php echo esc_html( $obituary->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>
                             <?php endif; ?>

@@ -9,6 +9,9 @@
  *
  * @package Ontario_Obituaries
  * @since   3.0.0
+ *
+ * v3.10.2: Updated date display to use ontario_obituaries_format_date()
+ *          for smart year-only handling (no more fabricated Jan 1 dates).
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -55,13 +58,20 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
             <?php endif; ?>
 
             <div class="ontario-obituary-dates" style="color: #555; font-size: 1.1em; margin-bottom: 10px;">
-                <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
+                <?php
+                // v3.10.2: Smart date formatting to avoid fabricated Jan 1
+                $dob = ! empty( $obituary->date_of_birth ) ? $obituary->date_of_birth : '';
+                $dod = ! empty( $obituary->date_of_death ) ? $obituary->date_of_death : '';
+                $dob_display = ontario_obituaries_format_date( $dob, $dod );
+                $dod_display = ontario_obituaries_format_date( $dod, $dob );
+                ?>
+                <?php if ( ! empty( $dob_display ) ) : ?>
                     <span itemprop="birthDate" content="<?php echo esc_attr( $obituary->date_of_birth ); ?>">
-                        <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_birth ) ) ); ?>
+                        <?php echo esc_html( $dob_display ); ?>
                     </span> &ndash;
                 <?php endif; ?>
                 <span itemprop="deathDate" content="<?php echo esc_attr( $obituary->date_of_death ); ?>">
-                    <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_death ) ) ); ?>
+                    <?php echo esc_html( $dod_display ); ?>
                 </span>
                 <?php if ( ! empty( $obituary->age ) && $obituary->age > 0 ) : ?>
                     <span>(<?php echo esc_html( $obituary->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>

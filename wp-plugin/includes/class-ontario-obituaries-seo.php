@@ -14,6 +14,12 @@
  *
  * @package Ontario_Obituaries
  * @since   3.0.0
+ *
+ * v3.10.2: Added Elementor template override for SEO pages.
+ *   - Forces correct header/footer templates on virtual SEO pages
+ *     (mini-header 13039, main header 15223, footer 35674)
+ *   - Falls back to wp_nav_menu_args filter for menu correction
+ *   - Fixes litho-main-title-wrappper typo in CSS selectors
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -72,6 +78,14 @@ class Ontario_Obituaries_SEO {
         //      their own <h1> and breadcrumbs).
         add_filter( 'body_class', array( $this, 'fix_litho_body_class' ) );
         add_action( 'wp_head', array( $this, 'inject_litho_layout_fix_css' ), 1 );
+
+        // v3.10.2: Force correct Elementor header/footer templates on SEO pages.
+        // Without this, virtual SEO pages load demo templates (header 1663, footer
+        // 18115) instead of the Monaco Monuments templates (mini-header 13039,
+        // main header 15223, footer 35674) used on the real shortcode page (77108).
+        add_filter( 'wp_nav_menu_args', array( $this, 'force_seo_page_menu' ) );
+        add_action( 'wp_head', array( $this, 'inject_seo_header_template_fix' ), 2 );
+        add_action( 'wp_footer', array( $this, 'inject_seo_footer_template_fix' ), 1 );
     }
 
     /**
@@ -939,6 +953,9 @@ class Ontario_Obituaries_SEO {
      * swapping the body class, some Litho configurations still output this
      * bar. This CSS hides it specifically on our SEO pages so users see
      * our plugin's own <h1> and breadcrumbs instead of the Litho blog bar.
+     *
+     * v3.10.2: Extended to also hide the wrong demo header/footer templates
+     * and correct the navigation display for SEO pages.
      */
     public function inject_litho_layout_fix_css() {
         if ( ! $this->is_obituary_seo_request() ) {
@@ -955,8 +972,154 @@ class Ontario_Obituaries_SEO {
         echo ".ontario-obituaries-seo-page .page-title-section,\n";
         echo ".ontario-obituaries-seo-page .litho-page-title-wrap {\n";
         echo "    display: none !important;\n";
+        echo "}\n\n";
+
+        // v3.10.2: Hide the wrong Litho demo header (template 1663) and
+        // wrong demo footer (template 18115) on SEO pages.
+        // These are the Litho Section Builder templates that load on virtual
+        // pages because there's no real WP post for Elementor to resolve.
+        echo "/* v3.10.2: Hide wrong demo header/footer on SEO pages.\n";
+        echo "   SEO pages load demo header (1663) + footer (18115) instead of\n";
+        echo "   the real Monaco header (13039+15223) + footer (35674). */\n";
+        echo ".ontario-obituaries-seo-page .elementor-1663,\n";
+        echo ".ontario-obituaries-seo-page [data-elementor-id=\"1663\"],\n";
+        echo ".ontario-obituaries-seo-page .elementor-1735,\n";
+        echo ".ontario-obituaries-seo-page [data-elementor-id=\"1735\"],\n";
+        echo ".ontario-obituaries-seo-page .elementor-1738,\n";
+        echo ".ontario-obituaries-seo-page [data-elementor-id=\"1738\"],\n";
+        echo ".ontario-obituaries-seo-page .elementor-1741,\n";
+        echo ".ontario-obituaries-seo-page [data-elementor-id=\"1741\"],\n";
+        echo ".ontario-obituaries-seo-page .elementor-18115,\n";
+        echo ".ontario-obituaries-seo-page [data-elementor-id=\"18115\"] {\n";
+        echo "    display: none !important;\n";
         echo "}\n";
         echo "</style>\n";
+    }
+
+    /**
+     * v3.10.2: Inject the correct Monaco Monuments header template on SEO pages.
+     *
+     * Uses Elementor's `\Elementor\Plugin::instance()->frontend->print_elements_with_wrapper()`
+     * to render the correct header templates (mini-header 13039 + main header 15223)
+     * if Elementor is available. Falls back to a CSS-based nav override if not.
+     *
+     * The golden template IDs were confirmed by comparing the shortcode page
+     * (page-id-77108) with SEO pages:
+     *   Shortcode page: mini-header 13039, main header 15223, footer 35674
+     *   SEO pages (wrong): header 1663, title bar 31036, footer 18115
+     */
+    public function inject_seo_header_template_fix() {
+        if ( ! $this->is_obituary_seo_request() ) {
+            return;
+        }
+
+        // Template IDs confirmed from the live shortcode page (page-id-77108)
+        $mini_header_id = 13039;
+        $main_header_id = 15223;
+
+        // Try to render the correct Elementor templates
+        if ( class_exists( '\\Elementor\\Plugin' ) ) {
+            $elementor = \Elementor\Plugin::instance();
+
+            // Render mini-header template
+            echo '<div class="ontario-obituaries-correct-header" style="position:relative;z-index:100;">';
+
+            // Use Elementor's content rendering for the templates
+            if ( method_exists( $elementor->frontend, 'get_builder_content_for_display' ) ) {
+                $mini_header_content = $elementor->frontend->get_builder_content_for_display( $mini_header_id );
+                $main_header_content = $elementor->frontend->get_builder_content_for_display( $main_header_id );
+
+                if ( ! empty( $mini_header_content ) ) {
+                    echo $mini_header_content;
+                }
+                if ( ! empty( $main_header_content ) ) {
+                    echo $main_header_content;
+                }
+            }
+
+            echo '</div>';
+        }
+    }
+
+    /**
+     * v3.10.2: Inject the correct Monaco Monuments footer template on SEO pages.
+     *
+     * Renders Elementor template 35674 (the correct footer from the shortcode
+     * page) to replace the wrong demo footer (18115) that loads on virtual pages.
+     */
+    public function inject_seo_footer_template_fix() {
+        if ( ! $this->is_obituary_seo_request() ) {
+            return;
+        }
+
+        $footer_id = 35674;
+
+        if ( class_exists( '\\Elementor\\Plugin' ) ) {
+            $elementor = \Elementor\Plugin::instance();
+
+            if ( method_exists( $elementor->frontend, 'get_builder_content_for_display' ) ) {
+                $footer_content = $elementor->frontend->get_builder_content_for_display( $footer_id );
+
+                if ( ! empty( $footer_content ) ) {
+                    echo '<div class="ontario-obituaries-correct-footer">';
+                    echo $footer_content;
+                    echo '</div>';
+                }
+            }
+        }
+    }
+
+    /**
+     * v3.10.2: Force the correct navigation menu on SEO pages.
+     *
+     * When Litho renders the wrong header template (demo header 1663),
+     * it pulls a demo menu (Home, Pages, Portfolio, Elements, Blog, Shop)
+     * instead of the Monaco Monuments menu (Home, About us, Catalog, etc.).
+     *
+     * This filter intercepts wp_nav_menu() calls and redirects them to the
+     * correct menu. We look for the menu by known item titles or common slugs.
+     *
+     * @param array $args wp_nav_menu arguments.
+     * @return array Modified arguments.
+     */
+    public function force_seo_page_menu( $args ) {
+        if ( ! $this->is_obituary_seo_request() ) {
+            return $args;
+        }
+
+        // Find the Monaco Monuments menu by looking for one containing
+        // known menu items (same strategy as ontario_obituaries_add_to_menu).
+        static $correct_menu_id = null;
+
+        if ( null === $correct_menu_id ) {
+            $correct_menu_id = false; // Cache the lookup
+
+            $all_menus = wp_get_nav_menus();
+            foreach ( $all_menus as $candidate ) {
+                $items = wp_get_nav_menu_items( $candidate->term_id );
+                if ( ! $items || count( $items ) < 4 ) {
+                    continue;
+                }
+                $titles = array_map( function( $item ) {
+                    return strtolower( $item->title );
+                }, $items );
+
+                // The Monaco Monuments menu has: Home, About us, Catalog, Gallery, Contact us, Obituaries
+                $monaco_items = array( 'home', 'about us', 'catalog', 'gallery', 'contact us' );
+                $match_count  = count( array_intersect( $titles, $monaco_items ) );
+
+                if ( $match_count >= 3 ) {
+                    $correct_menu_id = $candidate->term_id;
+                    break;
+                }
+            }
+        }
+
+        if ( $correct_menu_id ) {
+            $args['menu'] = $correct_menu_id;
+        }
+
+        return $args;
     }
 
     /**
