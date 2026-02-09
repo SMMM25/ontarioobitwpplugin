@@ -235,6 +235,17 @@ class Ontario_Obituaries_Source_Registry {
     /**
      * Add or update a source.
      *
+     * v3.9.0: Enforces a key whitelist and typed format map so only known
+     * columns are written — prevents accidental writes of unexpected keys
+     * whether called from seed_defaults() or an admin UI.
+     *
+     * NOTE on the 'domain' field: this is a **unique source slug**, NOT a DNS
+     * hostname. Sources that share the same host but serve different cities
+     * (e.g. dignitymemorial.com/newmarket-on vs dignitymemorial.com/toronto-on)
+     * use path segments to create unique slugs. The obituary record's
+     * 'source_domain' is derived separately from extract_domain(base_url) and
+     * returns the actual hostname. Never compare 'domain' to 'source_domain'.
+     *
      * @param array $data Source data.
      * @return int|false Source ID or false on failure.
      */
@@ -257,20 +268,53 @@ class Ontario_Obituaries_Source_Registry {
             'min_request_interval' => 2.0,
         );
 
+        // v3.9.0: Key whitelist — only these columns may be written.
+        $allowed_keys = array_keys( $defaults );
+
+        // v3.9.0: Typed format map for $wpdb->insert() / $wpdb->update().
+        $format_map = array(
+            'domain'               => '%s',
+            'name'                 => '%s',
+            'base_url'             => '%s',
+            'adapter_type'         => '%s',
+            'config'               => '%s',
+            'city'                 => '%s',
+            'region'               => '%s',
+            'province'             => '%s',
+            'enabled'              => '%d',
+            'image_allowlisted'    => '%d',
+            'max_pages_per_run'    => '%d',
+            'min_request_interval' => '%f',
+        );
+
         $data = wp_parse_args( $data, $defaults );
 
-        // Check if exists
+        // Strip any keys not in the whitelist.
+        $data = array_intersect_key( $data, array_flip( $allowed_keys ) );
+
+        // Validate JSON config — invalid JSON falls back to '{}'.
+        if ( ! empty( $data['config'] ) && null === json_decode( $data['config'] ) ) {
+            $data['config'] = '{}';
+        }
+
+        // Build format array in the same key order as $data.
+        $formats = array();
+        foreach ( array_keys( $data ) as $key ) {
+            $formats[] = isset( $format_map[ $key ] ) ? $format_map[ $key ] : '%s';
+        }
+
+        // Check if exists (domain is UNIQUE KEY).
         $existing = $wpdb->get_var( $wpdb->prepare(
             "SELECT id FROM `{$table}` WHERE domain = %s",
             $data['domain']
         ) );
 
         if ( $existing ) {
-            $wpdb->update( $table, $data, array( 'id' => $existing ) );
+            $wpdb->update( $table, $data, array( 'id' => $existing ), $formats, array( '%d' ) );
             return intval( $existing );
         }
 
-        $wpdb->insert( $table, $data );
+        $wpdb->insert( $table, $data, $formats );
         return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
     }
 
@@ -323,7 +367,18 @@ class Ontario_Obituaries_Source_Registry {
     /**
      * Seed the registry with default southern Ontario sources.
      *
-     * Called during activation. Uses INSERT IGNORE to avoid duplicates.
+     * Called during activation and by the v3.9.0 re-seed guard in
+     * on_plugin_update() when the sources table is empty.
+     *
+     * Uses upsert_source() so re-running is safe (idempotent).
+     *
+     * v3.9.0 changes:
+     *   - Dead/unreachable sources are seeded with enabled = 0 so their
+     *     domain key is preserved in the DB (history, circuit-breaker state)
+     *     but they don't waste scrape cycles. They can be re-enabled via
+     *     admin UI once the underlying site is verified reachable.
+     *   - Source 'domain' is a unique slug (may include path segments for
+     *     hosts that serve multiple city pages). See upsert_source() docs.
      */
     public static function seed_defaults() {
         $sources = array(
@@ -364,6 +419,8 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => 'Richmond Hill',
                 'region'       => 'York Region',
             ),
+            // v3.9.0: DISABLED — thompsonfh-aurora.com redirects to dignitymemorial.com (403).
+            // Kept in seed so domain key is preserved; re-enable when site is reachable.
             array(
                 'domain'       => 'thompsonfh-aurora.com',
                 'name'         => 'Thompson Funeral Home - Aurora',
@@ -371,6 +428,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'frontrunner',
                 'city'         => 'Aurora',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             array(
                 'domain'       => 'dignitymemorial.com/newmarket-on',
@@ -388,6 +446,7 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => 'Brampton',
                 'region'       => 'York Region',
             ),
+            // v3.9.0: DISABLED — skinnerfuneralhome.ca DNS timeout / unreachable.
             array(
                 'domain'       => 'skinnerfuneralhome.ca',
                 'name'         => 'Skinner & Middlebrook Funeral Home',
@@ -395,7 +454,9 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'frontrunner',
                 'city'         => 'Bradford',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
+            // v3.9.0: DISABLED — peacefultransition.ca/obituaries returns HTTP 404.
             array(
                 'domain'       => 'peacefultransition.ca',
                 'name'         => 'Peaceful Transition - Newmarket',
@@ -403,6 +464,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'generic_html',
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             array(
                 'domain'       => 'dignitymemorial.com/aurora-on',
@@ -475,6 +537,7 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => '',
                 'region'       => 'Greater Toronto Area',
             ),
+            // v3.9.0: DISABLED — remembering.ca/obituaries/toronto-on returns HTTP 404.
             array(
                 'domain'       => 'remembering.ca/toronto',
                 'name'         => 'Remembering.ca - Toronto',
@@ -482,6 +545,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'remembering_ca',
                 'city'         => '',
                 'region'       => 'Greater Toronto Area',
+                'enabled'      => 0,
             ),
 
             // ══════════════════════════════════════════════════════════════

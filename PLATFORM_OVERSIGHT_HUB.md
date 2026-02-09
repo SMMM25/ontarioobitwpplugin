@@ -213,3 +213,55 @@ age, funeral_home, location, image_url, description, source_url, source_domain,
 source_type, city_normalized, provenance_hash, suppressed_at, created_at.
 
 Unique key: `(name(100), date_of_death, funeral_home(100))`.
+
+---
+
+## RULE 11: Source Registry Health Check
+
+Before merging any PR that changes **scraper**, **adapter**, or **source-registry** code:
+
+### 11.1 — Verify at least one source URL returns parseable obituary links
+
+```bash
+# Must return > 0 (structural /obituary/ link pattern — stable across layout changes)
+curl -s -A 'OntarioObituariesBot/3.9.0' \
+  'https://obituaries.yorkregion.com/obituaries/obituaries/search' \
+  | grep -cE '/obituary/[A-Za-z]'
+```
+
+### 11.2 — Verify pagination returns different data on page 2
+
+```bash
+PAGE1=$(curl -s -A 'OntarioObituariesBot/3.9.0' \
+  'https://obituaries.yorkregion.com/obituaries/obituaries/search' \
+  | grep -oE '/obituary/[^"]+' | head -1)
+PAGE2=$(curl -s -A 'OntarioObituariesBot/3.9.0' \
+  'https://obituaries.yorkregion.com/obituaries/obituaries/search?p=2' \
+  | grep -oE '/obituary/[^"]+' | head -1)
+[ "$PAGE1" != "$PAGE2" ] && echo "PASS: page 2 differs" || echo "FAIL: page 2 identical"
+```
+
+### 11.3 — Dead source handling
+
+- **Permanently dead** sources (404, 403, DNS timeout confirmed across multiple days)
+  MUST be seeded with `'enabled' => 0` in `seed_defaults()`. Do NOT delete the
+  entry — preserve the domain key for circuit-breaker history and future re-enabling.
+- **Intermittently failing** sources are handled automatically by the circuit breaker
+  in `record_failure()`. No seed change needed.
+
+### 11.4 — Re-seed safety net
+
+`on_plugin_update()` MUST contain a guard that re-seeds via `seed_defaults()` when
+the sources table has 0 rows. The guard MUST:
+
+1. Run once per deployment (gated by `ontario_obituaries_deployed_version`).
+2. Not schedule duplicate cron events (check `wp_next_scheduled()` before scheduling).
+
+### 11.5 — Domain field convention
+
+The `domain` column in the source registry is a **unique source slug**, not a DNS
+hostname. Sources sharing a host but serving different cities (e.g.,
+`dignitymemorial.com/newmarket-on` vs `dignitymemorial.com/toronto-on`) use path
+segments to create unique slugs. The obituary record's `source_domain` is derived
+separately from `extract_domain(base_url)` (actual hostname). **Never compare
+`domain` to `source_domain`.**
