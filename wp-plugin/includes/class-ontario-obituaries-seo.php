@@ -59,6 +59,19 @@ class Ontario_Obituaries_SEO {
 
         // Handle verification tokens
         add_action( 'template_redirect', array( $this, 'handle_verification' ) );
+
+        // v3.10.0: Fix Litho theme layout on SEO pages.
+        // Without this, get_header() on our virtual pages causes Litho to render
+        // the blog layout (body class "blog", page-title bar showing "Blog" +
+        // "Short tagline goes here") instead of the standard Monaco Monuments
+        // page layout. We fix this by:
+        //   1) Filtering body_class to swap 'blog' → 'page' so Litho uses
+        //      its page template instead of the blog archive template.
+        //   2) Injecting a small CSS block to hide the Litho page-title
+        //      section entirely on our SEO pages (our templates provide
+        //      their own <h1> and breadcrumbs).
+        add_filter( 'body_class', array( $this, 'fix_litho_body_class' ) );
+        add_action( 'wp_head', array( $this, 'inject_litho_layout_fix_css' ), 1 );
     }
 
     /**
@@ -860,6 +873,86 @@ class Ontario_Obituaries_SEO {
                 array( 'response' => $result['success'] ? 200 : 400 )
             );
         }
+    }
+
+    /**
+     * Check if the current request is an Ontario Obituaries SEO page.
+     *
+     * Condition 4 hardening: ontario_obituaries_hub is a registered query var,
+     * so WordPress will accept it from querystrings on ANY URL (e.g.
+     * ?ontario_obituaries_hub=ontario appended to /contact/). To prevent the
+     * Litho fix from firing on unintended pages, we verify both:
+     *   (a) the query var is set, AND
+     *   (b) the request URI actually matches our SEO route pattern.
+     *
+     * @return bool True if this is a genuine obituary SEO page request.
+     */
+    private function is_obituary_seo_request() {
+        $hub = get_query_var( 'ontario_obituaries_hub' );
+        if ( empty( $hub ) ) {
+            return false;
+        }
+
+        // Belt-and-suspenders: also verify the request URI matches our pattern.
+        // This prevents querystring injection on unrelated pages.
+        $request_uri = isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '';
+        $path        = trim( wp_parse_url( $request_uri, PHP_URL_PATH ), '/' );
+
+        return (bool) preg_match( '#^obituaries/ontario(/|$)#', $path );
+    }
+
+    /**
+     * v3.10.0: Fix Litho theme body class for SEO pages.
+     *
+     * The Litho theme checks for the 'blog' body class and renders a
+     * blog-specific layout (title bar with "Blog" heading + subtitle).
+     * Our SEO pages are virtual (no real WP post), so WordPress defaults
+     * to the blog context. Swapping 'blog' → 'page' tells Litho to use
+     * its standard page layout — matching the Monaco Monuments design
+     * seen on /ontario-obituaries/ and other polished pages.
+     *
+     * @param array $classes Body CSS classes.
+     * @return array Modified classes.
+     */
+    public function fix_litho_body_class( $classes ) {
+        if ( ! $this->is_obituary_seo_request() ) {
+            return $classes;
+        }
+
+        // Remove 'blog' and add 'page' so Litho renders page layout.
+        $classes = array_diff( $classes, array( 'blog', 'archive', 'paged' ) );
+        if ( ! in_array( 'page', $classes, true ) ) {
+            $classes[] = 'page';
+        }
+
+        // Add a custom class for targeted CSS.
+        $classes[] = 'ontario-obituaries-seo-page';
+
+        return $classes;
+    }
+
+    /**
+     * v3.10.0: Inject CSS to hide Litho's page-title section on SEO pages.
+     *
+     * The Litho theme renders a page-title area (with heading "Blog" and
+     * subtitle "Short tagline goes here") on blog-context pages. Even after
+     * swapping the body class, some Litho configurations still output this
+     * bar. This CSS hides it specifically on our SEO pages so users see
+     * our plugin's own <h1> and breadcrumbs instead of the Litho blog bar.
+     */
+    public function inject_litho_layout_fix_css() {
+        if ( ! $this->is_obituary_seo_request() ) {
+            return;
+        }
+
+        echo "\n<style id=\"ontario-obituaries-litho-fix\">\n";
+        echo "/* v3.10.0: Hide Litho blog page-title bar on Ontario Obituaries SEO pages */\n";
+        echo ".ontario-obituaries-seo-page .litho-main-title-wrap,\n";
+        echo ".ontario-obituaries-seo-page .page-title-section,\n";
+        echo ".ontario-obituaries-seo-page .litho-page-title-wrap {\n";
+        echo "    display: none !important;\n";
+        echo "}\n";
+        echo "</style>\n";
     }
 
     /**

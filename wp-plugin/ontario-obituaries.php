@@ -1157,7 +1157,26 @@ function ontario_obituaries_on_plugin_update() {
         // enabled=1 via wp_parse_args(), so they are unaffected.
         if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
             Ontario_Obituaries_Source_Registry::seed_defaults();
-            ontario_obituaries_log( 'v3.10.0: Re-seeded source registry to disable broken FrontRunner/redirect sources.', 'info' );
+
+            // Condition 3: Log exactly which domains were force-disabled so admins
+            // can trace "why did my source turn off?" without guessing. This is a
+            // policy decision, not a bug — these sources return 0 records server-side.
+            $forced_disabled = array(
+                'roadhouseandrose.com',
+                'forrestandtaylor.com',
+                'wardfuneralhome.com',
+                'marshallfuneralhome.com',
+            );
+            ontario_obituaries_log(
+                sprintf(
+                    'v3.10.0: Re-seeded source registry. Force-disabled %d broken sources: %s. '
+                    . 'Reason: FrontRunner JS-rendered (0 records server-side) or redirect to SPA. '
+                    . 'Re-enable via WP admin after verifying the source returns parseable HTML.',
+                    count( $forced_disabled ),
+                    implode( ', ', $forced_disabled )
+                ),
+                'info'
+            );
         }
 
         // Guard: verify the obituaries table exists before querying it.
@@ -1178,15 +1197,19 @@ function ontario_obituaries_on_plugin_update() {
             // The filter limits discover_listing_urls() to return only the first
             // page URL (~25 cards on yorkregion.com). The full multi-page scrape
             // is scheduled via WP-Cron below for background completion.
-            $cap_pages = function( $urls ) {
+            $cap_pages = function( $urls, $source = null ) {
                 return array_slice( (array) $urls, 0, 1 );
             };
-            add_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+            add_filter( 'ontario_obituaries_discovered_urls', $cap_pages, 10, 2 );
 
-            $collector    = new Ontario_Obituaries_Source_Collector();
-            $sync_results = $collector->collect();
-
-            remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+            // Condition 2: try/finally guarantees filter removal even if collect()
+            // throws an uncaught exception or triggers an unexpected code path.
+            try {
+                $collector    = new Ontario_Obituaries_Source_Collector();
+                $sync_results = $collector->collect();
+            } finally {
+                remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+            }
 
             ontario_obituaries_log(
                 sprintf(
