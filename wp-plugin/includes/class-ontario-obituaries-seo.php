@@ -813,6 +813,9 @@ class Ontario_Obituaries_SEO {
                     $og['og:image'] = $obit->image_url;
                 }
                 $city_slug = sanitize_title( $city_name );
+                if ( empty( $city_slug ) ) {
+                    $city_slug = 'ontario';
+                }
                 $name_slug = sanitize_title( $obit->name ) . '-' . intval( $id );
                 $og['og:url'] = home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' );
             }

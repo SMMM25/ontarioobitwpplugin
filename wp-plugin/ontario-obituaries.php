@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.6.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.7.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -490,6 +490,16 @@ function ontario_obituaries_cleanup_duplicates() {
     if ( $test_removed > 0 ) {
         ontario_obituaries_log( sprintf( 'Removed %d test data records', $test_removed ), 'info' );
         $removed += $test_removed;
+    }
+
+    // v3.7.0: Backfill city_normalized from location for records that have a
+    // location but no city_normalized (caused by legacy scraper or pre-v3 inserts).
+    // This prevents double-slash sitemap URLs like /ontario//name-slug/.
+    $backfill_result = $wpdb->query(
+        "UPDATE `{$table}` SET city_normalized = TRIM(location) WHERE city_normalized = '' AND location != '' AND location IS NOT NULL AND suppressed_at IS NULL"
+    );
+    if ( $backfill_result > 0 ) {
+        ontario_obituaries_log( sprintf( 'Backfilled city_normalized for %d records', $backfill_result ), 'info' );
     }
 
     // ── Pass 1: Exact duplicates (same name + date_of_death) ──────────
@@ -1034,31 +1044,53 @@ function ontario_obituaries_on_plugin_update() {
     // Mark this version as deployed
     update_option( 'ontario_obituaries_deployed_version', ONTARIO_OBITUARIES_VERSION );
 
-    // v3.6.0: One-time data repair — previous versions stored today's date as
-    // date_of_death because normalize_date("1926") → strtotime → today.
-    // Delete these corrupt records so the next scrape can re-insert with correct dates.
-    if ( version_compare( $stored_version, '3.6.0', '<' ) ) {
+    // v3.7.0: Comprehensive one-time data repair.
+    //
+    // Previous versions had three data corruption issues:
+    //  1) normalize_date("1926") → strtotime → today's date stored as date_of_death
+    //  2) Missing city_normalized for records inserted before v3.0 columns were added
+    //  3) Test data (name LIKE '%Test %') not cleaned up
+    //
+    // Repair strategy:
+    //  - Delete all records from yorkregion.com that have corrupted dates
+    //    (date_of_death = 2026-02-09 — the day the broken scrape ran).
+    //  - Backfill city_normalized from location for any rows missing it.
+    //  - Test data is handled separately by ontario_obituaries_cleanup_duplicates().
+    if ( version_compare( $stored_version, '3.7.0', '<' ) ) {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
-        $today = gmdate( 'Y-m-d' );
-        // Delete records where date_of_death = today AND date_of_birth = today
-        // (both dates being today is a clear sign of the strtotime corruption).
+        $corrupt_date = '2026-02-09'; // The specific date from the broken scrape
+
+        // Remove yorkregion records with the known corrupt date (they all show 2026-02-09).
         $corrupt_removed = $wpdb->query( $wpdb->prepare(
-            "DELETE FROM `{$table}` WHERE date_of_death = %s AND date_of_birth = %s",
-            $today, $today
+            "DELETE FROM `{$table}` WHERE date_of_death = %s AND source_domain = 'obituaries.yorkregion.com'",
+            $corrupt_date
         ) );
         if ( $corrupt_removed > 0 ) {
-            ontario_obituaries_log( sprintf( 'v3.6.0 data repair: removed %d records with corrupted dates (DoD=DoB=today)', $corrupt_removed ), 'info' );
+            ontario_obituaries_log( sprintf( 'v3.7.0 data repair: removed %d yorkregion records with corrupted date_of_death=%s', $corrupt_removed, $corrupt_date ), 'info' );
         }
-        // Also fix records where only date_of_death = today but source shows it shouldn't be
-        // (records from yorkregion.com whose actual deaths were months ago).
-        // We can't fix the dates without re-scraping, but we can clear them to trigger re-insert.
-        $stale_removed = $wpdb->query( $wpdb->prepare(
-            "DELETE FROM `{$table}` WHERE date_of_death = %s AND source_domain = 'obituaries.yorkregion.com'",
-            $today
+
+        // Also remove records where BOTH dates equal the corrupt date (generic strtotime corruption).
+        $both_corrupt = $wpdb->query( $wpdb->prepare(
+            "DELETE FROM `{$table}` WHERE date_of_death = %s AND date_of_birth = %s",
+            $corrupt_date, $corrupt_date
         ) );
-        if ( $stale_removed > 0 ) {
-            ontario_obituaries_log( sprintf( 'v3.6.0 data repair: removed %d yorkregion records with date_of_death=today (will re-scrape)', $stale_removed ), 'info' );
+        if ( $both_corrupt > 0 ) {
+            ontario_obituaries_log( sprintf( 'v3.7.0 data repair: removed %d records with DoD=DoB=%s', $both_corrupt, $corrupt_date ), 'info' );
+        }
+
+        // Backfill city_normalized from location where it's empty but location is not.
+        $backfilled = $wpdb->query(
+            "UPDATE `{$table}` SET city_normalized = TRIM(location) WHERE city_normalized = '' AND location != '' AND location IS NOT NULL"
+        );
+        if ( $backfilled > 0 ) {
+            ontario_obituaries_log( sprintf( 'v3.7.0 data repair: backfilled city_normalized for %d records from location', $backfilled ), 'info' );
+        }
+
+        // Schedule a re-scrape so the cleaned records get repopulated with correct dates.
+        if ( ( $corrupt_removed + $both_corrupt ) > 0 && ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+            wp_schedule_single_event( time() + 60, 'ontario_obituaries_initial_collection' );
+            ontario_obituaries_log( 'v3.7.0: Scheduled re-scrape to repopulate cleaned records.', 'info' );
         }
     }
 
