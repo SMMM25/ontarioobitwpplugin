@@ -177,6 +177,19 @@ class Ontario_Obituaries_Source_Collector {
                 $cards = $adapter->extract_obit_cards( $html, $source );
                 $source_result['found'] += count( $cards );
 
+                // v3.8.0: Log when a page was fetched successfully but yielded 0 cards.
+                if ( empty( $cards ) && ! empty( $html ) && strlen( $html ) > 500 ) {
+                    ontario_obituaries_log(
+                        sprintf(
+                            'Source %s page %s: fetched %d bytes but extracted 0 cards — selectors may be stale.',
+                            $domain,
+                            $listing_url,
+                            strlen( $html )
+                        ),
+                        'warning'
+                    );
+                }
+
                 foreach ( $cards as $card ) {
                     // 5b. Optional detail fetch
                     if ( ! empty( $card['detail_url'] ) ) {
