@@ -266,8 +266,16 @@ class Ontario_Obituaries_Debug {
     public function ajax_run_scrape() {
         $this->verify_ajax_permissions();
 
-        $scraper = new Ontario_Obituaries_Scraper();
-        $results = $scraper->collect();
+        // v3.10.0 FIX: Use Source_Collector (adapter-based pipeline) instead of
+        // the legacy Scraper. The legacy scraper doesn't use the source adapter
+        // architecture and cannot scrape yorkregion.com or any v3.0+ sources.
+        if ( class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+            $collector = new Ontario_Obituaries_Source_Collector();
+            $results   = $collector->collect();
+        } else {
+            $scraper = new Ontario_Obituaries_Scraper();
+            $results = $scraper->collect();
+        }
 
         // Persist last collection
         update_option( 'ontario_obituaries_last_collection', array(
