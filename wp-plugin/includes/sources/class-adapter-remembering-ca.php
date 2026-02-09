@@ -35,12 +35,12 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $urls      = array( $source['base_url'] );
         $max_pages = isset( $source['max_pages_per_run'] ) ? intval( $source['max_pages_per_run'] ) : 5;
 
-        // Remembering.ca uses search/browse pages with pagination
-        // Typical URL patterns:
-        //   /obituaries/obituaries/search
-        //   /obituaries/browse?page=2
+        // v3.9.0 FIX: The Remembering.ca / Postmedia platform uses ?p= for pagination.
+        // The previous value ?page= was silently ignored, returning page-1 data every time.
+        // Verified on obituaries.yorkregion.com and www.remembering.ca — ?p= is correct.
+        // This adapter is only used for sources with adapter_type 'remembering_ca'.
         for ( $p = 2; $p <= $max_pages; $p++ ) {
-            $urls[] = add_query_arg( 'page', $p, $source['base_url'] );
+            $urls[] = add_query_arg( 'p', $p, $source['base_url'] );
         }
 
         return $urls;
@@ -190,14 +190,9 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['published_date'] = $pm[1];
         }
 
-        // Image
-        $img = $xpath->query( './/img', $node )->item( 0 );
-        if ( $img ) {
-            $src = $this->node_attr( $img, 'data-src' ) ?: $this->node_attr( $img, 'src' );
-            if ( $src && ! preg_match( '/(placeholder|default|generic|no-?photo|avatar|logo|spacer)/i', $src ) ) {
-                $card['image_url'] = $this->resolve_url( $src, $source['base_url'] );
-            }
-        }
+        // v3.9.0: Intentionally do NOT extract image_url for Remembering.ca / Postmedia listings.
+        // These are paid obituary images owned by families/newspapers; hotlinking creates
+        // rights and bandwidth risks. The normalize() method already sets image_url to ''.
 
         // Location
         $loc_node = $xpath->query( './/*[contains(@class,"location") or contains(@class,"city")]', $node )->item( 0 );

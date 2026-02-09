@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.8.0
+ * Version: 3.9.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.8.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.9.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1058,7 +1058,23 @@ function ontario_obituaries_on_plugin_update() {
     // Mark this version as deployed
     update_option( 'ontario_obituaries_deployed_version', ONTARIO_OBITUARIES_VERSION );
 
-    // v3.7.0: Comprehensive one-time data repair.
+    // v3.9.0: Source registry health check — re-seed if the sources table is empty.
+    // This catches cases where the table was truncated, a failed migration cleared it,
+    // or the activation hook's seed ran before the table was created.
+    // Runs once per deploy via the deployed_version guard above.
+    if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
+        $source_stats = Ontario_Obituaries_Source_Registry::get_stats();
+        if ( isset( $source_stats['total'] ) && 0 === intval( $source_stats['total'] ) ) {
+            Ontario_Obituaries_Source_Registry::seed_defaults();
+            $new_stats = Ontario_Obituaries_Source_Registry::get_stats();
+            ontario_obituaries_log(
+                sprintf( 'v3.9.0: Source registry was empty — re-seeded %d sources.', intval( $new_stats['total'] ) ),
+                'info'
+            );
+        }
+    }
+
+    // v3.7.0–3.9.0: Comprehensive one-time data repair.
     //
     // Previous versions had three data corruption issues:
     //  1) normalize_date("1926") → strtotime → today's date stored as date_of_death
@@ -1070,7 +1086,7 @@ function ontario_obituaries_on_plugin_update() {
     //    (date_of_death = 2026-02-09 — the day the broken scrape ran).
     //  - Backfill city_normalized from location for any rows missing it.
     //  - Test data is handled separately by ontario_obituaries_cleanup_duplicates().
-    if ( version_compare( $stored_version, '3.8.0', '<' ) ) {
+    if ( version_compare( $stored_version, '3.9.0', '<' ) ) {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
         $corrupt_date = '2026-02-09'; // The specific date from the broken scrape
@@ -1081,7 +1097,7 @@ function ontario_obituaries_on_plugin_update() {
             $corrupt_date
         ) );
         if ( $corrupt_removed > 0 ) {
-            ontario_obituaries_log( sprintf( 'v3.7.0 data repair: removed %d yorkregion records with corrupted date_of_death=%s', $corrupt_removed, $corrupt_date ), 'info' );
+            ontario_obituaries_log( sprintf( 'v3.9.0 data repair: removed %d yorkregion records with corrupted date_of_death=%s', $corrupt_removed, $corrupt_date ), 'info' );
         }
 
         // Also remove records where BOTH dates equal the corrupt date (generic strtotime corruption).
@@ -1090,7 +1106,7 @@ function ontario_obituaries_on_plugin_update() {
             $corrupt_date, $corrupt_date
         ) );
         if ( $both_corrupt > 0 ) {
-            ontario_obituaries_log( sprintf( 'v3.7.0 data repair: removed %d records with DoD=DoB=%s', $both_corrupt, $corrupt_date ), 'info' );
+            ontario_obituaries_log( sprintf( 'v3.9.0 data repair: removed %d records with DoD=DoB=%s', $both_corrupt, $corrupt_date ), 'info' );
         }
 
         // Backfill city_normalized from location where it's empty but location is not.
@@ -1098,18 +1114,21 @@ function ontario_obituaries_on_plugin_update() {
             "UPDATE `{$table}` SET city_normalized = TRIM(location) WHERE city_normalized = '' AND location != '' AND location IS NOT NULL"
         );
         if ( $backfilled > 0 ) {
-            ontario_obituaries_log( sprintf( 'v3.7.0 data repair: backfilled city_normalized for %d records from location', $backfilled ), 'info' );
+            ontario_obituaries_log( sprintf( 'v3.9.0 data repair: backfilled city_normalized for %d records from location', $backfilled ), 'info' );
         }
 
-        // Schedule a re-scrape so the cleaned records get repopulated with correct dates.
-        if ( ( $corrupt_removed + $both_corrupt ) > 0 && ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+        // v3.9.0: Always schedule a re-scrape on upgrade to ensure data is current
+        // after pagination fix + source registry re-seed.
+        // Guard: check wp_next_scheduled() to prevent duplicate scheduling if
+        // multiple requests hit the upgrade path concurrently.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
             wp_schedule_single_event( time() + 60, 'ontario_obituaries_initial_collection' );
-            ontario_obituaries_log( 'v3.8.0: Scheduled re-scrape to repopulate cleaned records.', 'info' );
+            ontario_obituaries_log( 'v3.9.0: Scheduled re-scrape after data repair + source re-seed.', 'info' );
         }
 
-        // v3.8.0: Log the current record count so we can verify data state post-deploy.
+        // Log the current record count so we can verify data state post-deploy.
         $current_count = $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL" );
-        ontario_obituaries_log( sprintf( 'v3.8.0 post-repair: %d active obituary records in database.', intval( $current_count ) ), 'info' );
+        ontario_obituaries_log( sprintf( 'v3.9.0 post-repair: %d active obituary records in database.', intval( $current_count ) ), 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
