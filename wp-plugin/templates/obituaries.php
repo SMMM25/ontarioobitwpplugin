@@ -140,25 +140,26 @@ $site_url = get_site_url();
                         </div>
 
                         <div class="ontario-obituaries-actions">
-                            <button class="ontario-obituaries-read-more" data-id="<?php echo esc_attr( $obituary->id ); ?>">
+                            <?php
+                            // Build the SEO-friendly internal obituary URL
+                            $obit_city_slug = sanitize_title(
+                                ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : $obituary->location
+                            );
+                            $obit_name_slug = sanitize_title( $obituary->name ) . '-' . $obituary->id;
+                            $obit_internal_url = home_url( '/obituaries/ontario/' . $obit_city_slug . '/' . $obit_name_slug . '/' );
+                            ?>
+                            <a href="<?php echo esc_url( $obit_internal_url ); ?>"
+                               class="ontario-obituaries-read-more-link">
                                 <?php esc_html_e( 'Read More', 'ontario-obituaries' ); ?>
+                            </a>
+
+                            <button class="ontario-obituaries-read-more" data-id="<?php echo esc_attr( $obituary->id ); ?>">
+                                <?php esc_html_e( 'Quick View', 'ontario-obituaries' ); ?>
                             </button>
 
-                            <?php if ( ! empty( $obituary->source_url ) ) : ?>
-                                <a href="<?php echo esc_url( $obituary->source_url ); ?>"
-                                   target="_blank"
-                                   rel="noopener noreferrer"
-                                   class="ontario-obituaries-source-link">
-                                    <?php esc_html_e( 'View Original', 'ontario-obituaries' ); ?>
-                                </a>
-                            <?php endif; ?>
-
                             <?php
-                            // P1-3 QC FIX: Share the source_url when available (renders meaningful content on Facebook).
-                            // Falls back to site URL + query arg if no source_url exists.
-                            $share_url = ! empty( $obituary->source_url )
-                                ? $obituary->source_url
-                                : add_query_arg( array( 'obituary_id' => $obituary->id ), $site_url );
+                            // Share URL now points to our own page (keeps traffic on-site)
+                            $share_url = $obit_internal_url;
                             ?>
                             <button class="ontario-obituaries-share-fb"
                                     data-id="<?php echo esc_attr( $obituary->id ); ?>"

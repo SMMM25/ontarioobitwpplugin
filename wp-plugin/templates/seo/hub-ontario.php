@@ -94,11 +94,9 @@ get_header();
                     <?php if ( ! empty( $obit->funeral_home ) ) : ?>
                         <p style="color: #888; font-size: 0.9em;"><?php echo esc_html( $obit->funeral_home ); ?></p>
                     <?php endif; ?>
-                    <?php if ( ! empty( $obit->source_url ) ) : ?>
-                        <a href="<?php echo esc_url( $obit->source_url ); ?>" target="_blank" rel="noopener noreferrer" style="font-size: 0.85em; color: #3498db;">
-                            <?php esc_html_e( 'View Original', 'ontario-obituaries' ); ?> &rarr;
-                        </a>
-                    <?php endif; ?>
+                    <a href="<?php echo esc_url( home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' ) ); ?>" style="font-size: 0.85em; color: #3498db;">
+                        <?php esc_html_e( 'Read More', 'ontario-obituaries' ); ?> &rarr;
+                    </a>
                 </div>
             <?php endforeach; ?>
         </div>
