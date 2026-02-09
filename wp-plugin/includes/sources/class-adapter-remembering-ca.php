@@ -185,8 +185,33 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['date_text'] = $dm[1] . ' - ' . $dm[2];
         }
 
-        // If still no full date_text, try the Published line for at least a published date
-        if ( empty( $card['date_text'] ) && preg_match( '/Published\s+online\s+.*?(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i', $full_text, $pm ) ) {
+        // v3.10.2: Extract a single death date from common obituary phrases.
+        // Catches "passed away on December 14, 2025", "entered into rest
+        // January 3, 2026", "died peacefully on March 5, 2025", etc.
+        // Each pattern requires an explicit death-keyword trigger to avoid
+        // false positives from unrelated date mentions.
+        // Stored in card['death_date_from_text'] so normalize() can use it
+        // instead of fabricating a Jan 1 date from the year alone.
+        if ( empty( $card['date_text'] ) ) {
+            $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+            $death_phrases = array(
+                // "passed away/peacefully/suddenly [words] Month Day, Year"
+                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "entered into rest [on] Month Day, Year"
+                '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "died [peacefully|suddenly] [on] Month Day, Year"
+                '/died(?:\s+\w+){0,2}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            );
+            foreach ( $death_phrases as $pattern ) {
+                if ( preg_match( $pattern, $full_text, $death_m ) ) {
+                    $card['death_date_from_text'] = trim( $death_m[1] );
+                    break;
+                }
+            }
+        }
+
+        // If still no full date_text or extracted death date, try the Published line
+        if ( empty( $card['date_text'] ) && empty( $card['death_date_from_text'] ) && preg_match( '/Published\s+online\s+.*?(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i', $full_text, $pm ) ) {
             $card['published_date'] = $pm[1];
         }
 
@@ -232,21 +257,30 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $location      = isset( $card['location'] ) ? $card['location'] : '';
         $description   = isset( $card['description'] ) ? wp_strip_all_tags( $card['description'] ) : '';
 
-        // v3.6.0 FIX: Use year_death from the dates div when full date unavailable.
-        // This stores a best-effort date (January 1 of the death year) rather than
-        // today's date, which was the previous broken behaviour.
-        if ( empty( $date_of_death ) && ! empty( $card['year_death'] ) ) {
-            $date_of_death = $card['year_death'] . '-01-01';
-        }
-        if ( empty( $date_of_birth ) && ! empty( $card['year_birth'] ) ) {
-            $date_of_birth = $card['year_birth'] . '-01-01';
+        // v3.10.2 FIX: Use extracted death date from obituary text when available.
+        // This replaces the v3.6.0 "Jan 1 fabrication" that stored YYYY-01-01
+        // when only a year was known (e.g. Betty Cudmore: "1930 - 2025" produced
+        // date_of_death = 2025-01-01 instead of the real December 14, 2025).
+        if ( empty( $date_of_death ) && ! empty( $card['death_date_from_text'] ) ) {
+            $date_of_death = $this->normalize_date( $card['death_date_from_text'] );
         }
 
-        // v3.6.0: Fall back to published_date as an approximate death date
+        // Fall back to published_date as an approximate death date
         // (obituaries are typically published within days of death).
         if ( empty( $date_of_death ) && ! empty( $card['published_date'] ) ) {
             $date_of_death = $this->normalize_date( $card['published_date'] );
         }
+
+        // v3.10.2: REMOVED Jan 1 fabrication for year-only dates.
+        // Previously (v3.6.0): $date_of_death = $card['year_death'] . '-01-01';
+        // If no trustworthy death date exists after all extraction attempts,
+        // date_of_death remains empty. The collector's validation gate
+        // (class-source-collector.php line 224) will skip ingest:
+        //   if ( empty( $record['date_of_death'] ) ) { continue; }
+        // This is correct: we do not ingest records we cannot date reliably.
+        //
+        // v3.10.2: Do NOT fabricate birth dates either. date_of_birth is
+        // DATE DEFAULT NULL, so empty is safe — no fabrication needed.
 
         // Truncate to facts-only length
         if ( strlen( $description ) > 200 ) {
@@ -261,6 +295,14 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         }
         if ( 0 === $age && ! empty( $date_of_birth ) && ! empty( $date_of_death ) ) {
             $age = $this->calculate_age( $date_of_birth, $date_of_death );
+        }
+        // v3.10.2: Compute age from year_birth/year_death when full dates
+        // are not available (no longer relies on fabricated -01-01 dates).
+        if ( 0 === $age && ! empty( $card['year_birth'] ) && ! empty( $card['year_death'] ) ) {
+            $year_age = intval( $card['year_death'] ) - intval( $card['year_birth'] );
+            if ( $year_age > 0 && $year_age <= 130 ) {
+                $age = $year_age;
+            }
         }
 
         // v3.7.0: Fall back to the source registry's city when the card has no location.
