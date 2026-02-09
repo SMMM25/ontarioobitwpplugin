@@ -255,6 +255,12 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $age = $this->calculate_age( $date_of_birth, $date_of_death );
         }
 
+        // v3.7.0: Fall back to the source registry's city when the card has no location.
+        // Many yorkregion.com cards don't include a location in the HTML.
+        if ( empty( $location ) && ! empty( $source['city'] ) ) {
+            $location = $source['city'];
+        }
+
         $city_normalized = $this->normalize_city( $location );
 
         $record = array(

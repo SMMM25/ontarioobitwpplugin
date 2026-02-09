@@ -271,7 +271,7 @@ class Ontario_Obituaries_Source_Collector {
         // Check all records with the same death date for a name match
         if ( $existing ) {
             $candidates = $wpdb->get_results( $wpdb->prepare(
-                "SELECT id, name, description, source_url, funeral_home FROM `{$table_name}`
+                "SELECT id, name, description, source_url, funeral_home, city_normalized, location, image_url FROM `{$table_name}`
                  WHERE date_of_death = %s
                    AND suppressed_at IS NULL",
                 $record['date_of_death']
@@ -290,15 +290,35 @@ class Ontario_Obituaries_Source_Collector {
                     $new_desc_len = isset( $record['description'] ) ? strlen( $record['description'] ) : 0;
                     $old_desc_len = strlen( $candidate->description );
 
+                    // v3.7.0: Always enrich empty fields from the new source,
+                    // even when the existing record has a longer description.
+                    $update_data = array();
+
                     if ( $new_desc_len > $old_desc_len ) {
-                        // New source has a better description — update the existing record
-                        $update_data = array( 'description' => $record['description'] );
+                        $update_data['description'] = $record['description'];
+                    }
 
-                        // Also fill in funeral_home if the existing one is empty
-                        if ( empty( $candidate->funeral_home ) && ! empty( $record['funeral_home'] ) ) {
-                            $update_data['funeral_home'] = $record['funeral_home'];
-                        }
+                    // Fill empty funeral_home from duplicate
+                    if ( empty( $candidate->funeral_home ) && ! empty( $record['funeral_home'] ) ) {
+                        $update_data['funeral_home'] = $record['funeral_home'];
+                    }
 
+                    // v3.7.0: Fill empty city_normalized from duplicate
+                    if ( empty( $candidate->city_normalized ) && ! empty( $record['city_normalized'] ) ) {
+                        $update_data['city_normalized'] = $record['city_normalized'];
+                    }
+
+                    // v3.7.0: Fill empty location from duplicate
+                    if ( empty( $candidate->location ) && ! empty( $record['location'] ) ) {
+                        $update_data['location'] = $record['location'];
+                    }
+
+                    // v3.7.0: Fill empty image_url from duplicate
+                    if ( empty( $candidate->image_url ) && ! empty( $record['image_url'] ) ) {
+                        $update_data['image_url'] = $record['image_url'];
+                    }
+
+                    if ( ! empty( $update_data ) ) {
                         $wpdb->update( $table_name, $update_data, array( 'id' => $candidate->id ) );
                     }
 
