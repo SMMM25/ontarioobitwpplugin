@@ -142,9 +142,10 @@ $site_url = get_site_url();
                         <div class="ontario-obituaries-actions">
                             <?php
                             // Build the SEO-friendly internal obituary URL
-                            $obit_city_slug = sanitize_title(
-                                ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : $obituary->location
-                            );
+                            $obit_city_raw = ! empty( $obituary->city_normalized )
+                                ? $obituary->city_normalized
+                                : ( ! empty( $obituary->location ) ? $obituary->location : 'ontario' );
+                            $obit_city_slug = sanitize_title( $obit_city_raw );
                             $obit_name_slug = sanitize_title( $obituary->name ) . '-' . $obituary->id;
                             $obit_internal_url = home_url( '/obituaries/ontario/' . $obit_city_slug . '/' . $obit_name_slug . '/' );
                             ?>
