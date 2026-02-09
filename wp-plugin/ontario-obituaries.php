@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.10.1
+ * Version: 3.11.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.10.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.11.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -102,6 +102,7 @@ function ontario_obituaries_includes() {
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-admin.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-debug.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-reset-rescan.php';
 
     // v3.0 Source Adapter Architecture — registry always needed for suppression checks
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/interface-source-adapter.php';
@@ -144,6 +145,14 @@ function ontario_obituaries_includes() {
 
     $debug = new Ontario_Obituaries_Debug();
     $debug->init();
+
+    // v3.11.0: Reset & Rescan tool — AJAX hooks only (render is called via main class)
+    $reset_rescan = new Ontario_Obituaries_Reset_Rescan();
+    $reset_rescan->init();
+
+    // Store the shared instance so Ontario_Obituaries can call render_page()
+    // without creating a second instance (prevents duplicate AJAX hook registration).
+    Ontario_Obituaries::set_reset_rescan_instance( $reset_rescan );
 
     // Initialize SEO
     $seo = new Ontario_Obituaries_SEO();
