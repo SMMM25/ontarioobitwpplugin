@@ -32,6 +32,12 @@ class Ontario_Obituaries_SEO {
         // Template redirect for our custom endpoints
         add_action( 'template_redirect', array( $this, 'handle_seo_pages' ) );
 
+        // v3.10.2 PR #24b: Intercept template loading for SEO pages.
+        // Uses a custom wrapper template (Pattern 2: full HTML shell) instead
+        // of the theme's header.php / footer.php, which render incorrect
+        // Litho demo navigation instead of the Monaco Monuments header.
+        add_filter( 'template_include', array( $this, 'maybe_use_seo_wrapper_template' ), 99 );
+
         // Prevent WordPress from resolving the 'obituaries' page for our SEO URLs.
         // WP tries to resolve /obituaries/ontario/ as child of the 'obituaries' page,
         // which overrides our rewrite rules. This filter intercepts that resolution.
@@ -53,6 +59,10 @@ class Ontario_Obituaries_SEO {
         // OpenGraph meta tags for social sharing
         add_action( 'wp_head', array( $this, 'output_opengraph_tags' ) );
 
+        // v3.10.2 PR #24b: Noindex output for individual pages.
+        // Controlled deterministically via query var set in handle_seo_pages().
+        add_action( 'wp_head', array( $this, 'output_noindex_tag' ) );
+
         // Sitemap integration — custom provider for obituary SEO URLs
         add_filter( 'wp_sitemaps_posts_query_args', array( $this, 'exclude_suppressed_from_sitemap' ), 10, 2 );
         add_filter( 'wp_sitemaps_add_provider', array( $this, 'register_sitemap_provider' ), 10, 2 );
@@ -61,17 +71,17 @@ class Ontario_Obituaries_SEO {
         add_action( 'template_redirect', array( $this, 'handle_verification' ) );
 
         // v3.10.0: Fix Litho theme layout on SEO pages.
-        // Without this, get_header() on our virtual pages causes Litho to render
-        // the blog layout (body class "blog", page-title bar showing "Blog" +
-        // "Short tagline goes here") instead of the standard Monaco Monuments
-        // page layout. We fix this by:
-        //   1) Filtering body_class to swap 'blog' → 'page' so Litho uses
-        //      its page template instead of the blog archive template.
-        //   2) Injecting a small CSS block to hide the Litho page-title
-        //      section entirely on our SEO pages (our templates provide
-        //      their own <h1> and breadcrumbs).
+        // Swaps 'blog' → 'page' body class so Litho uses page template.
+        // Also hides the Litho page-title section (our templates have their own <h1>).
         add_filter( 'body_class', array( $this, 'fix_litho_body_class' ) );
         add_action( 'wp_head', array( $this, 'inject_litho_layout_fix_css' ), 1 );
+
+        // v3.10.2 PR #24b: Prevent WordPress canonical redirect on SEO virtual pages.
+        // WP's redirect_canonical() can rewrite /obituaries/ontario/... back to the
+        // /obituaries/ page (or add trailing slashes / remove query strings), which
+        // breaks our virtual pages. Disabling it on SEO routes is standard practice
+        // for virtual page plugins.
+        add_filter( 'redirect_canonical', array( $this, 'disable_canonical_redirect_on_seo_pages' ), 10, 2 );
     }
 
     /**
@@ -181,6 +191,12 @@ class Ontario_Obituaries_SEO {
             $vars[] = 'ontario_obituaries_city';
             $vars[] = 'ontario_obituaries_id';
             $vars[] = 'ontario_obituaries_sitemap';
+            // v3.10.2 PR #24b: Query vars for wrapper template rendering.
+            $vars[] = 'ontario_obituaries_seo_mode';
+            $vars[] = 'ontario_obituaries_seo_data';
+            $vars[] = 'ontario_obituaries_header_template_ids';
+            $vars[] = 'ontario_obituaries_footer_template_id';
+            $vars[] = 'ontario_obituaries_noindex';
             return $vars;
         } );
     }
@@ -189,7 +205,7 @@ class Ontario_Obituaries_SEO {
      * Handle SEO page rendering.
      */
     public function handle_seo_pages() {
-        // Sitemap XML endpoint
+        // Sitemap XML endpoint — outputs XML and exits (non-HTML).
         if ( get_query_var( 'ontario_obituaries_sitemap' ) ) {
             $this->render_obituary_sitemap();
             return; // render_obituary_sitemap calls exit
@@ -236,6 +252,15 @@ class Ontario_Obituaries_SEO {
             }
         }
 
+        // v3.10.2 PR #24b: Pass Elementor template IDs via query vars so the
+        // wrapper template can render correct header/footer without instantiating
+        // this class. IDs are overridable via constants or filters.
+        set_query_var( 'ontario_obituaries_header_template_ids', $this->get_header_template_ids() );
+        set_query_var( 'ontario_obituaries_footer_template_id', $this->get_footer_template_id() );
+
+        // v3.10.2 PR #24b: Dispatch to render methods which now set query vars
+        // instead of including templates directly. WordPress's template_include
+        // filter (maybe_use_seo_wrapper_template) takes over rendering.
         if ( ! empty( $id ) ) {
             $this->render_individual_page( intval( $id ), $city );
         } elseif ( ! empty( $city ) ) {
@@ -243,7 +268,8 @@ class Ontario_Obituaries_SEO {
         } else {
             $this->render_ontario_hub();
         }
-        exit;
+        // v3.10.2 PR #24b: No exit — let WordPress continue to template_include.
+        // The wrapper template (templates/seo/wrapper.php) handles HTML output.
     }
 
     /**
@@ -277,34 +303,12 @@ class Ontario_Obituaries_SEO {
             )
         );
 
-        // Load the template
-        $template_path = ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/seo/hub-ontario.php';
-        if ( file_exists( $template_path ) ) {
-            include $template_path;
-        } else {
-            // Minimal fallback
-            get_header();
-            echo '<div class="ontario-obituaries-hub">';
-            echo '<h1>Ontario Obituaries</h1>';
-            echo '<p>Recent obituary notices from across Ontario, Canada.</p>';
-
-            if ( ! empty( $city_stats ) ) {
-                echo '<h2>Browse by City</h2><ul class="ontario-city-grid">';
-                foreach ( $city_stats as $stat ) {
-                    $slug = sanitize_title( $stat->city );
-                    printf(
-                        '<li><a href="%s">%s</a> <span>(%d)</span></li>',
-                        esc_url( home_url( '/obituaries/ontario/' . $slug . '/' ) ),
-                        esc_html( $stat->city ),
-                        intval( $stat->total )
-                    );
-                }
-                echo '</ul>';
-            }
-
-            echo '</div>';
-            get_footer();
-        }
+        // v3.10.2 PR #24b: Store data in query vars for wrapper template.
+        set_query_var( 'ontario_obituaries_seo_mode', 'hub-ontario' );
+        set_query_var( 'ontario_obituaries_seo_data', array(
+            'city_stats' => $city_stats,
+            'recent'     => $recent,
+        ) );
     }
 
     /**
@@ -343,33 +347,17 @@ class Ontario_Obituaries_SEO {
 
         $total_pages = ceil( intval( $total ) / $per_page );
 
-        // Load the template
-        $template_path = ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/seo/hub-city.php';
-        if ( file_exists( $template_path ) ) {
-            include $template_path;
-        } else {
-            get_header();
-            echo '<div class="ontario-obituaries-city-hub">';
-            printf( '<h1>%s Obituaries — Ontario</h1>', esc_html( $city_name ) );
-            printf( '<p>Recent obituary notices from %s, Ontario.</p>', esc_html( $city_name ) );
-
-            if ( ! empty( $obituaries ) ) {
-                echo '<div class="ontario-obituaries-grid">';
-                foreach ( $obituaries as $obit ) {
-                    $slug = sanitize_title( $obit->name ) . '-' . $obit->id;
-                    printf(
-                        '<div class="obit-card"><h3><a href="%s">%s</a></h3><p>%s</p></div>',
-                        esc_url( home_url( '/obituaries/ontario/' . $city_slug . '/' . $slug . '/' ) ),
-                        esc_html( $obit->name ),
-                        esc_html( $obit->date_of_death )
-                    );
-                }
-                echo '</div>';
-            }
-
-            echo '</div>';
-            get_footer();
-        }
+        // v3.10.2 PR #24b: Store data in query vars for wrapper template.
+        set_query_var( 'ontario_obituaries_seo_mode', 'hub-city' );
+        set_query_var( 'ontario_obituaries_seo_data', array(
+            'city_slug'   => $city_slug,
+            'city_name'   => $city_name,
+            'obituaries'  => $obituaries,
+            'total'       => intval( $total ),
+            'total_pages' => $total_pages,
+            'page'        => $page,
+            'per_page'    => $per_page,
+        ) );
     }
 
     /**
@@ -387,30 +375,27 @@ class Ontario_Obituaries_SEO {
         if ( ! $obituary ) {
             status_header( 404 );
             nocache_headers();
-            include get_404_template();
-            exit;
+            // v3.10.2 PR #24b: Signal 404 to wrapper template.
+            set_query_var( 'ontario_obituaries_seo_mode', '404' );
+            return;
         }
 
         // noindex by default (can be overridden via enrichment flag)
         $should_index = ! empty( $obituary->description ) && strlen( $obituary->description ) > 100;
 
-        $template_path = ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/seo/individual.php';
-        if ( file_exists( $template_path ) ) {
-            include $template_path;
-        } else {
-            get_header();
-            if ( ! $should_index ) {
-                echo '<meta name="robots" content="noindex, follow">';
-            }
-            echo '<div class="ontario-obituary-individual">';
-            printf( '<h1>%s</h1>', esc_html( $obituary->name ) );
-            printf( '<p>%s</p>', esc_html( $obituary->date_of_death ) );
-            if ( ! empty( $obituary->description ) ) {
-                echo '<div class="obituary-description">' . wpautop( esc_html( $obituary->description ) ) . '</div>';
-            }
-            echo '</div>';
-            get_footer();
+        // v3.10.2 PR #24b: Noindex controlled deterministically via query var.
+        // The output_noindex_tag() method reads this during wp_head().
+        if ( ! $should_index ) {
+            set_query_var( 'ontario_obituaries_noindex', true );
         }
+
+        // v3.10.2 PR #24b: Store data in query vars for wrapper template.
+        set_query_var( 'ontario_obituaries_seo_mode', 'individual' );
+        set_query_var( 'ontario_obituaries_seo_data', array(
+            'obituary'     => $obituary,
+            'city_slug'    => $city_slug,
+            'should_index' => $should_index,
+        ) );
     }
 
     /**
@@ -957,6 +942,105 @@ class Ontario_Obituaries_SEO {
         echo "    display: none !important;\n";
         echo "}\n";
         echo "</style>\n";
+    }
+
+    /**
+     * v3.10.2 PR #24b: Intercept WordPress template loading for SEO pages.
+     *
+     * Returns the path to our custom wrapper template (Pattern 2: full HTML shell)
+     * which renders the correct Monaco Monuments Elementor header/footer by ID,
+     * instead of relying on the theme's get_header() / get_footer() which
+     * produce the wrong Litho demo navigation on virtual pages.
+     *
+     * Safety gate: requires BOTH is_obituary_seo_request() AND
+     * ontario_obituaries_seo_mode to be set (prevents activation on
+     * sitemap/verification paths).
+     *
+     * @param string $template The path of the template to include.
+     * @return string Modified or original template path.
+     */
+    public function maybe_use_seo_wrapper_template( $template ) {
+        if ( ! $this->is_obituary_seo_request() ) {
+            return $template;
+        }
+
+        // Only intercept if handle_seo_pages() set the mode (not sitemap/verification).
+        $mode = get_query_var( 'ontario_obituaries_seo_mode', '' );
+        if ( empty( $mode ) ) {
+            return $template;
+        }
+
+        $wrapper = ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/seo/wrapper.php';
+        return file_exists( $wrapper ) ? $wrapper : $template;
+    }
+
+    /**
+     * v3.10.2 PR #24b: Output noindex meta tag for individual obituary pages.
+     *
+     * Controlled deterministically via query var set in render_individual_page().
+     * Replaces the anonymous closure that was previously in individual.php.
+     */
+    public function output_noindex_tag() {
+        if ( get_query_var( 'ontario_obituaries_noindex' ) ) {
+            echo '<meta name="robots" content="noindex, follow">' . "\n";
+        }
+    }
+
+    /**
+     * v3.10.2 PR #24b: Get Elementor header template IDs (Monaco Monuments).
+     *
+     * Default IDs correspond to the Monaco Monuments production site:
+     *   - 13039: Mini-header (top bar with phone/hours)
+     *   - 15223: Main header (navigation menu + logo)
+     *
+     * Override via:
+     *   - Constant: define( 'ONTARIO_OBITUARIES_HEADER_IDS', array( 13039, 15223 ) );
+     *   - Filter:   add_filter( 'ontario_obituaries_header_template_ids', $callback );
+     *
+     * @return array Elementor post IDs for header templates.
+     */
+    private function get_header_template_ids() {
+        $ids = defined( 'ONTARIO_OBITUARIES_HEADER_IDS' )
+            ? ONTARIO_OBITUARIES_HEADER_IDS
+            : array( 13039, 15223 );
+        return apply_filters( 'ontario_obituaries_header_template_ids', $ids );
+    }
+
+    /**
+     * v3.10.2 PR #24b: Get Elementor footer template ID (Monaco Monuments).
+     *
+     * Default ID corresponds to the Monaco Monuments production footer (35674).
+     *
+     * Override via:
+     *   - Constant: define( 'ONTARIO_OBITUARIES_FOOTER_ID', 35674 );
+     *   - Filter:   add_filter( 'ontario_obituaries_footer_template_id', $callback );
+     *
+     * @return int Elementor post ID for footer template.
+     */
+    private function get_footer_template_id() {
+        $id = defined( 'ONTARIO_OBITUARIES_FOOTER_ID' )
+            ? ONTARIO_OBITUARIES_FOOTER_ID
+            : 35674;
+        return apply_filters( 'ontario_obituaries_footer_template_id', $id );
+    }
+
+    /**
+     * v3.10.2 PR #24b: Prevent canonical redirect on SEO virtual pages.
+     *
+     * WordPress's redirect_canonical() can rewrite /obituaries/ontario/...
+     * back to the /obituaries/ page or apply trailing-slash / query-string
+     * normalization that breaks our virtual page routing. This is a standard
+     * requirement for any plugin that serves virtual pages via rewrite rules.
+     *
+     * @param string $redirect_url  The redirect target URL.
+     * @param string $requested_url The originally requested URL.
+     * @return string|false False to cancel redirect, or the redirect URL.
+     */
+    public function disable_canonical_redirect_on_seo_pages( $redirect_url, $requested_url ) {
+        if ( $this->is_obituary_seo_request() ) {
+            return false;
+        }
+        return $redirect_url;
     }
 
     /**

@@ -1,8 +1,12 @@
 <?php
 /**
- * SEO Template: Ontario Hub Page
+ * SEO Template: Ontario Hub Page (content-only partial)
  *
- * Variables provided by Ontario_Obituaries_SEO::render_ontario_hub():
+ * v3.10.2 PR #24b: Converted to content-only partial. This template no longer
+ * calls get_header() / get_footer(). It is included by wrapper.php which
+ * provides the full HTML shell and correct Elementor header/footer.
+ *
+ * Variables provided via query var 'ontario_obituaries_seo_data' (extracted by wrapper):
  *   $city_stats  — array of objects { city, total, latest }
  *   $recent      — array of obituary objects
  *
@@ -13,8 +17,6 @@
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
-
-get_header();
 ?>
 
 <div class="ontario-obituaries-seo-hub" style="max-width: 1200px; margin: 0 auto; padding: 20px;">
@@ -126,4 +128,4 @@ get_header();
 </div>
 
 <?php
-get_footer();
+// v3.10.2 PR #24b: get_footer() removed — wrapper.php handles footer rendering.
