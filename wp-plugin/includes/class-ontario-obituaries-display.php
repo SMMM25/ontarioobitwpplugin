@@ -217,8 +217,9 @@ class Ontario_Obituaries_Display {
             return null;
         }
 
+        // v3.3.0: Exclude suppressed records from single lookups too
         return $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$this->table_name()}` WHERE id = %d",
+            "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
     }

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.2.0
+ * Version: 3.3.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.2.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.3.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -425,20 +425,47 @@ function ontario_obituaries_create_page() {
 }
 
 /**
+ * Normalize an obituary name for fuzzy dedup comparison.
+ *
+ * Strips case, extra whitespace, common suffixes like "Obituary",
+ * and punctuation so "Ronald McLEOD" matches "Ronald McLeod".
+ *
+ * @param string $name Raw name.
+ * @return string Normalized name for comparison.
+ */
+function ontario_obituaries_normalize_name( $name ) {
+    // Lowercase
+    $name = function_exists( 'mb_strtolower' ) ? mb_strtolower( $name, 'UTF-8' ) : strtolower( $name );
+    // Remove common suffix
+    $name = preg_replace( '/\s+obituary$/i', '', $name );
+    // Remove punctuation except hyphens and spaces
+    $name = preg_replace( '/[^a-z0-9\s\-]/u', '', $name );
+    // Collapse whitespace
+    $name = preg_replace( '/\s+/', ' ', trim( $name ) );
+    return $name;
+}
+
+/**
  * Duplicate cleanup: remove duplicate obituaries from the database.
  *
- * Duplicates = same name + same date_of_death. Keeps the row with the
- * longest description (best content).
+ * Two-pass approach:
+ *   Pass 1 — Exact match: same name + same date_of_death (fast SQL GROUP BY).
+ *   Pass 2 — Fuzzy match: normalized name + same date_of_death (catches
+ *            case/punctuation differences like "Ronald McLEOD" vs "Ronald McLeod").
  *
- * Runs on every admin page load (lightweight — the COUNT query exits fast
- * when there are no duplicates). On frontend, runs once per version via
- * option flag so it never slows down public pages.
+ * For each group, keeps the record with the longest description and enriches
+ * it with funeral_home, city_normalized, location, and image_url from dupes.
+ *
+ * Runs:
+ *   - On every admin page load (lightweight — the COUNT query exits fast).
+ *   - On frontend: once per plugin version via option flag.
+ *   - After every scheduled scrape (hooked to the collection event).
  */
 function ontario_obituaries_cleanup_duplicates() {
     // On frontend: run once per version to avoid slowing every page load.
     // On admin: always check (admin pages are not public-facing).
     $version_key = 'ontario_obituaries_dedup_' . ONTARIO_OBITUARIES_VERSION;
-    if ( ! is_admin() && get_option( $version_key ) ) {
+    if ( ! is_admin() && ! wp_doing_cron() && get_option( $version_key ) ) {
         return;
     }
 
@@ -450,7 +477,9 @@ function ontario_obituaries_cleanup_duplicates() {
         return;
     }
 
-    // Find duplicates: same name + same death date, keep the one with the longest description
+    $removed = 0;
+
+    // ── Pass 1: Exact duplicates (same name + date_of_death) ──────────
     $duplicates = $wpdb->get_results(
         "SELECT name, date_of_death, COUNT(*) as cnt
          FROM `{$table}`
@@ -459,69 +488,33 @@ function ontario_obituaries_cleanup_duplicates() {
          HAVING cnt > 1"
     );
 
-    if ( empty( $duplicates ) ) {
-        // No duplicates — mark as done for this version on frontend
-        if ( ! get_option( $version_key ) ) {
-            update_option( $version_key, true );
+    if ( ! empty( $duplicates ) ) {
+        foreach ( $duplicates as $dup ) {
+            $removed += ontario_obituaries_merge_duplicate_group( $table, $dup->name, $dup->date_of_death );
         }
-        return;
     }
 
-    $removed = 0;
-    foreach ( $duplicates as $dup ) {
-        // Get all rows for this person, ordered by description length DESC
-        $rows = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, funeral_home, location, city_normalized, image_url,
-                    CHAR_LENGTH(COALESCE(description, '')) as desc_len
-             FROM `{$table}`
-             WHERE name = %s AND date_of_death = %s AND suppressed_at IS NULL
-             ORDER BY desc_len DESC, id ASC",
-            $dup->name,
-            $dup->date_of_death
-        ) );
+    // ── Pass 2: Fuzzy duplicates (normalized name + date_of_death) ────
+    // Fetch all active records and group by normalized name + death date.
+    $all_rows = $wpdb->get_results(
+        "SELECT id, name, date_of_death FROM `{$table}` WHERE suppressed_at IS NULL ORDER BY id"
+    );
 
-        if ( count( $rows ) <= 1 ) {
-            continue;
+    if ( ! empty( $all_rows ) ) {
+        $fuzzy_groups = array();
+        foreach ( $all_rows as $row ) {
+            $norm_key = ontario_obituaries_normalize_name( $row->name ) . '|' . $row->date_of_death;
+            $fuzzy_groups[ $norm_key ][] = $row;
         }
 
-        // Keep the first (longest description) — enrich it from duplicates
-        $keep = $rows[0];
-        $enrichments = array();
-
-        for ( $i = 1; $i < count( $rows ); $i++ ) {
-            $dupe = $rows[ $i ];
-
-            // Enrich: fill empty funeral_home from duplicate
-            if ( empty( $keep->funeral_home ) && ! empty( $dupe->funeral_home ) ) {
-                $enrichments['funeral_home'] = $dupe->funeral_home;
-                $keep->funeral_home = $dupe->funeral_home;
+        foreach ( $fuzzy_groups as $group ) {
+            if ( count( $group ) <= 1 ) {
+                continue;
             }
-
-            // Enrich: fill empty city_normalized from duplicate
-            if ( empty( $keep->city_normalized ) && ! empty( $dupe->city_normalized ) ) {
-                $enrichments['city_normalized'] = $dupe->city_normalized;
-                $keep->city_normalized = $dupe->city_normalized;
-            }
-
-            // Enrich: fill empty location from duplicate
-            if ( empty( $keep->location ) && ! empty( $dupe->location ) ) {
-                $enrichments['location'] = $dupe->location;
-                $keep->location = $dupe->location;
-            }
-
-            // Enrich: fill empty image_url from duplicate
-            if ( empty( $keep->image_url ) && ! empty( $dupe->image_url ) ) {
-                $enrichments['image_url'] = $dupe->image_url;
-                $keep->image_url = $dupe->image_url;
-            }
-
-            $wpdb->delete( $table, array( 'id' => $dupe->id ), array( '%d' ) );
-            $removed++;
-        }
-
-        // Apply enrichments to the kept record
-        if ( ! empty( $enrichments ) ) {
-            $wpdb->update( $table, $enrichments, array( 'id' => $keep->id ) );
+            // Use the first record's name/date as the canonical lookup
+            // Re-run merge on all IDs in this fuzzy group
+            $ids = wp_list_pluck( $group, 'id' );
+            $removed += ontario_obituaries_merge_duplicate_ids( $table, $ids );
         }
     }
 
@@ -536,6 +529,124 @@ function ontario_obituaries_cleanup_duplicates() {
     }
 }
 add_action( 'init', 'ontario_obituaries_cleanup_duplicates', 5 );
+
+/**
+ * Merge a group of exact duplicates by name + date_of_death.
+ *
+ * @param string $table         Table name.
+ * @param string $name          Obituary name.
+ * @param string $date_of_death Death date.
+ * @return int Number of rows removed.
+ */
+function ontario_obituaries_merge_duplicate_group( $table, $name, $date_of_death ) {
+    global $wpdb;
+
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, funeral_home, location, city_normalized, image_url, description,
+                CHAR_LENGTH(COALESCE(description, '')) as desc_len
+         FROM `{$table}`
+         WHERE name = %s AND date_of_death = %s AND suppressed_at IS NULL
+         ORDER BY desc_len DESC, id ASC",
+        $name,
+        $date_of_death
+    ) );
+
+    if ( count( $rows ) <= 1 ) {
+        return 0;
+    }
+
+    return ontario_obituaries_merge_rows( $table, $rows );
+}
+
+/**
+ * Merge a group of duplicates by explicit ID list (used for fuzzy dedup).
+ *
+ * @param string $table Table name.
+ * @param array  $ids   Array of obituary IDs.
+ * @return int Number of rows removed.
+ */
+function ontario_obituaries_merge_duplicate_ids( $table, $ids ) {
+    global $wpdb;
+
+    if ( count( $ids ) <= 1 ) {
+        return 0;
+    }
+
+    $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, funeral_home, location, city_normalized, image_url, description,
+                CHAR_LENGTH(COALESCE(description, '')) as desc_len
+         FROM `{$table}`
+         WHERE id IN ({$placeholders}) AND suppressed_at IS NULL
+         ORDER BY desc_len DESC, id ASC",
+        $ids
+    ) );
+
+    if ( count( $rows ) <= 1 ) {
+        return 0;
+    }
+
+    return ontario_obituaries_merge_rows( $table, $rows );
+}
+
+/**
+ * Core merge logic: keep the best record, enrich from duplicates, delete rest.
+ *
+ * @param string $table Table name.
+ * @param array  $rows  Array of row objects (longest desc first).
+ * @return int Number of rows removed.
+ */
+function ontario_obituaries_merge_rows( $table, $rows ) {
+    global $wpdb;
+
+    $keep = $rows[0];
+    $enrichments = array();
+    $removed = 0;
+
+    for ( $i = 1; $i < count( $rows ); $i++ ) {
+        $dupe = $rows[ $i ];
+
+        // Enrich: fill empty funeral_home from duplicate
+        if ( empty( $keep->funeral_home ) && ! empty( $dupe->funeral_home ) ) {
+            $enrichments['funeral_home'] = $dupe->funeral_home;
+            $keep->funeral_home = $dupe->funeral_home;
+        }
+
+        // Enrich: fill empty city_normalized from duplicate
+        if ( empty( $keep->city_normalized ) && ! empty( $dupe->city_normalized ) ) {
+            $enrichments['city_normalized'] = $dupe->city_normalized;
+            $keep->city_normalized = $dupe->city_normalized;
+        }
+
+        // Enrich: fill empty location from duplicate
+        if ( empty( $keep->location ) && ! empty( $dupe->location ) ) {
+            $enrichments['location'] = $dupe->location;
+            $keep->location = $dupe->location;
+        }
+
+        // Enrich: fill empty image_url from duplicate
+        if ( empty( $keep->image_url ) && ! empty( $dupe->image_url ) ) {
+            $enrichments['image_url'] = $dupe->image_url;
+            $keep->image_url = $dupe->image_url;
+        }
+
+        // Enrich: prefer longer description
+        if ( ! empty( $dupe->description ) && strlen( $dupe->description ) > strlen( (string) $keep->description ) ) {
+            $enrichments['description'] = $dupe->description;
+            $keep->description = $dupe->description;
+        }
+
+        $wpdb->delete( $table, array( 'id' => $dupe->id ), array( '%d' ) );
+        $removed++;
+    }
+
+    // Apply enrichments to the kept record
+    if ( ! empty( $enrichments ) ) {
+        $wpdb->update( $table, $enrichments, array( 'id' => $keep->id ) );
+    }
+
+    return $removed;
+}
 
 /**
  * One-time page creation on next page load (for updates via WP Pusher
@@ -709,6 +820,9 @@ function ontario_obituaries_scheduled_collection() {
     if ( empty( $results['errors'] ) ) {
         delete_option( 'ontario_obituaries_last_scrape_errors' );
     }
+
+    // v3.3.0: Run dedup after every scrape to catch cross-source duplicates immediately
+    ontario_obituaries_cleanup_duplicates();
 }
 add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection' );
 
@@ -758,6 +872,57 @@ function ontario_obituaries_init() {
     new Ontario_Obituaries();
 }
 add_action( 'plugins_loaded', 'ontario_obituaries_init' );
+
+/**
+ * v3.3.0: WP Pusher / plugin-update integration.
+ *
+ * When WP Pusher pushes a new version, the activation hook does NOT re-fire.
+ * This callback flushes rewrite rules and purges known cache plugins so that
+ * template and version changes take effect immediately.
+ */
+function ontario_obituaries_on_plugin_update() {
+    $stored_version = get_option( 'ontario_obituaries_deployed_version', '' );
+    if ( $stored_version === ONTARIO_OBITUARIES_VERSION ) {
+        return; // Already deployed this version.
+    }
+
+    // Flush rewrite rules so new SEO URL patterns work
+    flush_rewrite_rules();
+
+    // Purge known cache plugins
+    // LiteSpeed Cache
+    if ( class_exists( 'LiteSpeed_Cache_API' ) ) {
+        LiteSpeed_Cache_API::purge_all();
+    } elseif ( function_exists( 'litespeed_purge_all' ) ) {
+        litespeed_purge_all();
+    }
+
+    // W3 Total Cache
+    if ( function_exists( 'w3tc_flush_all' ) ) {
+        w3tc_flush_all();
+    }
+
+    // WP Super Cache
+    if ( function_exists( 'wp_cache_clear_cache' ) ) {
+        wp_cache_clear_cache();
+    }
+
+    // Clear WordPress object cache
+    wp_cache_flush();
+
+    // Clear our own transients
+    delete_transient( 'ontario_obituaries_locations_cache' );
+    delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+    // Force dedup to run for the new version
+    delete_option( 'ontario_obituaries_dedup_' . $stored_version );
+
+    // Mark this version as deployed
+    update_option( 'ontario_obituaries_deployed_version', ONTARIO_OBITUARIES_VERSION );
+
+    ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
+}
+add_action( 'init', 'ontario_obituaries_on_plugin_update', 1 );
 
 /**
  * Add integration with Obituary Assistant

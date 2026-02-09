@@ -65,7 +65,7 @@ if (!defined('ABSPATH')) {
     <div class="ontario-obituary-detail-footer">
         <div class="ontario-obituary-detail-actions">
             <!-- Link to full SEO page (keeps traffic on-site) -->
-            <a href="<?php echo esc_url( $detail_internal_url ); ?>" class="ontario-obituary-detail-full-page-link" style="display: inline-block; padding: 8px 15px; background: #2c6e49; color: #fff; text-decoration: none; border-radius: 4px;">
+            <a href="<?php echo esc_url( $detail_internal_url ); ?>" class="ontario-obituary-detail-full-page-link">
                 <?php esc_html_e( 'View Full Obituary', 'ontario-obituaries' ); ?>
             </a>
 
@@ -79,7 +79,7 @@ if (!defined('ABSPATH')) {
             <?php endif; ?>
 
             <!-- Print button -->
-            <button class="ontario-obituary-print-button" onclick="window.print();" style="margin-left: 10px;">
+            <button class="ontario-obituary-print-button" onclick="window.print();">
                 <span class="dashicons dashicons-printer"></span> <?php esc_html_e( 'Print', 'ontario-obituaries' ); ?>
             </button>
         </div>
