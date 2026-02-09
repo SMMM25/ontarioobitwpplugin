@@ -17,6 +17,10 @@
  *  P1-6  : Hidden field loop now sanitizes array values and skips arrays
  *  P1-10 : Template no longer creates its own Display instance or re-queries
  *  P2-4  : Images use loading="lazy" for performance
+ *  v3.10.1: Removed Quick View, Share, flag buttons per owner request.
+ *           Read More link preserved for SEO internal linking.
+ *           Per-card "Request removal" text link preserved (populates removal form).
+ *           Modal markup removed (no Quick View trigger exists).
  */
 
 // Exit if accessed directly
@@ -154,28 +158,13 @@ $site_url = get_site_url();
                                 <?php esc_html_e( 'Read More', 'ontario-obituaries' ); ?>
                             </a>
 
-                            <button class="ontario-obituaries-read-more" data-id="<?php echo esc_attr( $obituary->id ); ?>">
-                                <?php esc_html_e( 'Quick View', 'ontario-obituaries' ); ?>
-                            </button>
-
-                            <?php
-                            // Share URL now points to our own page (keeps traffic on-site)
-                            $share_url = $obit_internal_url;
-                            ?>
-                            <button class="ontario-obituaries-share-fb"
-                                    data-id="<?php echo esc_attr( $obituary->id ); ?>"
-                                    data-name="<?php echo esc_attr( $obituary->name ); ?>"
-                                    data-url="<?php echo esc_url( $share_url ); ?>"
-                                    data-description="<?php echo esc_attr( wp_trim_words( $obituary->description, 50, '...' ) ); ?>">
-                                <span class="dashicons dashicons-facebook-alt" aria-hidden="true"></span>
-                                <?php esc_html_e( 'Share', 'ontario-obituaries' ); ?>
-                            </button>
+                            <?php // v3.10.1: Quick View and Share buttons removed. Read More kept for SEO. ?>
 
                             <a href="#" class="ontario-obituaries-remove-link"
                                data-id="<?php echo esc_attr( $obituary->id ); ?>"
                                data-name="<?php echo esc_attr( $obituary->name ); ?>"
                                title="<?php esc_attr_e( 'Request removal', 'ontario-obituaries' ); ?>">
-                                <span class="dashicons dashicons-flag" aria-hidden="true"></span>
+                                <?php esc_html_e( 'Request removal', 'ontario-obituaries' ); ?>
                             </a>
                         </div>
                     </div>
@@ -207,18 +196,9 @@ $site_url = get_site_url();
             </nav>
         <?php endif; ?>
 
-        <!-- Modal for obituary detail -->
-        <div id="ontario-obituaries-modal" class="ontario-obituaries-modal" role="dialog" aria-modal="true" aria-label="<?php esc_attr_e( 'Obituary Details', 'ontario-obituaries' ); ?>">
-            <div class="ontario-obituaries-modal-content">
-                <button class="ontario-obituaries-modal-close" aria-label="<?php esc_attr_e( 'Close', 'ontario-obituaries' ); ?>">&times;</button>
-                <div id="ontario-obituaries-modal-body" class="ontario-obituaries-modal-body">
-                    <div class="ontario-obituaries-modal-loading">
-                        <div class="ontario-obituaries-spinner"></div>
-                        <p><?php esc_html_e( 'Loading...', 'ontario-obituaries' ); ?></p>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <!-- v3.10.1: Modal markup removed — Quick View button no longer exists.
+             The AJAX endpoint and obituary-detail.php are kept server-side for
+             backward compatibility but are never triggered from this template. -->
     <?php endif; ?>
 
     <!-- Removal Request Form (v3.0.0 — P0-SUP FIX: suppress-after-verify) -->
