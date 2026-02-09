@@ -81,6 +81,19 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         }
 
         if ( ! $nodes || 0 === $nodes->length ) {
+            // v3.8.0: Diagnostic — log when we get a page but extract 0 cards.
+            // This means the HTML structure changed and our selectors are stale.
+            $html_len = strlen( $html );
+            $snippet  = substr( wp_strip_all_tags( $html ), 0, 300 );
+            ontario_obituaries_log(
+                sprintf(
+                    'Remembering.ca adapter: 0 cards extracted from %s (HTML size: %d bytes). Snippet: %s',
+                    isset( $source['base_url'] ) ? $source['base_url'] : 'unknown',
+                    $html_len,
+                    $snippet
+                ),
+                'warning'
+            );
             return $cards;
         }
 
