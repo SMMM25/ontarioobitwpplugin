@@ -24,10 +24,28 @@ get_header();
     <div class="ontario-obituaries-hub-intro" style="margin-bottom: 30px;">
         <p><?php esc_html_e( 'Browse recent obituary notices from communities across Ontario, Canada. Our obituary directory provides factual information to help you find funeral services, visitation details, and memorial information.', 'ontario-obituaries' ); ?></p>
         <p><?php printf(
-            esc_html__( 'This service is provided by %s, serving Southern Ontario families with personalized monuments and memorials.', 'ontario-obituaries' ),
+            esc_html__( 'This service is provided by %s, located in Newmarket, Ontario — serving York Region and Southern Ontario families with personalized monuments and memorials.', 'ontario-obituaries' ),
             '<a href="https://monacomonuments.ca">Monaco Monuments</a>'
         ); ?></p>
     </div>
+
+    <!-- York Region Spotlight — drives local traffic -->
+    <section class="ontario-obituaries-york-region" style="margin-bottom: 40px; padding: 25px; background: linear-gradient(135deg, #f0f4f8, #e8eef5); border-radius: 8px; border-left: 4px solid #2c3e50;">
+        <h2><?php esc_html_e( 'York Region & Newmarket Obituaries', 'ontario-obituaries' ); ?></h2>
+        <p><?php esc_html_e( 'Monaco Monuments is proud to serve the York Region community from our Newmarket location. Browse obituary notices from Newmarket, Aurora, Richmond Hill, Markham, Vaughan, and surrounding areas.', 'ontario-obituaries' ); ?></p>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;">
+            <?php
+            $york_cities = array( 'Newmarket', 'Aurora', 'Richmond Hill', 'Markham', 'Vaughan', 'Stouffville', 'King City', 'Georgina', 'East Gwillimbury', 'Bradford' );
+            foreach ( $york_cities as $yr_city ) :
+                $yr_slug = sanitize_title( $yr_city );
+            ?>
+                <a href="<?php echo esc_url( home_url( '/obituaries/ontario/' . $yr_slug . '/' ) ); ?>"
+                   style="display: inline-block; padding: 8px 16px; background: #fff; border: 1px solid #d0d5dd; border-radius: 20px; text-decoration: none; color: #2c3e50; font-size: 0.9em;">
+                    <?php echo esc_html( $yr_city ); ?>
+                </a>
+            <?php endforeach; ?>
+        </div>
+    </section>
 
     <?php if ( ! empty( $city_stats ) ) : ?>
     <section class="ontario-obituaries-city-directory" style="margin-bottom: 40px;">
@@ -88,14 +106,20 @@ get_header();
     <?php endif; ?>
 
     <section class="ontario-obituaries-services" style="margin-top: 40px; padding: 30px; background: #f0f4f8; border-radius: 8px;">
-        <h2><?php esc_html_e( 'Monaco Monuments — Personalized Memorials', 'ontario-obituaries' ); ?></h2>
-        <p><?php esc_html_e( 'Located in Newmarket, Ontario, Monaco Monuments creates unique, one-of-a-kind monuments and memorials meant to be cherished for eternity. We serve families throughout Southern Ontario.', 'ontario-obituaries' ); ?></p>
+        <h2><?php esc_html_e( 'Monaco Monuments — Personalized Memorials in Newmarket', 'ontario-obituaries' ); ?></h2>
+        <p><?php esc_html_e( 'Located at 109 Harry Walker Pkwy S, Newmarket, Ontario, Monaco Monuments creates unique, one-of-a-kind monuments and memorials meant to be cherished for eternity. We serve families throughout York Region and Southern Ontario.', 'ontario-obituaries' ); ?></p>
+        <p style="color: #555; font-size: 0.95em;">
+            <?php esc_html_e( 'Serving: Newmarket, Aurora, Richmond Hill, Markham, Vaughan, King City, Stouffville, Barrie, and all of Southern Ontario.', 'ontario-obituaries' ); ?>
+        </p>
         <p>
             <a href="https://monacomonuments.ca/catalog/" class="button" style="display: inline-block; padding: 10px 20px; background: #2c3e50; color: #fff; text-decoration: none; border-radius: 4px;">
                 <?php esc_html_e( 'Browse Our Catalog', 'ontario-obituaries' ); ?>
             </a>
             <a href="https://monacomonuments.ca/contact/" style="margin-left: 15px; color: #2c3e50;">
                 <?php esc_html_e( 'Contact Us', 'ontario-obituaries' ); ?> &rarr;
+            </a>
+            <a href="tel:+19058986262" style="margin-left: 15px; color: #2c3e50;">
+                <?php esc_html_e( '(905) 898-6262', 'ontario-obituaries' ); ?>
             </a>
         </p>
     </section>

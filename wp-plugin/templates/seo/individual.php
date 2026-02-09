@@ -97,10 +97,16 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
 
     <!-- Monument Services CTA -->
     <aside class="ontario-obituaries-cta" style="margin-top: 40px; padding: 25px; background: #f0f4f8; border-radius: 8px;">
-        <h3><?php esc_html_e( 'Personalized Monuments — Monaco Monuments', 'ontario-obituaries' ); ?></h3>
-        <p><?php esc_html_e( 'Each monument we create is unique, a one-of-a-kind celebration of life meant to be cherished for eternity. Serving families throughout Southern Ontario from our Newmarket location.', 'ontario-obituaries' ); ?></p>
+        <h3><?php esc_html_e( 'Personalized Monuments — Monaco Monuments, Newmarket', 'ontario-obituaries' ); ?></h3>
+        <p><?php esc_html_e( 'Each monument we create is unique, a one-of-a-kind celebration of life meant to be cherished for eternity. Serving families in York Region, Newmarket, Aurora, Richmond Hill, and throughout Southern Ontario.', 'ontario-obituaries' ); ?></p>
+        <p style="color: #666; font-size: 0.9em;">
+            <?php esc_html_e( '109 Harry Walker Pkwy S, Newmarket, ON L3Y 7B3 | (905) 898-6262', 'ontario-obituaries' ); ?>
+        </p>
         <a href="https://monacomonuments.ca/contact/" style="display: inline-block; padding: 10px 20px; background: #2c3e50; color: #fff; text-decoration: none; border-radius: 4px;">
             <?php esc_html_e( 'Contact Monaco Monuments', 'ontario-obituaries' ); ?>
+        </a>
+        <a href="https://monacomonuments.ca/catalog/" style="margin-left: 15px; color: #2c3e50;">
+            <?php esc_html_e( 'Browse Our Catalog', 'ontario-obituaries' ); ?> &rarr;
         </a>
     </aside>
 

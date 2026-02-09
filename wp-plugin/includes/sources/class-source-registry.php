@@ -327,7 +327,11 @@ class Ontario_Obituaries_Source_Registry {
      */
     public static function seed_defaults() {
         $sources = array(
-            // === York Region (Monaco Monuments home turf) ===
+
+            // ══════════════════════════════════════════════════════════════
+            // PRIORITY 1 — York Region / Newmarket (Monaco Monuments home turf)
+            // These run FIRST and drive local SEO + funeral home referrals.
+            // ══════════════════════════════════════════════════════════════
             array(
                 'domain'       => 'roadhouseandrose.com',
                 'name'         => 'Roadhouse & Rose Funeral Home',
@@ -336,7 +340,6 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
             ),
-            // P2-2 FIX: No arbor_memorial adapter exists; use generic_html as fallback
             array(
                 'domain'       => 'arbormemorial.ca/taylor',
                 'name'         => 'Taylor Funeral Home (Arbor Memorial)',
@@ -353,16 +356,71 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => 'Sutton',
                 'region'       => 'York Region',
             ),
-            // === GTA / Toronto ===
             array(
-                'domain'       => 'dignitymemorial.com/toronto-on',
-                'name'         => 'Dignity Memorial - Toronto',
-                'base_url'     => 'https://www.dignitymemorial.com/obituaries/toronto-on',
-                'adapter_type' => 'dignity_memorial',
-                'city'         => 'Toronto',
-                'region'       => 'Greater Toronto Area',
+                'domain'       => 'marshallfuneralhome.com',
+                'name'         => 'Marshall Funeral Home',
+                'base_url'     => 'https://www.marshallfuneralhome.com/obituaries',
+                'adapter_type' => 'frontrunner',
+                'city'         => 'Richmond Hill',
+                'region'       => 'York Region',
             ),
-            // === Newspapers / Aggregators ===
+            array(
+                'domain'       => 'thompsonfh-aurora.com',
+                'name'         => 'Thompson Funeral Home - Aurora',
+                'base_url'     => 'https://www.thompsonfh-aurora.com/obituaries',
+                'adapter_type' => 'frontrunner',
+                'city'         => 'Aurora',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'dignitymemorial.com/newmarket-on',
+                'name'         => 'Dignity Memorial - Newmarket',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/newmarket-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Newmarket',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'wardfuneralhome.com',
+                'name'         => 'Ward Funeral Home - Brampton/Bolton',
+                'base_url'     => 'https://www.wardfuneralhome.com/obituaries',
+                'adapter_type' => 'frontrunner',
+                'city'         => 'Brampton',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'skinnerfuneralhome.ca',
+                'name'         => 'Skinner & Middlebrook Funeral Home',
+                'base_url'     => 'https://www.skinnerfuneralhome.ca/obituaries',
+                'adapter_type' => 'frontrunner',
+                'city'         => 'Bradford',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'peacefultransition.ca',
+                'name'         => 'Peaceful Transition - Newmarket',
+                'base_url'     => 'https://www.peacefultransition.ca/obituaries',
+                'adapter_type' => 'generic_html',
+                'city'         => 'Newmarket',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'dignitymemorial.com/aurora-on',
+                'name'         => 'Dignity Memorial - Aurora',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/aurora-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Aurora',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'dignitymemorial.com/richmond-hill-on',
+                'name'         => 'Dignity Memorial - Richmond Hill',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/richmond-hill-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Richmond Hill',
+                'region'       => 'York Region',
+            ),
+            // York Region aggregators (highest volume local sources)
             array(
                 'domain'       => 'obituaries.yorkregion.com',
                 'name'         => 'York Region News Obituaries',
@@ -379,7 +437,58 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => '',
                 'region'       => 'York Region',
             ),
-            // === Hamilton / Niagara ===
+
+            // ══════════════════════════════════════════════════════════════
+            // PRIORITY 2 — Greater Toronto Area (GTA)
+            // Drives broader regional traffic + positions Monaco Monuments
+            // as the Ontario obituary resource.
+            // ══════════════════════════════════════════════════════════════
+            array(
+                'domain'       => 'dignitymemorial.com/toronto-on',
+                'name'         => 'Dignity Memorial - Toronto',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/toronto-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Toronto',
+                'region'       => 'Greater Toronto Area',
+            ),
+            array(
+                'domain'       => 'dignitymemorial.com/markham-on',
+                'name'         => 'Dignity Memorial - Markham',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/markham-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Markham',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'dignitymemorial.com/vaughan-on',
+                'name'         => 'Dignity Memorial - Vaughan',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/vaughan-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Vaughan',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/thestar',
+                'name'         => 'Legacy.com - Toronto Star',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/thestar/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'Greater Toronto Area',
+            ),
+            array(
+                'domain'       => 'remembering.ca/toronto',
+                'name'         => 'Remembering.ca - Toronto',
+                'base_url'     => 'https://www.remembering.ca/obituaries/toronto-on',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'Greater Toronto Area',
+            ),
+
+            // ══════════════════════════════════════════════════════════════
+            // PRIORITY 3 — Ontario-wide (provincial coverage for SEO reach)
+            // ══════════════════════════════════════════════════════════════
+
+            // Hamilton / Niagara
             array(
                 'domain'       => 'legacy.com/ca/obituaries/thespec',
                 'name'         => 'Legacy.com - Hamilton Spectator',
@@ -388,7 +497,7 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => '',
                 'region'       => 'Hamilton',
             ),
-            // === Ottawa ===
+            // Ottawa
             array(
                 'domain'       => 'legacy.com/ca/obituaries/ottawacitizen',
                 'name'         => 'Legacy.com - Ottawa Citizen',
@@ -396,6 +505,42 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Ottawa',
+            ),
+            // London
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/lfpress',
+                'name'         => 'Legacy.com - London Free Press',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/lfpress/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'London',
+            ),
+            // Kitchener / Waterloo
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/therecord',
+                'name'         => 'Legacy.com - Waterloo Region Record',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/therecord/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'Kitchener-Waterloo',
+            ),
+            // Barrie / Simcoe
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/barrieexaminer',
+                'name'         => 'Legacy.com - Barrie Examiner',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/barrieexaminer/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'Barrie',
+            ),
+            // Windsor
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/windsorstar',
+                'name'         => 'Legacy.com - Windsor Star',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/windsorstar/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'Windsor',
             ),
         );
 

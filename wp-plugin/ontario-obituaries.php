@@ -48,9 +48,9 @@ function ontario_obituaries_check_dependency() {
 function ontario_obituaries_get_defaults() {
     return array(
         'enabled'        => true,
-        'frequency'      => 'daily',
+        'frequency'      => 'twicedaily',
         'time'           => '03:00',
-        'regions'        => array( 'Toronto', 'Ottawa', 'Hamilton' ),
+        'regions'        => array( 'York Region', 'Newmarket', 'Toronto', 'Ottawa', 'Hamilton' ),
         'max_age'        => 7,
         'filter_keywords' => '',
         'auto_publish'   => true,

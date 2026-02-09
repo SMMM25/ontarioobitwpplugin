@@ -112,17 +112,23 @@ get_header();
 
     <!-- Local Services Section — Internal Link to Monaco Monuments -->
     <section class="ontario-obituaries-local-services" style="margin-top: 40px; padding: 25px; background: #f0f4f8; border-radius: 8px;">
-        <h2><?php printf( esc_html__( 'Monument Services in %s', 'ontario-obituaries' ), esc_html( $city_name ) ); ?></h2>
+        <h2><?php printf( esc_html__( 'Monument Services near %s', 'ontario-obituaries' ), esc_html( $city_name ) ); ?></h2>
         <p><?php printf(
-            esc_html__( 'Monaco Monuments serves families in %s and throughout Southern Ontario. Each monument we create is a unique, one-of-a-kind celebration of life.', 'ontario-obituaries' ),
+            esc_html__( 'Monaco Monuments, located in Newmarket, Ontario, serves families in %s, across York Region, and throughout Southern Ontario. Each monument we create is a unique, one-of-a-kind celebration of life meant to be cherished for eternity.', 'ontario-obituaries' ),
             esc_html( $city_name )
         ); ?></p>
+        <p style="color: #666; font-size: 0.9em;">
+            <?php esc_html_e( '109 Harry Walker Pkwy S, Newmarket, ON L3Y 7B3 | (905) 898-6262', 'ontario-obituaries' ); ?>
+        </p>
         <p>
             <a href="https://monacomonuments.ca/contact/" style="display: inline-block; padding: 10px 20px; background: #2c3e50; color: #fff; text-decoration: none; border-radius: 4px;">
-                <?php esc_html_e( 'Get in Touch', 'ontario-obituaries' ); ?>
+                <?php esc_html_e( 'Get a Free Consultation', 'ontario-obituaries' ); ?>
             </a>
             <a href="https://monacomonuments.ca/catalog/" style="margin-left: 15px; color: #2c3e50;">
                 <?php esc_html_e( 'View Our Catalog', 'ontario-obituaries' ); ?> &rarr;
+            </a>
+            <a href="tel:+19058986262" style="margin-left: 15px; color: #2c3e50;">
+                <?php esc_html_e( 'Call Us', 'ontario-obituaries' ); ?>
             </a>
         </p>
     </section>
