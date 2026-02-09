@@ -1,0 +1,406 @@
+<?php
+/**
+ * Source Registry
+ *
+ * Manages the registry of obituary data sources (funeral homes, newspapers, etc.)
+ * and their associated adapter types. Stored in a custom DB table.
+ *
+ * Each source has:
+ *   - domain (unique key)
+ *   - base_url (the obituary listing page)
+ *   - adapter_type (which adapter class handles this platform)
+ *   - config (JSON — adapter-specific selectors, paths, etc.)
+ *   - region/city tags
+ *   - enabled flag
+ *   - rate limits and circuit breaker state
+ *
+ * @package Ontario_Obituaries
+ * @since   3.0.0
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+class Ontario_Obituaries_Source_Registry {
+
+    /** @var string Table name (without prefix). */
+    const TABLE_NAME = 'ontario_obituaries_sources';
+
+    /** @var array Registered adapter instances, keyed by type slug. */
+    private static $adapters = array();
+
+    /* ─────────────────────── ADAPTER REGISTRATION ─────────────────── */
+
+    /**
+     * Register a source adapter.
+     *
+     * @param Ontario_Obituaries_Source_Adapter $adapter Adapter instance.
+     */
+    public static function register_adapter( $adapter ) {
+        self::$adapters[ $adapter->get_type() ] = $adapter;
+    }
+
+    /**
+     * Get a registered adapter by type slug.
+     *
+     * @param string $type Adapter type.
+     * @return Ontario_Obituaries_Source_Adapter|null
+     */
+    public static function get_adapter( $type ) {
+        return isset( self::$adapters[ $type ] ) ? self::$adapters[ $type ] : null;
+    }
+
+    /**
+     * Get all registered adapters.
+     *
+     * @return Ontario_Obituaries_Source_Adapter[]
+     */
+    public static function get_all_adapters() {
+        return self::$adapters;
+    }
+
+    /* ─────────────────────── DATABASE OPERATIONS ──────────────────── */
+
+    /**
+     * Get the full table name (with prefix).
+     *
+     * @return string
+     */
+    public static function table_name() {
+        global $wpdb;
+        return $wpdb->prefix . self::TABLE_NAME;
+    }
+
+    /**
+     * Create the sources table.
+     * Called during plugin activation.
+     */
+    public static function create_table() {
+        global $wpdb;
+        $table_name      = self::table_name();
+        $charset_collate = $wpdb->get_charset_collate();
+
+        $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            domain varchar(255) NOT NULL,
+            name varchar(255) NOT NULL DEFAULT '',
+            base_url varchar(2083) NOT NULL,
+            adapter_type varchar(50) NOT NULL DEFAULT 'generic_html',
+            config longtext DEFAULT NULL,
+            city varchar(100) NOT NULL DEFAULT '',
+            region varchar(100) NOT NULL DEFAULT '',
+            province varchar(10) NOT NULL DEFAULT 'ON',
+            enabled tinyint(1) NOT NULL DEFAULT 1,
+            image_allowlisted tinyint(1) NOT NULL DEFAULT 0,
+            max_pages_per_run smallint UNSIGNED NOT NULL DEFAULT 5,
+            min_request_interval float NOT NULL DEFAULT 2.0,
+            consecutive_failures smallint UNSIGNED NOT NULL DEFAULT 0,
+            circuit_open_until datetime DEFAULT NULL,
+            last_success datetime DEFAULT NULL,
+            last_failure datetime DEFAULT NULL,
+            last_failure_reason varchar(500) DEFAULT NULL,
+            total_collected bigint UNSIGNED NOT NULL DEFAULT 0,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY idx_domain (domain),
+            KEY idx_adapter_type (adapter_type),
+            KEY idx_city (city),
+            KEY idx_region (region),
+            KEY idx_enabled (enabled)
+        ) {$charset_collate};";
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta( $sql );
+    }
+
+    /**
+     * Get all enabled sources, respecting circuit breaker.
+     *
+     * @return array[] Source rows.
+     */
+    public static function get_active_sources() {
+        global $wpdb;
+        $table = self::table_name();
+        $now   = current_time( 'mysql', true );
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM `{$table}`
+                 WHERE enabled = 1
+                   AND ( circuit_open_until IS NULL OR circuit_open_until < %s )
+                 ORDER BY last_success ASC",
+                $now
+            ),
+            ARRAY_A
+        );
+    }
+
+    /**
+     * Get sources filtered by region or city.
+     *
+     * @param string $region Region name (optional).
+     * @param string $city   City name (optional).
+     * @return array[]
+     */
+    public static function get_sources_by_location( $region = '', $city = '' ) {
+        global $wpdb;
+        $table = self::table_name();
+        $now   = current_time( 'mysql', true );
+
+        $where = array( 'enabled = 1', $wpdb->prepare( '( circuit_open_until IS NULL OR circuit_open_until < %s )', $now ) );
+
+        if ( ! empty( $region ) ) {
+            $where[] = $wpdb->prepare( 'region = %s', $region );
+        }
+        if ( ! empty( $city ) ) {
+            $where[] = $wpdb->prepare( 'city = %s', $city );
+        }
+
+        $where_clause = implode( ' AND ', $where );
+        return $wpdb->get_results( "SELECT * FROM `{$table}` WHERE {$where_clause} ORDER BY domain ASC", ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+    }
+
+    /**
+     * Record a successful collection for a source.
+     *
+     * @param int $source_id Source ID.
+     * @param int $count     Number of obituaries collected.
+     */
+    public static function record_success( $source_id, $count = 0 ) {
+        global $wpdb;
+        $table = self::table_name();
+
+        // P0-3 FIX: Single atomic query — removed broken $wpdb->update() with stdClass.
+        $wpdb->query( $wpdb->prepare(
+            "UPDATE `{$table}` SET
+                last_success = %s,
+                consecutive_failures = 0,
+                circuit_open_until = NULL,
+                total_collected = total_collected + %d
+             WHERE id = %d",
+            current_time( 'mysql', true ),
+            $count,
+            $source_id
+        ) );
+    }
+
+    /**
+     * Record a failure for a source. Opens circuit breaker after threshold.
+     *
+     * @param int    $source_id Source ID.
+     * @param string $reason    Error message.
+     * @param int    $threshold Failures before circuit opens (default 10).
+     */
+    public static function record_failure( $source_id, $reason = '', $threshold = 10 ) {
+        global $wpdb;
+        $table = self::table_name();
+
+        // Increment failures
+        $wpdb->query( $wpdb->prepare(
+            "UPDATE `{$table}` SET
+                last_failure = %s,
+                last_failure_reason = %s,
+                consecutive_failures = consecutive_failures + 1
+             WHERE id = %d",
+            current_time( 'mysql', true ),
+            $reason,
+            $source_id
+        ) );
+
+        // Check if we should open the circuit breaker
+        $failures = $wpdb->get_var( $wpdb->prepare(
+            "SELECT consecutive_failures FROM `{$table}` WHERE id = %d",
+            $source_id
+        ) );
+
+        if ( intval( $failures ) >= $threshold ) {
+            // Open circuit for 24 hours
+            $reopen = gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS );
+            $wpdb->update(
+                $table,
+                array( 'circuit_open_until' => $reopen ),
+                array( 'id' => $source_id ),
+                array( '%s' ),
+                array( '%d' )
+            );
+            ontario_obituaries_log(
+                sprintf( 'Circuit breaker OPEN for source %d until %s (%d consecutive failures)', $source_id, $reopen, $failures ),
+                'warning'
+            );
+        }
+    }
+
+    /**
+     * Add or update a source.
+     *
+     * @param array $data Source data.
+     * @return int|false Source ID or false on failure.
+     */
+    public static function upsert_source( $data ) {
+        global $wpdb;
+        $table = self::table_name();
+
+        $defaults = array(
+            'domain'               => '',
+            'name'                 => '',
+            'base_url'             => '',
+            'adapter_type'         => 'generic_html',
+            'config'               => '{}',
+            'city'                 => '',
+            'region'               => '',
+            'province'             => 'ON',
+            'enabled'              => 1,
+            'image_allowlisted'    => 0,
+            'max_pages_per_run'    => 5,
+            'min_request_interval' => 2.0,
+        );
+
+        $data = wp_parse_args( $data, $defaults );
+
+        // Check if exists
+        $existing = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM `{$table}` WHERE domain = %s",
+            $data['domain']
+        ) );
+
+        if ( $existing ) {
+            $wpdb->update( $table, $data, array( 'id' => $existing ) );
+            return intval( $existing );
+        }
+
+        $wpdb->insert( $table, $data );
+        return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
+    }
+
+    /**
+     * Delete a source by ID.
+     *
+     * @param int $source_id Source ID.
+     * @return bool
+     */
+    public static function delete_source( $source_id ) {
+        global $wpdb;
+        return (bool) $wpdb->delete( self::table_name(), array( 'id' => $source_id ), array( '%d' ) );
+    }
+
+    /**
+     * Get a single source by ID.
+     *
+     * @param int $source_id Source ID.
+     * @return array|null
+     */
+    public static function get_source( $source_id ) {
+        global $wpdb;
+        return $wpdb->get_row(
+            $wpdb->prepare( "SELECT * FROM `" . self::table_name() . "` WHERE id = %d", $source_id ),
+            ARRAY_A
+        );
+    }
+
+    /**
+     * Get total source counts by status.
+     *
+     * @return array { total, enabled, disabled, circuit_open }
+     */
+    public static function get_stats() {
+        global $wpdb;
+        $table = self::table_name();
+        $now   = current_time( 'mysql', true );
+
+        return array(
+            'total'        => (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" ),
+            'enabled'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE enabled = 1" ),
+            'disabled'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE enabled = 0" ),
+            'circuit_open' => (int) $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$table}` WHERE circuit_open_until IS NOT NULL AND circuit_open_until >= %s",
+                $now
+            ) ),
+        );
+    }
+
+    /**
+     * Seed the registry with default southern Ontario sources.
+     *
+     * Called during activation. Uses INSERT IGNORE to avoid duplicates.
+     */
+    public static function seed_defaults() {
+        $sources = array(
+            // === York Region (Monaco Monuments home turf) ===
+            array(
+                'domain'       => 'roadhouseandrose.com',
+                'name'         => 'Roadhouse & Rose Funeral Home',
+                'base_url'     => 'https://www.roadhouseandrose.com/obituaries',
+                'adapter_type' => 'frontrunner',
+                'city'         => 'Newmarket',
+                'region'       => 'York Region',
+            ),
+            // P2-2 FIX: No arbor_memorial adapter exists; use generic_html as fallback
+            array(
+                'domain'       => 'arbormemorial.ca/taylor',
+                'name'         => 'Taylor Funeral Home (Arbor Memorial)',
+                'base_url'     => 'https://www.arbormemorial.ca/en/taylor/obituaries.html',
+                'adapter_type' => 'generic_html',
+                'city'         => 'Newmarket',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'forrestandtaylor.com',
+                'name'         => 'Forrest & Taylor Funeral Home',
+                'base_url'     => 'https://www.forrestandtaylor.com/obituaries',
+                'adapter_type' => 'frontrunner',
+                'city'         => 'Sutton',
+                'region'       => 'York Region',
+            ),
+            // === GTA / Toronto ===
+            array(
+                'domain'       => 'dignitymemorial.com/toronto-on',
+                'name'         => 'Dignity Memorial - Toronto',
+                'base_url'     => 'https://www.dignitymemorial.com/obituaries/toronto-on',
+                'adapter_type' => 'dignity_memorial',
+                'city'         => 'Toronto',
+                'region'       => 'Greater Toronto Area',
+            ),
+            // === Newspapers / Aggregators ===
+            array(
+                'domain'       => 'obituaries.yorkregion.com',
+                'name'         => 'York Region News Obituaries',
+                'base_url'     => 'https://obituaries.yorkregion.com/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'York Region',
+            ),
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/yorkregion',
+                'name'         => 'Legacy.com - York Region',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/yorkregion/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'York Region',
+            ),
+            // === Hamilton / Niagara ===
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/thespec',
+                'name'         => 'Legacy.com - Hamilton Spectator',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/thespec/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'Hamilton',
+            ),
+            // === Ottawa ===
+            array(
+                'domain'       => 'legacy.com/ca/obituaries/ottawacitizen',
+                'name'         => 'Legacy.com - Ottawa Citizen',
+                'base_url'     => 'https://www.legacy.com/ca/obituaries/ottawacitizen/today',
+                'adapter_type' => 'legacy_com',
+                'city'         => '',
+                'region'       => 'Ottawa',
+            ),
+        );
+
+        foreach ( $sources as $source ) {
+            self::upsert_source( $source );
+        }
+    }
+}
