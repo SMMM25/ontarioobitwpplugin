@@ -1,8 +1,15 @@
 <?php
 /**
- * SEO Template: Individual Obituary Page
+ * SEO Template: Individual Obituary Page (content-only partial)
  *
- * Variables provided by Ontario_Obituaries_SEO::render_individual_page():
+ * v3.10.2 PR #24b: Converted to content-only partial. This template no longer
+ * calls get_header() / get_footer(). It is included by wrapper.php which
+ * provides the full HTML shell and correct Elementor header/footer.
+ *
+ * Noindex handling moved to output_noindex_tag() in the SEO class,
+ * controlled via the 'ontario_obituaries_noindex' query var.
+ *
+ * Variables provided via query var 'ontario_obituaries_seo_data' (extracted by wrapper):
  *   $obituary     — object the obituary record
  *   $city_slug    — string URL slug for the city
  *   $should_index — bool whether this page should be indexed
@@ -14,15 +21,6 @@
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
-
-// Output noindex before headers are sent (wp_head hook handles it)
-if ( ! $should_index ) {
-    add_action( 'wp_head', function() {
-        echo '<meta name="robots" content="noindex, follow">' . "\n";
-    }, 1 );
-}
-
-get_header();
 
 $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : $obituary->location;
 ?>
@@ -132,4 +130,4 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
 </div>
 
 <?php
-get_footer();
+// v3.10.2 PR #24b: get_footer() removed — wrapper.php handles footer rendering.
