@@ -430,11 +430,84 @@ function ontario_obituaries_create_page() {
  */
 function ontario_obituaries_maybe_create_page() {
     if ( get_option( 'ontario_obituaries_page_id' ) && get_post_status( get_option( 'ontario_obituaries_page_id' ) ) ) {
-        return; // Page already exists — nothing to do.
+        // Page exists — make sure it's in the nav menu.
+        ontario_obituaries_add_to_menu();
+        return;
     }
     ontario_obituaries_create_page();
+    ontario_obituaries_add_to_menu();
 }
 add_action( 'init', 'ontario_obituaries_maybe_create_page' );
+
+/**
+ * Add the Obituaries page to the primary navigation menu.
+ *
+ * Finds the active nav menu (tries 'menu-monaco', primary location,
+ * or the first available menu) and adds the Obituaries page if not
+ * already present. Runs once and stores a flag to avoid repeated checks.
+ */
+function ontario_obituaries_add_to_menu() {
+    // Only run once.
+    if ( get_option( 'ontario_obituaries_menu_added' ) ) {
+        return;
+    }
+
+    $page_id = get_option( 'ontario_obituaries_page_id' );
+    if ( ! $page_id || ! get_post_status( $page_id ) ) {
+        return;
+    }
+
+    // Find the right menu — try by slug first, then by theme location, then first available.
+    $menu = wp_get_nav_menu_object( 'menu-monaco' );
+    if ( ! $menu ) {
+        $menu = wp_get_nav_menu_object( 'monaco' );
+    }
+    if ( ! $menu ) {
+        $locations = get_nav_menu_locations();
+        // Try common theme location names.
+        foreach ( array( 'primary', 'main', 'header', 'top', 'main-menu' ) as $loc ) {
+            if ( ! empty( $locations[ $loc ] ) ) {
+                $menu = wp_get_nav_menu_object( $locations[ $loc ] );
+                if ( $menu ) break;
+            }
+        }
+    }
+    if ( ! $menu ) {
+        // Last resort: grab the first menu that exists.
+        $menus = wp_get_nav_menus();
+        if ( ! empty( $menus ) ) {
+            $menu = $menus[0];
+        }
+    }
+    if ( ! $menu ) {
+        return; // No menus found — nothing we can do.
+    }
+
+    // Check if Obituaries is already in this menu.
+    $items = wp_get_nav_menu_items( $menu->term_id );
+    if ( $items ) {
+        foreach ( $items as $item ) {
+            if ( (int) $item->object_id === (int) $page_id && 'page' === $item->object ) {
+                update_option( 'ontario_obituaries_menu_added', true );
+                return; // Already in the menu.
+            }
+        }
+    }
+
+    // Add the Obituaries page to the menu.
+    $menu_item_id = wp_update_nav_menu_item( $menu->term_id, 0, array(
+        'menu-item-title'     => 'Obituaries',
+        'menu-item-object'    => 'page',
+        'menu-item-object-id' => $page_id,
+        'menu-item-type'      => 'post_type',
+        'menu-item-status'    => 'publish',
+    ) );
+
+    if ( $menu_item_id && ! is_wp_error( $menu_item_id ) ) {
+        update_option( 'ontario_obituaries_menu_added', true );
+        ontario_obituaries_log( 'Obituaries added to nav menu: ' . $menu->name . ' (item ID: ' . $menu_item_id . ')', 'info' );
+    }
+}
 
 /**
  * Deactivation hook
