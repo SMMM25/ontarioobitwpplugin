@@ -58,7 +58,11 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $xpath = new DOMXPath( $doc );
 
         // Remembering.ca listing patterns
+        // v3.6.0: Added selectors for yorkregion.com's actual HTML structure
+        // (Bishop/Postmedia template uses .ap_ad_wrap > a > .listview-summary)
         $selectors = array(
+            '//div[contains(@class,"ap_ad_wrap")]',
+            '//div[contains(@class,"listview-summary")]/..',
             '//div[contains(@class,"obituary-card")]',
             '//div[contains(@class,"obit-listing")]//article',
             '//div[contains(@class,"listing")]//div[contains(@class,"card")]',
@@ -122,7 +126,10 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             }
         }
 
-        // Dates
+        // Dates — v3.6.0: Remembering.ca / yorkregion.com often shows only
+        // years in the dates div ("1926", "1961 - 2026").  We capture those
+        // as year_text and later attempt to extract full dates from the
+        // content or Published line.
         $date_queries = array(
             './/*[contains(@class,"date")]',
             './/time',
@@ -140,9 +147,34 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // Full text date extraction
         if ( empty( $card['date_text'] ) ) {
             $text = $this->node_text( $node );
-            if ( preg_match( '/(\w+\s+\d{1,2},?\s+\d{4})\s*[-–—]\s*(\w+\s+\d{1,2},?\s+\d{4})/', $text, $m ) ) {
+            if ( preg_match( '/(\w+\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}]\s*(\w+\s+\d{1,2},?\s+\d{4})/u', $text, $m ) ) {
                 $card['date_text'] = $m[1] . ' - ' . $m[2];
             }
+        }
+
+        // v3.6.0 FIX: Extract full dates from "content" paragraph and
+        // "Published online" line when the structured dates div only has years.
+        $full_text = $this->node_text( $node );
+
+        // Look for "YEAR - YEAR" in dates div → store as year_birth / year_death
+        if ( ! empty( $card['date_text'] ) && preg_match( '/^(\d{4})\s*[-\x{2013}\x{2014}~]\s*(\d{4})$/u', trim( $card['date_text'] ), $ym ) ) {
+            $card['year_birth'] = $ym[1];
+            $card['year_death'] = $ym[2];
+            $card['date_text']  = ''; // Clear so normalize() doesn't try to parse it
+        } elseif ( ! empty( $card['date_text'] ) && preg_match( '/^\d{4}$/', trim( $card['date_text'] ) ) ) {
+            // Single year — might be birth year
+            $card['year_birth'] = trim( $card['date_text'] );
+            $card['date_text']  = '';
+        }
+
+        // Try to extract full "Month Day, Year - Month Day, Year" from content paragraph
+        if ( empty( $card['date_text'] ) && preg_match( '/(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}~]\s*(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/u', $full_text, $dm ) ) {
+            $card['date_text'] = $dm[1] . ' - ' . $dm[2];
+        }
+
+        // If still no full date_text, try the Published line for at least a published date
+        if ( empty( $card['date_text'] ) && preg_match( '/Published\s+online\s+.*?(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i', $full_text, $pm ) ) {
+            $card['published_date'] = $pm[1];
         }
 
         // Image
@@ -191,6 +223,22 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $funeral_home  = isset( $card['funeral_home'] ) ? sanitize_text_field( $card['funeral_home'] ) : '';
         $location      = isset( $card['location'] ) ? $card['location'] : '';
         $description   = isset( $card['description'] ) ? wp_strip_all_tags( $card['description'] ) : '';
+
+        // v3.6.0 FIX: Use year_death from the dates div when full date unavailable.
+        // This stores a best-effort date (January 1 of the death year) rather than
+        // today's date, which was the previous broken behaviour.
+        if ( empty( $date_of_death ) && ! empty( $card['year_death'] ) ) {
+            $date_of_death = $card['year_death'] . '-01-01';
+        }
+        if ( empty( $date_of_birth ) && ! empty( $card['year_birth'] ) ) {
+            $date_of_birth = $card['year_birth'] . '-01-01';
+        }
+
+        // v3.6.0: Fall back to published_date as an approximate death date
+        // (obituaries are typically published within days of death).
+        if ( empty( $date_of_death ) && ! empty( $card['published_date'] ) ) {
+            $date_of_death = $this->normalize_date( $card['published_date'] );
+        }
 
         // Truncate to facts-only length
         if ( strlen( $description ) > 200 ) {
