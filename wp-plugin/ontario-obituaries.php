@@ -425,6 +425,63 @@ function ontario_obituaries_create_page() {
 }
 
 /**
+ * One-time cleanup: remove duplicate obituaries from the database.
+ *
+ * Duplicates = same name + same date_of_death. Keeps the row with the
+ * longest description (best content). Runs once per deploy via an
+ * option flag, so it doesn't slow down every page load.
+ */
+function ontario_obituaries_cleanup_duplicates() {
+    if ( get_option( 'ontario_obituaries_dedup_v1' ) ) {
+        return;
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ontario_obituaries';
+
+    // Check table exists
+    if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+        return;
+    }
+
+    // Find duplicates: same name + same death date, keep the one with the longest description
+    $duplicates = $wpdb->get_results(
+        "SELECT name, date_of_death, COUNT(*) as cnt
+         FROM `{$table}`
+         WHERE suppressed_at IS NULL
+         GROUP BY name, date_of_death
+         HAVING cnt > 1"
+    );
+
+    $removed = 0;
+    foreach ( $duplicates as $dup ) {
+        // Get all rows for this person, ordered by description length DESC
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, CHAR_LENGTH(COALESCE(description, '')) as desc_len
+             FROM `{$table}`
+             WHERE name = %s AND date_of_death = %s AND suppressed_at IS NULL
+             ORDER BY desc_len DESC, id ASC",
+            $dup->name,
+            $dup->date_of_death
+        ) );
+
+        // Keep the first (longest description), delete the rest
+        $keep_id = $rows[0]->id;
+        for ( $i = 1; $i < count( $rows ); $i++ ) {
+            $wpdb->delete( $table, array( 'id' => $rows[ $i ]->id ), array( '%d' ) );
+            $removed++;
+        }
+    }
+
+    update_option( 'ontario_obituaries_dedup_v1', true );
+
+    if ( $removed > 0 ) {
+        ontario_obituaries_log( sprintf( 'Duplicate cleanup: removed %d duplicate obituaries', $removed ), 'info' );
+    }
+}
+add_action( 'init', 'ontario_obituaries_cleanup_duplicates', 5 );
+
+/**
  * One-time page creation on next page load (for updates via WP Pusher
  * where the activation hook doesn't re-fire).
  */

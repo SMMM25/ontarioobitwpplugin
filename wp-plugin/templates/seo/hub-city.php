@@ -84,11 +84,9 @@ get_header();
                     <?php endif; ?>
 
                     <div style="margin-top: 10px; font-size: 0.85em;">
-                        <?php if ( ! empty( $obit->source_url ) ) : ?>
-                            <a href="<?php echo esc_url( $obit->source_url ); ?>" target="_blank" rel="noopener noreferrer" style="color: #3498db;">
-                                <?php esc_html_e( 'View Original', 'ontario-obituaries' ); ?> &rarr;
-                            </a>
-                        <?php endif; ?>
+                        <a href="<?php echo esc_url( $obit_url ); ?>" style="color: #3498db;">
+                            <?php esc_html_e( 'Read More', 'ontario-obituaries' ); ?> &rarr;
+                        </a>
                     </div>
                 </article>
             <?php endforeach; ?>

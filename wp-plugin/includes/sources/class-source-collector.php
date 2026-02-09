@@ -240,8 +240,14 @@ class Ontario_Obituaries_Source_Collector {
     /**
      * Insert a normalized obituary record.
      *
-     * Uses INSERT IGNORE for exact dedup on the unique key.
-     * Also stores the new provenance columns.
+     * Deduplication strategy (layered):
+     *   1. Cross-source fuzzy dedup: same name + death date = skip
+     *      (catches the same person scraped from different sources)
+     *   2. INSERT IGNORE on unique key (name, date_of_death, funeral_home)
+     *      (catches exact duplicates from the same source)
+     *
+     * When a cross-source duplicate IS found, we enrich the existing record
+     * if the new source has a longer description (better content wins).
      *
      * @param array  $record     Normalized obituary data.
      * @param string $table_name Full table name.
@@ -250,6 +256,58 @@ class Ontario_Obituaries_Source_Collector {
     private function insert_obituary( $record, $table_name ) {
         global $wpdb;
 
+        // ── Cross-source dedup: same name + same death date ───────────────
+        // Normalise the name for fuzzy matching (strip titles, extra spaces).
+        $clean_name = $this->normalize_name_for_dedup( $record['name'] );
+
+        $existing = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id, description, source_url, funeral_home FROM `{$table_name}`
+             WHERE date_of_death = %s
+               AND suppressed_at IS NULL
+             ORDER BY id ASC",
+            $record['date_of_death']
+        ) );
+
+        // Check all records with the same death date for a name match
+        if ( $existing ) {
+            $candidates = $wpdb->get_results( $wpdb->prepare(
+                "SELECT id, name, description, source_url, funeral_home FROM `{$table_name}`
+                 WHERE date_of_death = %s
+                   AND suppressed_at IS NULL",
+                $record['date_of_death']
+            ) );
+
+            foreach ( $candidates as $candidate ) {
+                $existing_clean = $this->normalize_name_for_dedup( $candidate->name );
+
+                // Match if names are identical after normalization, or one contains the other
+                if ( $existing_clean === $clean_name
+                     || ( strlen( $clean_name ) > 5 && strlen( $existing_clean ) > 5
+                          && ( false !== strpos( $existing_clean, $clean_name )
+                               || false !== strpos( $clean_name, $existing_clean ) ) )
+                ) {
+                    // Duplicate found — enrich if new source has better content
+                    $new_desc_len = isset( $record['description'] ) ? strlen( $record['description'] ) : 0;
+                    $old_desc_len = strlen( $candidate->description );
+
+                    if ( $new_desc_len > $old_desc_len ) {
+                        // New source has a better description — update the existing record
+                        $update_data = array( 'description' => $record['description'] );
+
+                        // Also fill in funeral_home if the existing one is empty
+                        if ( empty( $candidate->funeral_home ) && ! empty( $record['funeral_home'] ) ) {
+                            $update_data['funeral_home'] = $record['funeral_home'];
+                        }
+
+                        $wpdb->update( $table_name, $update_data, array( 'id' => $candidate->id ) );
+                    }
+
+                    return false; // Not a new insert — it's a cross-source duplicate
+                }
+            }
+        }
+
+        // ── Standard INSERT IGNORE (catches exact dupes from same source) ──
         $sql = $wpdb->prepare(
             "INSERT IGNORE INTO `{$table_name}`
                 (name, date_of_birth, date_of_death, age, funeral_home, location,
@@ -274,6 +332,33 @@ class Ontario_Obituaries_Source_Collector {
         $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
 
         return $wpdb->rows_affected > 0;
+    }
+
+    /**
+     * Normalize a name for fuzzy dedup comparison.
+     *
+     * Strips common prefixes/suffixes, collapses whitespace,
+     * lowercases, and removes non-alpha characters.
+     *
+     * @param string $name Raw name.
+     * @return string Normalized name.
+     */
+    private function normalize_name_for_dedup( $name ) {
+        $name = strtolower( trim( $name ) );
+
+        // Remove common titles / suffixes
+        $name = preg_replace( '/\b(mr|mrs|ms|dr|jr|sr|ii|iii|obituary)\b\.?/i', '', $name );
+
+        // Remove parenthetical nicknames: "John (Jack) Smith" → "John Smith"
+        $name = preg_replace( '/\([^)]*\)/', '', $name );
+
+        // Remove non-alpha (keep spaces)
+        $name = preg_replace( '/[^a-z\s]/', '', $name );
+
+        // Collapse whitespace
+        $name = preg_replace( '/\s+/', ' ', trim( $name ) );
+
+        return $name;
     }
 
     /**

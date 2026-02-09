@@ -77,9 +77,10 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
 
         <footer style="border-top: 1px solid #e0e0e0; padding-top: 20px; margin-top: 30px;">
             <?php if ( ! empty( $obituary->source_url ) ) : ?>
-                <p>
-                    <a href="<?php echo esc_url( $obituary->source_url ); ?>" target="_blank" rel="noopener noreferrer" style="color: #3498db;">
-                        <?php esc_html_e( 'View Original Obituary', 'ontario-obituaries' ); ?> &rarr;
+                <p style="font-size: 0.8em; color: #999;">
+                    <?php esc_html_e( 'Source:', 'ontario-obituaries' ); ?>
+                    <a href="<?php echo esc_url( $obituary->source_url ); ?>" target="_blank" rel="noopener noreferrer nofollow" style="color: #999;">
+                        <?php echo esc_html( wp_parse_url( $obituary->source_url, PHP_URL_HOST ) ); ?>
                     </a>
                 </p>
             <?php endif; ?>
