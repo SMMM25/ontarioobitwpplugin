@@ -447,55 +447,88 @@ add_action( 'init', 'ontario_obituaries_maybe_create_page' );
  * already present. Runs once and stores a flag to avoid repeated checks.
  */
 function ontario_obituaries_add_to_menu() {
-    // Only run once.
-    if ( get_option( 'ontario_obituaries_menu_added' ) ) {
-        return;
-    }
-
     $page_id = get_option( 'ontario_obituaries_page_id' );
     if ( ! $page_id || ! get_post_status( $page_id ) ) {
         return;
     }
 
-    // Find the right menu — try by slug first, then by theme location, then first available.
-    $menu = wp_get_nav_menu_object( 'menu-monaco' );
-    if ( ! $menu ) {
-        $menu = wp_get_nav_menu_object( 'monaco' );
-    }
-    if ( ! $menu ) {
-        $locations = get_nav_menu_locations();
-        // Try common theme location names.
-        foreach ( array( 'primary', 'main', 'header', 'top', 'main-menu' ) as $loc ) {
-            if ( ! empty( $locations[ $loc ] ) ) {
-                $menu = wp_get_nav_menu_object( $locations[ $loc ] );
-                if ( $menu ) break;
-            }
-        }
-    }
-    if ( ! $menu ) {
-        // Last resort: grab the first menu that exists.
-        $menus = wp_get_nav_menus();
-        if ( ! empty( $menus ) ) {
-            $menu = $menus[0];
-        }
-    }
-    if ( ! $menu ) {
-        return; // No menus found — nothing we can do.
+    // Collect all menus and check every one for the Obituaries page.
+    $all_menus = wp_get_nav_menus();
+    if ( empty( $all_menus ) ) {
+        return;
     }
 
-    // Check if Obituaries is already in this menu.
-    $items = wp_get_nav_menu_items( $menu->term_id );
-    if ( $items ) {
-        foreach ( $items as $item ) {
-            if ( (int) $item->object_id === (int) $page_id && 'page' === $item->object ) {
-                update_option( 'ontario_obituaries_menu_added', true );
-                return; // Already in the menu.
+    // Check if Obituaries is already in ANY menu.
+    foreach ( $all_menus as $check_menu ) {
+        $items = wp_get_nav_menu_items( $check_menu->term_id );
+        if ( $items ) {
+            foreach ( $items as $item ) {
+                if ( (int) $item->object_id === (int) $page_id && 'page' === $item->object ) {
+                    update_option( 'ontario_obituaries_menu_added', true );
+                    return; // Already in a menu.
+                }
             }
         }
+    }
+
+    // Already attempted and succeeded before — don't re-add.
+    if ( get_option( 'ontario_obituaries_menu_added' ) ) {
+        return;
+    }
+
+    // Find the header menu. The site uses 'menu-monaco' (id from HTML).
+    // Try multiple detection strategies.
+    $target_menu = null;
+
+    // Strategy 1: Find menu containing the known menu items (Home, About us, etc.)
+    foreach ( $all_menus as $candidate ) {
+        $items = wp_get_nav_menu_items( $candidate->term_id );
+        if ( $items && count( $items ) >= 4 ) {
+            foreach ( $items as $item ) {
+                if ( in_array( strtolower( $item->title ), array( 'home', 'about us', 'catalog', 'gallery', 'contact us' ), true ) ) {
+                    $target_menu = $candidate;
+                    break 2;
+                }
+            }
+        }
+    }
+
+    // Strategy 2: Try by slug/name.
+    if ( ! $target_menu ) {
+        foreach ( array( 'menu-monaco', 'monaco', 'Monaco', 'Menu Monaco' ) as $slug ) {
+            $target_menu = wp_get_nav_menu_object( $slug );
+            if ( $target_menu ) break;
+        }
+    }
+
+    // Strategy 3: Try theme locations.
+    if ( ! $target_menu ) {
+        $locations = get_nav_menu_locations();
+        foreach ( array( 'primary', 'main', 'header', 'top', 'main-menu', 'primary-menu' ) as $loc ) {
+            if ( ! empty( $locations[ $loc ] ) ) {
+                $target_menu = wp_get_nav_menu_object( $locations[ $loc ] );
+                if ( $target_menu ) break;
+            }
+        }
+    }
+
+    // Strategy 4: First menu with 3+ items (likely the header nav).
+    if ( ! $target_menu ) {
+        foreach ( $all_menus as $candidate ) {
+            $items = wp_get_nav_menu_items( $candidate->term_id );
+            if ( $items && count( $items ) >= 3 ) {
+                $target_menu = $candidate;
+                break;
+            }
+        }
+    }
+
+    if ( ! $target_menu ) {
+        return;
     }
 
     // Add the Obituaries page to the menu.
-    $menu_item_id = wp_update_nav_menu_item( $menu->term_id, 0, array(
+    $menu_item_id = wp_update_nav_menu_item( $target_menu->term_id, 0, array(
         'menu-item-title'     => 'Obituaries',
         'menu-item-object'    => 'page',
         'menu-item-object-id' => $page_id,
@@ -505,7 +538,7 @@ function ontario_obituaries_add_to_menu() {
 
     if ( $menu_item_id && ! is_wp_error( $menu_item_id ) ) {
         update_option( 'ontario_obituaries_menu_added', true );
-        ontario_obituaries_log( 'Obituaries added to nav menu: ' . $menu->name . ' (item ID: ' . $menu_item_id . ')', 'info' );
+        ontario_obituaries_log( 'Obituaries added to nav menu: ' . $target_menu->name . ' (item ID: ' . $menu_item_id . ')', 'info' );
     }
 }
 
