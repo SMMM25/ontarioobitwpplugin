@@ -32,6 +32,12 @@ class Ontario_Obituaries_SEO {
         // Template redirect for our custom endpoints
         add_action( 'template_redirect', array( $this, 'handle_seo_pages' ) );
 
+        // Prevent WordPress from resolving the 'obituaries' page for our SEO URLs.
+        // WP tries to resolve /obituaries/ontario/ as child of the 'obituaries' page,
+        // which overrides our rewrite rules. This filter intercepts that resolution.
+        add_filter( 'pre_handle_404', array( $this, 'prevent_false_404' ), 10, 2 );
+        add_action( 'parse_request', array( $this, 'intercept_obituary_seo_urls' ), 1 );
+
         // Inject Schema.org JSON-LD
         add_action( 'wp_head', array( $this, 'output_schema_markup' ) );
 
@@ -53,6 +59,75 @@ class Ontario_Obituaries_SEO {
 
         // Handle verification tokens
         add_action( 'template_redirect', array( $this, 'handle_verification' ) );
+    }
+
+    /**
+     * Intercept requests that match our SEO URL patterns.
+     *
+     * WordPress's page resolution (`pagename` query var) matches /obituaries/ontario/
+     * as a child page of the 'obituaries' page, which prevents our rewrite rules
+     * from firing. This hook detects the pattern in the raw request and forces
+     * the correct query vars.
+     *
+     * @param WP $wp WordPress request object.
+     */
+    public function intercept_obituary_seo_urls( $wp ) {
+        $request = trim( $wp->request, '/' );
+
+        // Match: obituaries-sitemap.xml
+        if ( preg_match( '#^obituaries-sitemap\.xml$#', $request ) ) {
+            $wp->query_vars['ontario_obituaries_sitemap'] = '1';
+            // Clear the pagename if WP set it
+            unset( $wp->query_vars['pagename'] );
+            unset( $wp->query_vars['page'] );
+            return;
+        }
+
+        // Match: obituaries/ontario/{city}/{slug}-{id}/
+        if ( preg_match( '#^obituaries/ontario/([a-z0-9-]+)/([a-z0-9-]+)-(\d+)/?$#', $request, $m ) ) {
+            $wp->query_vars['ontario_obituaries_hub']  = 'ontario';
+            $wp->query_vars['ontario_obituaries_city'] = $m[1];
+            $wp->query_vars['ontario_obituaries_id']   = $m[3];
+            unset( $wp->query_vars['pagename'] );
+            unset( $wp->query_vars['page'] );
+            return;
+        }
+
+        // Match: obituaries/ontario/{city}/
+        if ( preg_match( '#^obituaries/ontario/([a-z0-9-]+)/?$#', $request, $m ) ) {
+            $wp->query_vars['ontario_obituaries_hub']  = 'ontario';
+            $wp->query_vars['ontario_obituaries_city'] = $m[1];
+            unset( $wp->query_vars['pagename'] );
+            unset( $wp->query_vars['page'] );
+            return;
+        }
+
+        // Match: obituaries/ontario/
+        if ( preg_match( '#^obituaries/ontario/?$#', $request ) ) {
+            $wp->query_vars['ontario_obituaries_hub'] = 'ontario';
+            unset( $wp->query_vars['pagename'] );
+            unset( $wp->query_vars['page'] );
+            return;
+        }
+    }
+
+    /**
+     * Prevent false 404s for our SEO pages.
+     *
+     * When WordPress resolves the request as a child page that doesn't exist,
+     * it returns 404. This filter checks if our query vars are set and prevents it.
+     *
+     * @param bool     $preempt Whether to preempt the 404 handling.
+     * @param WP_Query $query   The WP_Query instance.
+     * @return bool
+     */
+    public function prevent_false_404( $preempt, $query ) {
+        if ( ! empty( $query->query_vars['ontario_obituaries_hub'] ) ||
+             ! empty( $query->query_vars['ontario_obituaries_sitemap'] ) ) {
+            $query->is_404 = false;
+            return true; // Prevent default 404 handling
+        }
+        return $preempt;
     }
 
     /**
@@ -114,6 +189,16 @@ class Ontario_Obituaries_SEO {
         if ( empty( $hub ) ) {
             return;
         }
+
+        // Enqueue the plugin CSS on SEO pages so styles are consistent
+        $css_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/css/ontario-obituaries.css';
+        $css_ver  = file_exists( $css_file ) ? filemtime( $css_file ) : ONTARIO_OBITUARIES_VERSION;
+        wp_enqueue_style(
+            'ontario-obituaries-css',
+            ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/css/ontario-obituaries.css',
+            array(),
+            $css_ver
+        );
 
         // Verification tokens are handled by handle_verification() on template_redirect;
         // if a token is present on a hub URL, skip rendering and let that handler run.

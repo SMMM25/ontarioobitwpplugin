@@ -29,7 +29,7 @@ $site_url = get_site_url();
 ?>
 
 <!-- Main container -->
-<div class="ontario-obituaries-container" style="display: block; width: 100%; margin: 20px 0;">
+<div class="ontario-obituaries-container">
     <div class="ontario-obituaries-filters">
         <form method="get" class="ontario-obituaries-search-form">
             <?php

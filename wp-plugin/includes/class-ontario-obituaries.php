@@ -516,33 +516,36 @@ class Ontario_Obituaries {
                 'date_of_birth' => gmdate( 'Y-m-d', strtotime( '-80 years' ) ),
                 'date_of_death' => gmdate( 'Y-m-d', strtotime( '-2 days' ) ),
                 'age'           => 80,
-                'funeral_home'  => 'Toronto Funeral Services',
-                'location'      => 'Toronto',
-                'image_url'     => '',
-                'description'   => 'This is a test obituary for demonstration purposes. John enjoyed gardening, fishing, and spending time with his family.',
-                'source_url'    => home_url(),
+                'funeral_home'    => 'Toronto Funeral Services',
+                'location'        => 'Toronto',
+                'city_normalized' => 'Toronto',
+                'image_url'       => '',
+                'description'     => 'This is a test obituary for demonstration purposes. John enjoyed gardening, fishing, and spending time with his family.',
+                'source_url'      => home_url(),
             ),
             array(
                 'name'          => 'Mary Test Johnson',
                 'date_of_birth' => gmdate( 'Y-m-d', strtotime( '-75 years' ) ),
                 'date_of_death' => gmdate( 'Y-m-d', strtotime( '-3 days' ) ),
                 'age'           => 75,
-                'funeral_home'  => 'Ottawa Funeral Home',
-                'location'      => 'Ottawa',
-                'image_url'     => '',
-                'description'   => 'This is another test obituary. Mary was a dedicated teacher for over 30 years and loved by all her students.',
-                'source_url'    => home_url(),
+                'funeral_home'    => 'Ottawa Funeral Home',
+                'location'        => 'Ottawa',
+                'city_normalized' => 'Ottawa',
+                'image_url'       => '',
+                'description'     => 'This is another test obituary. Mary was a dedicated teacher for over 30 years and loved by all her students.',
+                'source_url'      => home_url(),
             ),
             array(
                 'name'          => 'Robert Test Williams',
                 'date_of_birth' => gmdate( 'Y-m-d', strtotime( '-90 years' ) ),
                 'date_of_death' => gmdate( 'Y-m-d', strtotime( '-1 day' ) ),
                 'age'           => 90,
-                'funeral_home'  => 'Hamilton Funeral Services',
-                'location'      => 'Hamilton',
-                'image_url'     => '',
-                'description'   => 'Robert was a respected community leader and devoted family man. This is a test obituary for debugging purposes.',
-                'source_url'    => home_url(),
+                'funeral_home'    => 'Hamilton Funeral Services',
+                'location'        => 'Hamilton',
+                'city_normalized' => 'Hamilton',
+                'image_url'       => '',
+                'description'     => 'Robert was a respected community leader and devoted family man. This is a test obituary for debugging purposes.',
+                'source_url'      => home_url(),
             ),
         );
 
@@ -552,18 +555,19 @@ class Ontario_Obituaries {
             $result = $wpdb->insert(
                 $table_name,
                 array(
-                    'name'          => $obituary['name'],
-                    'date_of_birth' => $obituary['date_of_birth'],
-                    'date_of_death' => $obituary['date_of_death'],
-                    'age'           => $obituary['age'],
-                    'funeral_home'  => $obituary['funeral_home'],
-                    'location'      => $obituary['location'],
-                    'image_url'     => $obituary['image_url'],
-                    'description'   => $obituary['description'],
-                    'source_url'    => $obituary['source_url'],
-                    'created_at'    => current_time( 'mysql' ),
+                    'name'            => $obituary['name'],
+                    'date_of_birth'   => $obituary['date_of_birth'],
+                    'date_of_death'   => $obituary['date_of_death'],
+                    'age'             => $obituary['age'],
+                    'funeral_home'    => $obituary['funeral_home'],
+                    'location'        => $obituary['location'],
+                    'city_normalized' => isset( $obituary['city_normalized'] ) ? $obituary['city_normalized'] : '',
+                    'image_url'       => $obituary['image_url'],
+                    'description'     => $obituary['description'],
+                    'source_url'      => $obituary['source_url'],
+                    'created_at'      => current_time( 'mysql' ),
                 ),
-                array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+                array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
             );
 
             if ( false !== $result ) {
@@ -823,11 +827,14 @@ class Ontario_Obituaries {
             .ontario-obituaries-error { color: #d63638; }
         ' );
 
+        $admin_js_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/js/ontario-obituaries-admin.js';
+        $admin_js_ver  = file_exists( $admin_js_file ) ? filemtime( $admin_js_file ) : ONTARIO_OBITUARIES_VERSION;
+
         wp_enqueue_script(
             'ontario-obituaries-admin-js',
             ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-admin.js',
             array( 'jquery' ),
-            ONTARIO_OBITUARIES_VERSION,
+            $admin_js_ver,
             true
         );
 
@@ -840,11 +847,14 @@ class Ontario_Obituaries {
 
         // Debug page JS
         if ( false !== strpos( $hook, 'ontario-obituaries-debug' ) ) {
+            $debug_js_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/js/ontario-obituaries-debug.js';
+            $debug_js_ver  = file_exists( $debug_js_file ) ? filemtime( $debug_js_file ) : ONTARIO_OBITUARIES_VERSION;
+
             wp_enqueue_script(
                 'ontario-obituaries-debug-js',
                 ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-debug.js',
                 array( 'jquery' ),
-                ONTARIO_OBITUARIES_VERSION,
+                $debug_js_ver,
                 true
             );
 
