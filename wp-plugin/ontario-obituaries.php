@@ -429,6 +429,12 @@ function ontario_obituaries_create_page() {
  * where the activation hook doesn't re-fire).
  */
 function ontario_obituaries_maybe_create_page() {
+    // v3.0.1: Reset stale menu flag so the improved detection can re-run.
+    if ( get_option( 'ontario_obituaries_menu_added' ) && ! get_option( 'ontario_obituaries_menu_v2' ) ) {
+        delete_option( 'ontario_obituaries_menu_added' );
+        update_option( 'ontario_obituaries_menu_v2', true );
+    }
+
     if ( get_option( 'ontario_obituaries_page_id' ) && get_post_status( get_option( 'ontario_obituaries_page_id' ) ) ) {
         // Page exists — make sure it's in the nav menu.
         ontario_obituaries_add_to_menu();
