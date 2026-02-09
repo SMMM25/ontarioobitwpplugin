@@ -145,8 +145,8 @@ class Ontario_Obituaries_Display {
         $args = wp_parse_args( $args, $defaults );
         $table = $this->table_name();
 
-        // Build WHERE
-        $where_clauses = array( '1=1' );
+        // Build WHERE — v3.0.0: exclude suppressed records
+        $where_clauses = array( '1=1', 'suppressed_at IS NULL' );
         $values        = array();
 
         if ( ! empty( $args['location'] ) ) {
@@ -300,7 +300,8 @@ class Ontario_Obituaries_Display {
         $args  = wp_parse_args( $args, $defaults );
         $table = $this->table_name();
 
-        $where_clauses = array( '1=1' );
+        // v3.0.0: exclude suppressed records
+        $where_clauses = array( '1=1', 'suppressed_at IS NULL' );
         $values        = array();
 
         if ( ! empty( $args['location'] ) ) {

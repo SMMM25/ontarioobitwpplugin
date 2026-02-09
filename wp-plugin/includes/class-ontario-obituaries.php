@@ -687,16 +687,19 @@ class Ontario_Obituaries {
             $desc = $this->safe_truncate( $desc, 500 );
 
             $obituaries[] = array(
-                'id'            => intval( $row->id ),
-                'name'          => isset( $row->name )          ? sanitize_text_field( $row->name )          : '',
-                'date_of_birth' => isset( $row->date_of_birth ) && '0000-00-00' !== $row->date_of_birth ? $row->date_of_birth : null,
-                'date_of_death' => isset( $row->date_of_death ) ? $row->date_of_death                       : '',
-                'age'           => isset( $row->age ) && $row->age > 0 ? intval( $row->age )                : null,
-                'funeral_home'  => isset( $row->funeral_home )  ? sanitize_text_field( $row->funeral_home )  : '',
-                'location'      => isset( $row->location )      ? sanitize_text_field( $row->location )      : '',
-                'image_url'     => isset( $row->image_url )     ? esc_url_raw( $row->image_url )             : '',
-                'source_url'    => isset( $row->source_url )    ? esc_url_raw( $row->source_url )            : '',
-                'description'   => wp_strip_all_tags( $desc ),
+                'id'              => intval( $row->id ),
+                'name'            => isset( $row->name )          ? sanitize_text_field( $row->name )          : '',
+                'date_of_birth'   => isset( $row->date_of_birth ) && '0000-00-00' !== $row->date_of_birth ? $row->date_of_birth : null,
+                'date_of_death'   => isset( $row->date_of_death ) ? $row->date_of_death                       : '',
+                'age'             => isset( $row->age ) && $row->age > 0 ? intval( $row->age )                : null,
+                'funeral_home'    => isset( $row->funeral_home )  ? sanitize_text_field( $row->funeral_home )  : '',
+                'location'        => isset( $row->location )      ? sanitize_text_field( $row->location )      : '',
+                'image_url'       => isset( $row->image_url )     ? esc_url_raw( $row->image_url )             : '',
+                'source_url'      => isset( $row->source_url )    ? esc_url_raw( $row->source_url )            : '',
+                'description'     => wp_strip_all_tags( $desc ),
+                'source_domain'   => isset( $row->source_domain ) ? sanitize_text_field( $row->source_domain ) : '',
+                'source_type'     => isset( $row->source_type )   ? sanitize_text_field( $row->source_type )   : '',
+                'city_normalized' => isset( $row->city_normalized ) ? sanitize_text_field( $row->city_normalized ) : '',
             );
         }
 
@@ -767,8 +770,10 @@ class Ontario_Obituaries {
         );
 
         wp_localize_script( 'ontario-obituaries-js', 'ontario_obituaries_ajax', array(
-            'ajax_url' => admin_url( 'admin-ajax.php' ),
-            'nonce'    => wp_create_nonce( 'ontario-obituaries-nonce' ),
+            'ajax_url'        => admin_url( 'admin-ajax.php' ),
+            'nonce'           => wp_create_nonce( 'ontario-obituaries-nonce' ),
+            'i18n_submit'     => __( 'Submit Removal Request', 'ontario-obituaries' ),
+            'i18n_submitting' => __( 'Submitting...', 'ontario-obituaries' ),
         ) );
 
         // FIX-B/C: Always enqueue the sharer-only Facebook script (no SDK dependency)

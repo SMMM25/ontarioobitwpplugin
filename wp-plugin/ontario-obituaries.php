@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Ontario Obituaries
- * Description: Displays obituaries from Ontario Canada - Compatible with Obituary Assistant
- * Version: 2.2.0
+ * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
+ * Version: 3.0.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '2.2.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.0.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -95,12 +95,46 @@ function ontario_obituaries_log( $message, $level = 'info' ) {
  * Include required files
  */
 function ontario_obituaries_includes() {
+    // Core classes (v2.x)
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-display.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-ajax.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-admin.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-debug.php';
+
+    // v3.0 Source Adapter Architecture — registry always needed for suppression checks
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/interface-source-adapter.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-source-adapter-base.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-source-registry.php';
+
+    // Pipelines — suppression is needed on frontend for SEO/noindex
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/pipelines/class-suppression-manager.php';
+
+    // SEO — needed on frontend for rewrite rules
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
+
+    // P2-1 FIX: Only load collector, adapters, and image pipeline in admin/cron contexts
+    if ( is_admin() || wp_doing_cron() || ( defined( 'DOING_AJAX' ) && DOING_AJAX ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-source-collector.php';
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/pipelines/class-image-pipeline.php';
+
+        // Source Adapters
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-generic-html.php';
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-frontrunner.php';
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-tribute-archive.php';
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-legacy-com.php';
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-remembering-ca.php';
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-dignity-memorial.php';
+
+        // Register all adapters with the Source Registry
+        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Generic_HTML() );
+        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_FrontRunner() );
+        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Tribute_Archive() );
+        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Legacy_Com() );
+        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Remembering_Ca() );
+        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Dignity_Memorial() );
+    }
 
     $ajax_handler = new Ontario_Obituaries_Ajax();
     $ajax_handler->init();
@@ -110,6 +144,10 @@ function ontario_obituaries_includes() {
 
     $debug = new Ontario_Obituaries_Debug();
     $debug->init();
+
+    // Initialize SEO
+    $seo = new Ontario_Obituaries_SEO();
+    $seo->init();
 }
 
 /**
@@ -146,7 +184,7 @@ function ontario_obituaries_activate() {
     $charset_collate = $wpdb->get_charset_collate();
     $table_name      = $wpdb->prefix . 'ontario_obituaries';
 
-    // P0-3 FIX: funeral_home and location are NOT NULL DEFAULT ''
+    // v3.0.0: Extended schema with provenance + suppression fields
     $sql = "CREATE TABLE IF NOT EXISTS $table_name (
         id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
         name varchar(200) NOT NULL,
@@ -156,8 +194,16 @@ function ontario_obituaries_activate() {
         funeral_home varchar(200) NOT NULL DEFAULT '',
         location varchar(100) NOT NULL DEFAULT '',
         image_url varchar(2083) DEFAULT NULL,
+        image_local_url varchar(2083) DEFAULT NULL,
+        image_thumb_url varchar(2083) DEFAULT NULL,
         description text DEFAULT NULL,
         source_url varchar(2083) DEFAULT NULL,
+        source_domain varchar(255) NOT NULL DEFAULT '',
+        source_type varchar(50) NOT NULL DEFAULT '',
+        city_normalized varchar(100) NOT NULL DEFAULT '',
+        provenance_hash varchar(40) NOT NULL DEFAULT '',
+        suppressed_at datetime DEFAULT NULL,
+        suppressed_reason varchar(100) DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
         KEY idx_date_death (date_of_death),
@@ -165,44 +211,136 @@ function ontario_obituaries_activate() {
         KEY idx_funeral_home (funeral_home),
         KEY idx_name (name(100)),
         KEY idx_created_at (created_at),
+        KEY idx_source_domain (source_domain),
+        KEY idx_source_type (source_type),
+        KEY idx_city_normalized (city_normalized),
+        KEY idx_provenance_hash (provenance_hash),
+        KEY idx_suppressed_at (suppressed_at),
         UNIQUE KEY idx_unique_obituary (name(100), date_of_death, funeral_home(100))
     ) $charset_collate;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
     dbDelta( $sql );
 
-    // P0-2 QC FIX: Explicit column migration for existing installs
-    // dbDelta does NOT reliably alter NULL/DEFAULT constraints on existing columns,
-    // so we explicitly ALTER TABLE when upgrading from a previous version.
     $current_db_version = get_option( 'ontario_obituaries_db_version', '0' );
 
+    // P0-2 QC FIX: Explicit column migration for v2.x → v2.2.0
     if ( version_compare( $current_db_version, '2.2.0', '<' ) ) {
-        // Check if funeral_home needs correction (nullable OR wrong default)
         $fh_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$table_name}` LIKE 'funeral_home'" );
         if ( $fh_col && ( 'YES' === $fh_col->Null || '' !== (string) $fh_col->Default ) ) {
             $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY funeral_home varchar(200) NOT NULL DEFAULT ''" );
         }
 
-        // Check if location needs correction (nullable OR wrong default)
         $loc_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$table_name}` LIKE 'location'" );
         if ( $loc_col && ( 'YES' === $loc_col->Null || '' !== (string) $loc_col->Default ) ) {
             $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY location varchar(100) NOT NULL DEFAULT ''" );
         }
 
-        // Migrate any existing NULL data to empty string
         $wpdb->query( "UPDATE `{$table_name}` SET funeral_home = '' WHERE funeral_home IS NULL" );
         $wpdb->query( "UPDATE `{$table_name}` SET location = '' WHERE location IS NULL" );
+    }
+
+    // v3.0.0 migration: Add new columns if upgrading from < 3.0.0
+    if ( version_compare( $current_db_version, '3.0.0', '<' ) ) {
+        // P2-4 FIX: Use prepare() for the INFORMATION_SCHEMA query
+        $existing_cols = $wpdb->get_col( $wpdb->prepare(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table_name
+        ) );
+
+        $new_columns = array(
+            'source_domain'    => "ALTER TABLE `{$table_name}` ADD COLUMN source_domain varchar(255) NOT NULL DEFAULT '' AFTER source_url",
+            'source_type'      => "ALTER TABLE `{$table_name}` ADD COLUMN source_type varchar(50) NOT NULL DEFAULT '' AFTER source_domain",
+            'city_normalized'  => "ALTER TABLE `{$table_name}` ADD COLUMN city_normalized varchar(100) NOT NULL DEFAULT '' AFTER source_type",
+            'provenance_hash'  => "ALTER TABLE `{$table_name}` ADD COLUMN provenance_hash varchar(40) NOT NULL DEFAULT '' AFTER city_normalized",
+            'suppressed_at'    => "ALTER TABLE `{$table_name}` ADD COLUMN suppressed_at datetime DEFAULT NULL AFTER provenance_hash",
+            'suppressed_reason' => "ALTER TABLE `{$table_name}` ADD COLUMN suppressed_reason varchar(100) DEFAULT NULL AFTER suppressed_at",
+            'image_local_url'  => "ALTER TABLE `{$table_name}` ADD COLUMN image_local_url varchar(2083) DEFAULT NULL AFTER image_url",
+            'image_thumb_url'  => "ALTER TABLE `{$table_name}` ADD COLUMN image_thumb_url varchar(2083) DEFAULT NULL AFTER image_local_url",
+        );
+
+        foreach ( $new_columns as $col_name => $alter_sql ) {
+            if ( ! in_array( $col_name, $existing_cols, true ) ) {
+                $wpdb->query( $alter_sql );
+            }
+        }
+
+        // Add new indexes if missing
+        $indexes = $wpdb->get_results( "SHOW INDEX FROM `{$table_name}`", ARRAY_A );
+        $index_names = array_column( $indexes, 'Key_name' );
+
+        $new_indexes = array(
+            'idx_source_domain'    => "ALTER TABLE `{$table_name}` ADD KEY idx_source_domain (source_domain)",
+            'idx_source_type'      => "ALTER TABLE `{$table_name}` ADD KEY idx_source_type (source_type)",
+            'idx_city_normalized'  => "ALTER TABLE `{$table_name}` ADD KEY idx_city_normalized (city_normalized)",
+            'idx_provenance_hash'  => "ALTER TABLE `{$table_name}` ADD KEY idx_provenance_hash (provenance_hash)",
+            'idx_suppressed_at'    => "ALTER TABLE `{$table_name}` ADD KEY idx_suppressed_at (suppressed_at)",
+        );
+
+        foreach ( $new_indexes as $idx_name => $idx_sql ) {
+            if ( ! in_array( $idx_name, $index_names, true ) ) {
+                $wpdb->query( $idx_sql );
+            }
+        }
+    }
+
+    // v3.0.0: Create source registry table
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-source-registry.php';
+    Ontario_Obituaries_Source_Registry::create_table();
+
+    // v3.0.0: Create suppressions table (P0-SUP FIX: updated schema with suppress-after-verify)
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/pipelines/class-suppression-manager.php';
+    Ontario_Obituaries_Suppression_Manager::create_table();
+
+    // v3.0.0: Migrate suppressions table for suppress-after-verify schema changes
+    $supp_table = $wpdb->prefix . 'ontario_obituaries_suppressions';
+    $supp_cols  = $wpdb->get_col( $wpdb->prepare(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+        $supp_table
+    ) );
+    if ( ! empty( $supp_cols ) ) {
+        // Add new columns if they don't exist (dbDelta may miss ALTER on existing tables)
+        $supp_migrations = array(
+            'token_created_at' => "ALTER TABLE `{$supp_table}` ADD COLUMN token_created_at datetime DEFAULT NULL AFTER verification_token",
+            'requester_ip'     => "ALTER TABLE `{$supp_table}` ADD COLUMN requester_ip varchar(45) NOT NULL DEFAULT '' AFTER reviewed_at",
+            'created_at'       => "ALTER TABLE `{$supp_table}` ADD COLUMN created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER do_not_republish",
+        );
+        foreach ( $supp_migrations as $col => $sql ) {
+            if ( ! in_array( $col, $supp_cols, true ) ) {
+                $wpdb->query( $sql );
+            }
+        }
+
+        // Modify suppressed_at to allow NULL (suppress-after-verify requires NULL default)
+        $supp_at_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$supp_table}` LIKE 'suppressed_at'" );
+        if ( $supp_at_col && 'NO' === $supp_at_col->Null ) {
+            $wpdb->query( "ALTER TABLE `{$supp_table}` MODIFY suppressed_at datetime DEFAULT NULL" );
+        }
+
+        // Modify do_not_republish default to 0 (was 1; now 0 until verified)
+        $dnr_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$supp_table}` LIKE 'do_not_republish'" );
+        if ( $dnr_col && '1' === (string) $dnr_col->Default ) {
+            $wpdb->query( "ALTER TABLE `{$supp_table}` MODIFY do_not_republish tinyint(1) NOT NULL DEFAULT 0" );
+        }
+    }
+
+    // v3.0.0: Seed default sources on fresh install
+    if ( version_compare( $current_db_version, '3.0.0', '<' ) ) {
+        Ontario_Obituaries_Source_Registry::seed_defaults();
     }
 
     update_option( 'ontario_obituaries_db_version', ONTARIO_OBITUARIES_VERSION );
     set_transient( 'ontario_obituaries_activation_notice', true, 300 );
 
-    // P0-4 FIX: Schedule cron at the configured time
+    // Schedule cron
     $settings  = ontario_obituaries_get_settings();
-    $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'daily';
+    // P0-4 FIX: Whitelist valid WP cron recurrences
+    $allowed_frequencies = array( 'hourly', 'twicedaily', 'daily', 'weekly' );
+    $frequency = isset( $settings['frequency'] ) && in_array( $settings['frequency'], $allowed_frequencies, true )
+        ? $settings['frequency']
+        : 'daily';
     $time      = isset( $settings['time'] ) ? $settings['time'] : '03:00';
 
-    // P0-1 QC FIX: Clear any stale/duplicate schedules, then schedule fresh
     wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
     $scheduled = wp_schedule_event(
         ontario_obituaries_next_cron_timestamp( $time ),
@@ -213,11 +351,14 @@ function ontario_obituaries_activate() {
         ontario_obituaries_log( 'Failed to schedule cron on activation (frequency: ' . $frequency . ', time: ' . $time . ')', 'error' );
     }
 
-    // BUG-05 FIX: Load scraper explicitly before use at activation
-    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
-    if ( class_exists( 'Ontario_Obituaries_Scraper' ) ) {
-        $scraper = new Ontario_Obituaries_Scraper();
-        $scraper->run_now();
+    // v3.0.0: Flush rewrite rules for SEO URLs
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
+    Ontario_Obituaries_SEO::flush_rules();
+
+    // P0-1 FIX: Schedule initial collection as a one-time cron event
+    // instead of running synchronously during activation (which causes timeouts).
+    if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+        wp_schedule_single_event( time() + 30, 'ontario_obituaries_initial_collection' );
     }
 }
 register_activation_hook( __FILE__, 'ontario_obituaries_activate' );
@@ -233,19 +374,30 @@ function ontario_obituaries_deactivate() {
 
     // P0-1 QC FIX: Clear ALL scheduled instances, not just the next one
     wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
+    wp_clear_scheduled_hook( 'ontario_obituaries_initial_collection' );
+
+    // v3.0.0: Remove SEO rewrite rules
+    flush_rewrite_rules();
 }
 register_deactivation_hook( __FILE__, 'ontario_obituaries_deactivate' );
 
 /**
- * Scheduled task hook for collecting obituaries
+ * Scheduled task hook for collecting obituaries.
+ * v3.0.0: Uses Source Collector (adapter-based) as primary, falls back to legacy scraper.
  */
 function ontario_obituaries_scheduled_collection() {
-    if ( ! class_exists( 'Ontario_Obituaries_Scraper' ) ) {
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
+    // v3.0.0: Use the new Source Collector
+    if ( class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+        $collector = new Ontario_Obituaries_Source_Collector();
+        $results   = $collector->collect();
+    } else {
+        // Fallback to legacy scraper
+        if ( ! class_exists( 'Ontario_Obituaries_Scraper' ) ) {
+            require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
+        }
+        $scraper = new Ontario_Obituaries_Scraper();
+        $results = $scraper->collect();
     }
-
-    $scraper = new Ontario_Obituaries_Scraper();
-    $results = $scraper->collect();
 
     update_option( 'ontario_obituaries_last_collection', array(
         'timestamp' => current_time( 'mysql' ),
@@ -256,12 +408,19 @@ function ontario_obituaries_scheduled_collection() {
     delete_transient( 'ontario_obituaries_locations_cache' );
     delete_transient( 'ontario_obituaries_funeral_homes_cache' );
 
-    // P2-13: errors are stored by the scraper; clear stale errors if scrape succeeded
     if ( empty( $results['errors'] ) ) {
         delete_option( 'ontario_obituaries_last_scrape_errors' );
     }
 }
 add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection' );
+
+/**
+ * P0-1 FIX: One-time initial collection (runs via WP-Cron after activation).
+ */
+function ontario_obituaries_initial_collection() {
+    ontario_obituaries_scheduled_collection();
+}
+add_action( 'ontario_obituaries_initial_collection', 'ontario_obituaries_initial_collection' );
 
 /**
  * Admin notices hook
@@ -356,13 +515,14 @@ function ontario_obituaries_render_dashboard_widget() {
         return;
     }
 
-    $total_count     = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table_name}`" );
+    // P1-3 FIX: Exclude suppressed obituaries from dashboard counts
+    $total_count     = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table_name}` WHERE suppressed_at IS NULL" );
     $last_week_count = (int) $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM `{$table_name}` WHERE date_of_death >= %s",
+        "SELECT COUNT(*) FROM `{$table_name}` WHERE date_of_death >= %s AND suppressed_at IS NULL",
         gmdate( 'Y-m-d', strtotime( '-7 days' ) )
     ) );
     $source_counts = $wpdb->get_results(
-        "SELECT funeral_home, COUNT(*) as count FROM `{$table_name}` WHERE funeral_home != '' GROUP BY funeral_home ORDER BY count DESC LIMIT 10"
+        "SELECT funeral_home, COUNT(*) as count FROM `{$table_name}` WHERE funeral_home != '' AND suppressed_at IS NULL GROUP BY funeral_home ORDER BY count DESC LIMIT 10"
     );
     $last_collection = get_option( 'ontario_obituaries_last_collection' );
 

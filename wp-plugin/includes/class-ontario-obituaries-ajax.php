@@ -6,6 +6,7 @@
  *
  * FIX LOG:
  *  P0-1  : Action name matched to JS (ontario_obituaries_get_detail)
+ *  P0-SUP: Added removal request AJAX handler with nonce + honeypot + rate limiting
  *  P1-11 : Obituary Assistant endpoint now requires nonce + manage_options cap
  */
 
@@ -26,6 +27,10 @@ class Ontario_Obituaries_Ajax {
 
         // Admin deletion
         add_action( 'wp_ajax_ontario_obituaries_delete', array( $this, 'delete_obituary' ) );
+
+        // Public removal request (logged-in + logged-out) — P0-SUP FIX
+        add_action( 'wp_ajax_ontario_obituaries_removal_request',        array( $this, 'handle_removal_request' ) );
+        add_action( 'wp_ajax_nopriv_ontario_obituaries_removal_request', array( $this, 'handle_removal_request' ) );
 
         // Integration with Obituary Assistant (P1-11 FIX: tightened auth)
         if ( function_exists( 'ontario_obituaries_check_dependency' ) && ontario_obituaries_check_dependency() ) {
@@ -94,6 +99,57 @@ class Ontario_Obituaries_Ajax {
             'message' => __( 'Obituary deleted successfully.', 'ontario-obituaries' ),
             'id'      => $id,
         ) );
+    }
+
+    /**
+     * Handle a public removal request (P0-SUP FIX).
+     *
+     * Security layers:
+     *   1. Nonce verification (ontario-obituaries-nonce)
+     *   2. Honeypot field check (must be empty)
+     *   3. Rate limiting via Suppression_Manager::is_rate_limited()
+     *   4. Deduplication via Suppression_Manager (internal)
+     *   5. Obituary is NOT suppressed immediately — suppress-after-verify
+     */
+    public function handle_removal_request() {
+        // 1. Nonce check.
+        check_ajax_referer( 'ontario-obituaries-nonce', 'nonce' );
+
+        // 2. Honeypot: the "website" field must be empty (bots fill it).
+        if ( ! empty( $_POST['website'] ) ) {
+            wp_send_json_error( array( 'message' => __( 'Invalid submission.', 'ontario-obituaries' ) ) );
+        }
+
+        // 3. Rate limiting.
+        if ( class_exists( 'Ontario_Obituaries_Suppression_Manager' ) && Ontario_Obituaries_Suppression_Manager::is_rate_limited() ) {
+            wp_send_json_error( array( 'message' => __( 'Too many requests. Please try again later.', 'ontario-obituaries' ) ) );
+        }
+
+        // 4. Collect and sanitize inputs.
+        $obituary_id  = isset( $_POST['obituary_id'] )  ? absint( $_POST['obituary_id'] ) : 0;
+        $name         = isset( $_POST['name'] )         ? sanitize_text_field( wp_unslash( $_POST['name'] ) )         : '';
+        $email        = isset( $_POST['email'] )        ? sanitize_email( wp_unslash( $_POST['email'] ) )             : '';
+        $relationship = isset( $_POST['relationship'] ) ? sanitize_text_field( wp_unslash( $_POST['relationship'] ) ) : '';
+        $notes        = isset( $_POST['notes'] )        ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) )    : '';
+
+        // 5. Delegate to the Suppression Manager (handles validation, dedupe, email).
+        if ( ! class_exists( 'Ontario_Obituaries_Suppression_Manager' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Suppression system is not available.', 'ontario-obituaries' ) ) );
+        }
+
+        $result = Ontario_Obituaries_Suppression_Manager::submit_removal_request(
+            $obituary_id,
+            $name,
+            $email,
+            $relationship,
+            $notes
+        );
+
+        if ( $result['success'] ) {
+            wp_send_json_success( array( 'message' => $result['message'] ) );
+        } else {
+            wp_send_json_error( array( 'message' => $result['message'] ) );
+        }
     }
 
     /**

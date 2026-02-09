@@ -168,6 +168,13 @@ $site_url = get_site_url();
                                 <span class="dashicons dashicons-facebook-alt" aria-hidden="true"></span>
                                 <?php esc_html_e( 'Share', 'ontario-obituaries' ); ?>
                             </button>
+
+                            <a href="#" class="ontario-obituaries-remove-link"
+                               data-id="<?php echo esc_attr( $obituary->id ); ?>"
+                               data-name="<?php echo esc_attr( $obituary->name ); ?>"
+                               title="<?php esc_attr_e( 'Request removal', 'ontario-obituaries' ); ?>">
+                                <span class="dashicons dashicons-flag" aria-hidden="true"></span>
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -212,11 +219,50 @@ $site_url = get_site_url();
         </div>
     <?php endif; ?>
 
+    <!-- Removal Request Form (v3.0.0 — P0-SUP FIX: suppress-after-verify) -->
+    <div id="ontario-obituaries-removal-form" class="ontario-obituaries-removal-form" style="display:none;">
+        <h3><?php esc_html_e( 'Request Obituary Removal', 'ontario-obituaries' ); ?></h3>
+        <p><?php esc_html_e( 'If you are a family member or funeral home representative and wish to have a listing removed, please fill out the form below. A verification email will be sent to you; once confirmed, the listing will be removed from public view.', 'ontario-obituaries' ); ?></p>
+        <form id="ontario-obituaries-removal-submit">
+            <input type="hidden" id="removal-obituary-id" value="">
+            <?php // Honeypot field — must remain empty. Bots that auto-fill it are rejected. ?>
+            <div style="position:absolute;left:-9999px;" aria-hidden="true">
+                <label for="removal-website">Website</label>
+                <input type="text" id="removal-website" name="website" tabindex="-1" autocomplete="off" value="">
+            </div>
+            <p>
+                <label for="removal-name"><?php esc_html_e( 'Your Name', 'ontario-obituaries' ); ?> <span class="required">*</span></label>
+                <input type="text" id="removal-name" required>
+            </p>
+            <p>
+                <label for="removal-email"><?php esc_html_e( 'Your Email', 'ontario-obituaries' ); ?> <span class="required">*</span></label>
+                <input type="email" id="removal-email" required>
+            </p>
+            <p>
+                <label for="removal-relationship"><?php esc_html_e( 'Relationship to Deceased', 'ontario-obituaries' ); ?></label>
+                <select id="removal-relationship">
+                    <option value=""><?php esc_html_e( 'Select...', 'ontario-obituaries' ); ?></option>
+                    <option value="family"><?php esc_html_e( 'Family Member', 'ontario-obituaries' ); ?></option>
+                    <option value="funeral_home"><?php esc_html_e( 'Funeral Home Representative', 'ontario-obituaries' ); ?></option>
+                    <option value="executor"><?php esc_html_e( 'Estate Executor', 'ontario-obituaries' ); ?></option>
+                    <option value="other"><?php esc_html_e( 'Other', 'ontario-obituaries' ); ?></option>
+                </select>
+            </p>
+            <p>
+                <label for="removal-notes"><?php esc_html_e( 'Additional Details (optional)', 'ontario-obituaries' ); ?></label>
+                <textarea id="removal-notes" rows="3"></textarea>
+            </p>
+            <button type="submit" class="ontario-obituaries-removal-btn"><?php esc_html_e( 'Submit Removal Request', 'ontario-obituaries' ); ?></button>
+            <button type="button" class="ontario-obituaries-removal-cancel"><?php esc_html_e( 'Cancel', 'ontario-obituaries' ); ?></button>
+        </form>
+    </div>
+
     <!-- Disclaimer -->
     <div class="ontario-obituaries-disclaimer">
         <hr class="ontario-obituaries-disclaimer-divider">
         <p class="ontario-obituaries-disclaimer-text">
-            <?php esc_html_e( 'Disclaimer: All obituary information posted has been obtained via publicly available data. If you wish to have your family\'s data removed, please contact the site administrator.', 'ontario-obituaries' ); ?>
+            <?php esc_html_e( 'Disclaimer: All obituary information posted has been obtained via publicly available data. Facts such as names, dates, and locations are not copyrightable. Original memorial content is created by Monaco Monuments.', 'ontario-obituaries' ); ?>
+            <a href="#" class="ontario-obituaries-request-removal" style="text-decoration:underline;"><?php esc_html_e( 'Request a removal or correction', 'ontario-obituaries' ); ?></a>.
         </p>
     </div>
 </div>

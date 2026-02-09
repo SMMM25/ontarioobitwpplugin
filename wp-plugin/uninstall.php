@@ -7,8 +7,8 @@
  * created by the plugin.
  *
  * P2-1  FIX: Added proper cleanup on plugin deletion.
- * FIX-E    : Removed flush_rewrite_rules() – this plugin does not register
- *            any custom rewrite rules, so flushing is unnecessary and slow.
+ * P1-6  FIX: Restored flush_rewrite_rules() — SEO class registers
+ *            /obituaries/ontario/ rewrite rules that must be cleaned up.
  *
  * @package OntarioObituaries
  */
@@ -20,9 +20,16 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 
 global $wpdb;
 
-// 1. Drop the custom table
-$table_name = $wpdb->prefix . 'ontario_obituaries';
-$wpdb->query( "DROP TABLE IF EXISTS `{$table_name}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+// 1. Drop all custom tables
+$tables = array(
+    $wpdb->prefix . 'ontario_obituaries',
+    $wpdb->prefix . 'ontario_obituaries_sources',
+    $wpdb->prefix . 'ontario_obituaries_suppressions',
+);
+
+foreach ( $tables as $table ) {
+    $wpdb->query( "DROP TABLE IF EXISTS `{$table}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+}
 
 // 2. Delete all plugin options
 $option_keys = array(
@@ -54,3 +61,7 @@ foreach ( $transient_keys as $key ) {
 
 // 4. Unschedule ALL cron event instances (P0-1 / P1-1 QC FIX)
 wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
+wp_clear_scheduled_hook( 'ontario_obituaries_initial_collection' );
+
+// 5. P1-6 FIX: Flush rewrite rules — SEO class registers /obituaries/ontario/ routes
+flush_rewrite_rules();
