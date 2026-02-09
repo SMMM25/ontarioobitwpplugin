@@ -360,8 +360,81 @@ function ontario_obituaries_activate() {
     if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
         wp_schedule_single_event( time() + 30, 'ontario_obituaries_initial_collection' );
     }
+
+    // v3.0.0: Auto-create the Obituaries page with shortcode if it doesn't exist.
+    ontario_obituaries_create_page();
 }
 register_activation_hook( __FILE__, 'ontario_obituaries_activate' );
+
+/**
+ * Create the Obituaries page with the plugin shortcode.
+ *
+ * Checks for an existing page (by slug or shortcode content) before
+ * creating a new one. Stores the page ID in options for reference.
+ */
+function ontario_obituaries_create_page() {
+    // Check if we already created the page.
+    $existing_page_id = get_option( 'ontario_obituaries_page_id' );
+    if ( $existing_page_id && get_post_status( $existing_page_id ) ) {
+        return $existing_page_id;
+    }
+
+    // Check if a page with the shortcode already exists.
+    global $wpdb;
+    $found = $wpdb->get_var(
+        "SELECT ID FROM {$wpdb->posts}
+         WHERE post_type = 'page'
+           AND post_status IN ('publish','draft','private')
+           AND post_content LIKE '%[ontario_obituaries%'
+         LIMIT 1"
+    );
+    if ( $found ) {
+        update_option( 'ontario_obituaries_page_id', intval( $found ) );
+        return intval( $found );
+    }
+
+    // Check if a page with slug 'obituaries' already exists.
+    $by_slug = get_page_by_path( 'obituaries' );
+    if ( $by_slug ) {
+        // Page exists but doesn't have our shortcode — add it.
+        wp_update_post( array(
+            'ID'           => $by_slug->ID,
+            'post_content' => $by_slug->post_content . "\n\n[ontario_obituaries]",
+        ) );
+        update_option( 'ontario_obituaries_page_id', $by_slug->ID );
+        return $by_slug->ID;
+    }
+
+    // Create a new Obituaries page.
+    $page_id = wp_insert_post( array(
+        'post_title'   => 'Obituaries',
+        'post_name'    => 'obituaries',
+        'post_content' => '[ontario_obituaries]',
+        'post_status'  => 'publish',
+        'post_type'    => 'page',
+        'post_author'  => 1,
+    ) );
+
+    if ( $page_id && ! is_wp_error( $page_id ) ) {
+        update_option( 'ontario_obituaries_page_id', $page_id );
+        ontario_obituaries_log( 'Obituaries page created (ID: ' . $page_id . ')', 'info' );
+        return $page_id;
+    }
+
+    return false;
+}
+
+/**
+ * One-time page creation on next page load (for updates via WP Pusher
+ * where the activation hook doesn't re-fire).
+ */
+function ontario_obituaries_maybe_create_page() {
+    if ( get_option( 'ontario_obituaries_page_id' ) && get_post_status( get_option( 'ontario_obituaries_page_id' ) ) ) {
+        return; // Page already exists — nothing to do.
+    }
+    ontario_obituaries_create_page();
+}
+add_action( 'init', 'ontario_obituaries_maybe_create_page' );
 
 /**
  * Deactivation hook
