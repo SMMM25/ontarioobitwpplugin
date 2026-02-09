@@ -762,18 +762,27 @@ class Ontario_Obituaries {
         }
 
         wp_enqueue_style( 'dashicons' );
+
+        // v3.3.0: Use filemtime() for cache-busting — guarantees a new ver= on every file change,
+        //         even if the plugin version constant hasn't been incremented yet.
+        $css_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/css/ontario-obituaries.css';
+        $css_ver  = file_exists( $css_file ) ? filemtime( $css_file ) : ONTARIO_OBITUARIES_VERSION;
+
+        $js_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/js/ontario-obituaries.js';
+        $js_ver  = file_exists( $js_file ) ? filemtime( $js_file ) : ONTARIO_OBITUARIES_VERSION;
+
         wp_enqueue_style(
             'ontario-obituaries-css',
             ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/css/ontario-obituaries.css',
             array(),
-            ONTARIO_OBITUARIES_VERSION
+            $css_ver
         );
 
         wp_enqueue_script(
             'ontario-obituaries-js',
             ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries.js',
             array( 'jquery' ),
-            ONTARIO_OBITUARIES_VERSION,
+            $js_ver,
             true
         );
 
@@ -785,11 +794,14 @@ class Ontario_Obituaries {
         ) );
 
         // FIX-B/C: Always enqueue the sharer-only Facebook script (no SDK dependency)
+        $fb_file = ONTARIO_OBITUARIES_PLUGIN_DIR . 'assets/js/ontario-obituaries-facebook.js';
+        $fb_ver  = file_exists( $fb_file ) ? filemtime( $fb_file ) : ONTARIO_OBITUARIES_VERSION;
+
         wp_enqueue_script(
             'ontario-obituaries-facebook',
             ONTARIO_OBITUARIES_PLUGIN_URL . 'assets/js/ontario-obituaries-facebook.js',
             array( 'jquery', 'ontario-obituaries-js' ),
-            ONTARIO_OBITUARIES_VERSION,
+            $fb_ver,
             true
         );
     }

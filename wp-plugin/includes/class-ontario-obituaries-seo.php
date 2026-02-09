@@ -44,6 +44,9 @@ class Ontario_Obituaries_SEO {
         // Canonical URLs
         add_action( 'wp_head', array( $this, 'output_canonical_url' ) );
 
+        // OpenGraph meta tags for social sharing
+        add_action( 'wp_head', array( $this, 'output_opengraph_tags' ) );
+
         // Sitemap integration — custom provider for obituary SEO URLs
         add_filter( 'wp_sitemaps_posts_query_args', array( $this, 'exclude_suppressed_from_sitemap' ), 10, 2 );
         add_filter( 'wp_sitemaps_add_provider', array( $this, 'register_sitemap_provider' ), 10, 2 );
@@ -350,6 +353,9 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $obit->date_of_death ) ) {
             $schema['deathDate'] = $obit->date_of_death;
         }
+        if ( ! empty( $obit->image_url ) ) {
+            $schema['image'] = $obit->image_url;
+        }
         if ( ! empty( $obit->location ) ) {
             $schema['deathPlace'] = array(
                 '@type'   => 'Place',
@@ -361,6 +367,9 @@ class Ontario_Obituaries_SEO {
                     'addressCountry'  => 'CA',
                 ),
             );
+        }
+        if ( ! empty( $obit->description ) ) {
+            $schema['description'] = wp_trim_words( $obit->description, 50, '...' );
         }
 
         echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
@@ -388,6 +397,19 @@ class Ontario_Obituaries_SEO {
             $items[]   = array( 'name' => $city_name . ' Obituaries', 'url' => home_url( '/obituaries/ontario/' . $city . '/' ) );
         }
 
+        // v3.3.0: Include the person's name in breadcrumbs for individual pages
+        if ( ! empty( $id ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d", intval( $id ) ) );
+            if ( $obit ) {
+                $items[] = array(
+                    'name' => $obit->name,
+                    'url'  => '', // current page — no link
+                );
+            }
+        }
+
         $schema = array(
             '@context'        => 'https://schema.org',
             '@type'           => 'BreadcrumbList',
@@ -395,12 +417,16 @@ class Ontario_Obituaries_SEO {
         );
 
         foreach ( $items as $i => $item ) {
-            $schema['itemListElement'][] = array(
+            $entry = array(
                 '@type'    => 'ListItem',
                 'position' => $i + 1,
                 'name'     => $item['name'],
-                'item'     => $item['url'],
             );
+            // v3.3.0: Omit 'item' for the last breadcrumb (current page)
+            if ( ! empty( $item['url'] ) ) {
+                $entry['item'] = $item['url'];
+            }
+            $schema['itemListElement'][] = $entry;
         }
 
         echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
@@ -573,7 +599,7 @@ class Ontario_Obituaries_SEO {
                 printf(
                     "<url><loc>%s</loc><lastmod>%s</lastmod><changefreq>daily</changefreq><priority>0.7</priority></url>\n",
                     esc_url( home_url( '/obituaries/ontario/' . $slug . '/' ) ),
-                    esc_attr( date( 'Y-m-d', strtotime( $city->latest ) ) )
+                    esc_attr( gmdate( 'Y-m-d', strtotime( $city->latest ) ) )
                 );
             }
         }
@@ -603,7 +629,7 @@ class Ontario_Obituaries_SEO {
                 printf(
                     "<url><loc>%s</loc><lastmod>%s</lastmod><changefreq>weekly</changefreq><priority>0.5</priority></url>\n",
                     esc_url( home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' ) ),
-                    esc_attr( $obit->date_of_death )
+                    esc_attr( gmdate( 'Y-m-d', strtotime( $obit->date_of_death ) ) )
                 );
             }
         }
@@ -653,6 +679,67 @@ class Ontario_Obituaries_SEO {
         );
 
         echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+    }
+
+    /**
+     * Output OpenGraph meta tags for social sharing.
+     *
+     * v3.3.0: Ensures shared links on Facebook/Twitter show proper
+     * preview cards with the correct title, description, and image.
+     */
+    public function output_opengraph_tags() {
+        $hub  = get_query_var( 'ontario_obituaries_hub' );
+        $city = get_query_var( 'ontario_obituaries_city' );
+        $id   = get_query_var( 'ontario_obituaries_id' );
+
+        if ( empty( $hub ) ) {
+            return;
+        }
+
+        $og = array(
+            'og:site_name' => 'Monaco Monuments',
+            'og:locale'    => 'en_CA',
+        );
+
+        if ( ! empty( $id ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            $obit  = $wpdb->get_row( $wpdb->prepare(
+                "SELECT name, description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d",
+                intval( $id )
+            ) );
+            if ( $obit ) {
+                $city_name       = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
+                $og['og:type']   = 'article';
+                $og['og:title']  = sprintf( '%s — %s, Ontario | Monaco Monuments', $obit->name, $city_name );
+                $og['og:description'] = ! empty( $obit->description )
+                    ? wp_trim_words( $obit->description, 30, '...' )
+                    : sprintf( 'Obituary for %s of %s, Ontario.', $obit->name, $city_name );
+                if ( ! empty( $obit->image_url ) ) {
+                    $og['og:image'] = $obit->image_url;
+                }
+                $city_slug = sanitize_title( $city_name );
+                $name_slug = sanitize_title( $obit->name ) . '-' . intval( $id );
+                $og['og:url'] = home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' );
+            }
+        } elseif ( ! empty( $city ) ) {
+            $city_name              = ucwords( str_replace( '-', ' ', $city ) );
+            $og['og:type']          = 'website';
+            $og['og:title']         = sprintf( '%s Obituaries — Ontario | Monaco Monuments', $city_name );
+            $og['og:description']   = sprintf( 'Recent obituary notices from %s, Ontario.', $city_name );
+            $og['og:url']           = home_url( '/obituaries/ontario/' . sanitize_title( $city ) . '/' );
+        } else {
+            $og['og:type']        = 'website';
+            $og['og:title']       = 'Ontario Obituaries — Recent Notices | Monaco Monuments';
+            $og['og:description'] = 'Browse recent Ontario obituary notices from York Region, Newmarket, Toronto & across Ontario.';
+            $og['og:url']         = home_url( '/obituaries/ontario/' );
+        }
+
+        foreach ( $og as $property => $content ) {
+            if ( ! empty( $content ) ) {
+                printf( '<meta property="%s" content="%s">' . "\n", esc_attr( $property ), esc_attr( $content ) );
+            }
+        }
     }
 
     /**
