@@ -24,6 +24,17 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
     /** @var string User-Agent string. */
     protected $user_agent = 'Mozilla/5.0 (compatible; OntarioObituariesBot/3.0; +https://monacomonuments.ca)';
 
+    /**
+     * v3.12.2: Last HTTP request diagnostics.
+     *
+     * Populated by http_get() on every call. Allows the Source Collector
+     * to read diagnostics (HTTP status, error message, duration, final URL)
+     * without changing the http_get() return signature.
+     *
+     * @var array { http_status: int|string, error_message: string, final_url: string, duration_ms: int }
+     */
+    protected $last_diagnostics = array();
+
     /* ─────────────────────── HTTP HELPERS ──────────────────────────── */
 
     /**
@@ -36,6 +47,12 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
     protected function http_get( $url, $headers = array() ) {
         $attempt    = 0;
         $last_error = null;
+
+        // v3.12.2: Track diagnostics for the caller (Source Collector / Reset & Rescan).
+        $start_time    = microtime( true );
+        $diag_status   = 0;
+        $diag_error    = '';
+        $diag_url      = $url;
 
         $default_headers = array(
             'User-Agent' => $this->user_agent,
@@ -54,7 +71,9 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
             ) );
 
             if ( is_wp_error( $response ) ) {
-                $last_error = $response;
+                $last_error  = $response;
+                $diag_status = 'error';
+                $diag_error  = $response->get_error_message();
                 ontario_obituaries_log(
                     sprintf( 'HTTP GET failed (attempt %d/%d) %s: %s', $attempt, $this->max_retries, $url, $response->get_error_message() ),
                     'warning'
@@ -68,8 +87,16 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
             $code = wp_remote_retrieve_response_code( $response );
             $body = wp_remote_retrieve_body( $response );
 
+            // v3.12.2: Capture effective URL from redirect headers when available.
+            $effective_url = wp_remote_retrieve_header( $response, 'location' );
+            if ( ! empty( $effective_url ) ) {
+                $diag_url = $effective_url;
+            }
+
             if ( 200 !== $code ) {
-                $last_error = new WP_Error( 'http_error', sprintf( 'HTTP %d for %s', $code, $url ) );
+                $last_error  = new WP_Error( 'http_error', sprintf( 'HTTP %d for %s', $code, $url ) );
+                $diag_status = $code;
+                $diag_error  = sprintf( 'HTTP %d', $code );
                 ontario_obituaries_log( sprintf( 'HTTP %d (attempt %d/%d) %s', $code, $attempt, $this->max_retries, $url ), 'warning' );
                 if ( $attempt < $this->max_retries ) {
                     usleep( pow( 2, $attempt ) * 500000 );
@@ -77,10 +104,46 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
                 continue;
             }
 
+            // Success
+            $diag_status = $code;
+            $diag_error  = '';
+
+            $this->last_diagnostics = array(
+                'http_status'   => $diag_status,
+                'error_message' => $diag_error,
+                'final_url'     => $diag_url,
+                'duration_ms'   => (int) round( ( microtime( true ) - $start_time ) * 1000 ),
+            );
+
             return $body;
         }
 
+        // All retries exhausted — store failure diagnostics.
+        // Detect timeout from WP_Error code.
+        if ( $last_error && is_wp_error( $last_error ) && 'http_request_failed' === $last_error->get_error_code() ) {
+            $err_msg = $last_error->get_error_message();
+            if ( false !== stripos( $err_msg, 'timed out' ) || false !== stripos( $err_msg, 'timeout' ) ) {
+                $diag_status = 'timeout';
+            }
+        }
+
+        $this->last_diagnostics = array(
+            'http_status'   => $diag_status,
+            'error_message' => $diag_error,
+            'final_url'     => $diag_url,
+            'duration_ms'   => (int) round( ( microtime( true ) - $start_time ) * 1000 ),
+        );
+
         return $last_error ? $last_error : new WP_Error( 'http_error', 'Request failed after retries' );
+    }
+
+    /**
+     * v3.12.2: Retrieve diagnostics from the last http_get() call.
+     *
+     * @return array { http_status: int|string, error_message: string, final_url: string, duration_ms: int }
+     */
+    public function get_last_request_diagnostics() {
+        return $this->last_diagnostics;
     }
 
     /* ─────────────────────── HTML PARSING HELPERS ──────────────────── */
