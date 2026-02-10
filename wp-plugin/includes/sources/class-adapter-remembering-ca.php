@@ -185,33 +185,42 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['date_text'] = $dm[1] . ' - ' . $dm[2];
         }
 
-        // v3.10.2: Extract a single death date from common obituary phrases.
-        // Catches "passed away on December 14, 2025", "entered into rest
-        // January 3, 2026", "died peacefully on March 5, 2025", etc.
-        // Each pattern requires an explicit death-keyword trigger to avoid
-        // false positives from unrelated date mentions.
-        // Stored in card['death_date_from_text'] so normalize() can use it
-        // instead of fabricating a Jan 1 date from the year alone.
-        if ( empty( $card['date_text'] ) ) {
-            $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
-            $death_phrases = array(
-                // "passed away/peacefully/suddenly [words] Month Day, Year"
-                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                // "entered into rest [on] Month Day, Year"
-                '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                // "died [peacefully|suddenly] [on] Month Day, Year"
-                '/died(?:\s+\w+){0,2}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-            );
-            foreach ( $death_phrases as $pattern ) {
-                if ( preg_match( $pattern, $full_text, $death_m ) ) {
-                    $card['death_date_from_text'] = trim( $death_m[1] );
-                    break;
-                }
+        // v3.12.0 FIX (Goal A): Extract death date from common obituary phrases
+        // ALWAYS — not just when date_text is empty. The textual death date
+        // (e.g., "passed away on January 6, 2026") is more reliable than the
+        // structured dates div or published_date, which may reflect the posting
+        // date rather than the actual date of death.
+        //
+        // Previous behavior (v3.10.2): only ran when date_text was empty,
+        // so records with a date_text/published_date would never get the
+        // more accurate death date extracted from the obituary body.
+        //
+        // Example: Paul Andrew Smith — yorkregion.com shows "Published
+        // online January 10, 2026" but the obit body says "passed away on
+        // January 6, 2026". The correct date_of_death is 2026-01-06.
+        $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+        $death_phrases = array(
+            // "passed away/peacefully/suddenly [words] Month Day, Year"
+            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // "entered into rest [on] Month Day, Year"
+            '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // "died [peacefully|suddenly] [on] Month Day, Year"
+            '/died(?:\s+\w+){0,2}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // "went to be with the Lord on Month Day, Year" / "called home on ..."
+            '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+        );
+        foreach ( $death_phrases as $pattern ) {
+            if ( preg_match( $pattern, $full_text, $death_m ) ) {
+                $card['death_date_from_text'] = trim( $death_m[1] );
+                break;
             }
         }
 
-        // If still no full date_text or extracted death date, try the Published line
-        if ( empty( $card['date_text'] ) && empty( $card['death_date_from_text'] ) && preg_match( '/Published\s+online\s+.*?(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i', $full_text, $pm ) ) {
+        // If no extracted death date from text, try the Published line as last resort.
+        // v3.12.0: Removed the `empty( $card['date_text'] )` gate so published_date
+        // is always captured as a fallback (normalize() only uses it if
+        // death_date_from_text and dates['death'] are both empty).
+        if ( empty( $card['death_date_from_text'] ) && preg_match( '/Published\s+online\s+.*?(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b/i', $full_text, $pm ) ) {
             $card['published_date'] = $pm[1];
         }
 
@@ -257,12 +266,23 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $location      = isset( $card['location'] ) ? $card['location'] : '';
         $description   = isset( $card['description'] ) ? wp_strip_all_tags( $card['description'] ) : '';
 
-        // v3.10.2 FIX: Use extracted death date from obituary text when available.
-        // This replaces the v3.6.0 "Jan 1 fabrication" that stored YYYY-01-01
-        // when only a year was known (e.g. Betty Cudmore: "1930 - 2025" produced
-        // date_of_death = 2025-01-01 instead of the real December 14, 2025).
-        if ( empty( $date_of_death ) && ! empty( $card['death_date_from_text'] ) ) {
-            $date_of_death = $this->normalize_date( $card['death_date_from_text'] );
+        // v3.12.0 FIX (Goal A): Death-date priority — prefer the textual death
+        // date extracted from the obituary body over ALL other sources.
+        //
+        // Priority order (highest → lowest):
+        //   1. death_date_from_text  — explicit phrase like "passed away on Jan 6, 2026"
+        //   2. dates['death']        — from structured date range ("Jan 1, 1940 - Jan 10, 2026")
+        //   3. published_date        — "Published online January 10, 2026" (fallback)
+        //
+        // Previous behavior (v3.10.2): death_date_from_text was only used when
+        // dates['death'] was empty. This caused yorkregion.com records like
+        // Paul Andrew Smith to store 2026-01-10 (published date) instead of
+        // 2026-01-06 (actual death date from obituary text).
+        if ( ! empty( $card['death_date_from_text'] ) ) {
+            $text_death = $this->normalize_date( $card['death_date_from_text'] );
+            if ( ! empty( $text_death ) ) {
+                $date_of_death = $text_death;
+            }
         }
 
         // Fall back to published_date as an approximate death date
