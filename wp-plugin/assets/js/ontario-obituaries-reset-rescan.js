@@ -226,7 +226,9 @@
 
                 if (d.per_source) {
                     $.each(d.per_source, function(domain, ps) {
-                        logMsg('  → ' + domain + ': found=' + ps.found + ', added=' + ps.added);
+                        var httpInfo = ps.http_status ? ' HTTP=' + ps.http_status : '';
+                        var errInfo  = ps.error_message ? ' err="' + ps.error_message + '"' : '';
+                        logMsg('  → ' + domain + ': found=' + ps.found + ', added=' + ps.added + httpInfo + errInfo);
                     });
                 }
 
@@ -254,10 +256,36 @@
 
             // Per-source table
             if (r.per_source && Object.keys(r.per_source).length > 0) {
-                var tableHtml = '<h3>Per-Source Breakdown</h3><table class="widefat striped"><thead><tr><th>Source</th><th>Found</th><th>Added</th><th>Errors</th></tr></thead><tbody>';
+                var tableHtml = '<h3>Per-Source Breakdown</h3><table class="widefat striped ontario-rr-diag-table"><thead><tr><th>Source</th><th>Found</th><th>Added</th><th>Errors</th><th>HTTP</th><th>Last error</th></tr></thead><tbody>';
                 $.each(r.per_source, function(domain, ps) {
-                    var errCount = (ps.errors && ps.errors.length) ? ps.errors.length : 0;
-                    tableHtml += '<tr><td>' + escHtml(domain) + '</td><td>' + ps.found + '</td><td>' + ps.added + '</td><td>' + errCount + '</td></tr>';
+                    var errCount   = (ps.errors && ps.errors.length) ? ps.errors.length : 0;
+                    var httpStatus = (ps.http_status !== undefined && ps.http_status !== '') ? ps.http_status : '\u2014';
+                    var errMsg     = ps.error_message || '';
+                    var errTitle   = errMsg; // full text for tooltip
+                    var errShort   = errMsg.length > 80 ? errMsg.substring(0, 80) + '\u2026' : errMsg;
+                    var finalUrl   = ps.final_url || '';
+                    var durationMs = ps.duration_ms || 0;
+
+                    tableHtml += '<tr>';
+                    tableHtml += '<td>' + escHtml(domain) + '</td>';
+                    tableHtml += '<td>' + ps.found + '</td>';
+                    tableHtml += '<td>' + ps.added + '</td>';
+                    tableHtml += '<td>' + errCount + '</td>';
+                    tableHtml += '<td class="ontario-rr-http-' + (httpStatus == 200 ? 'ok' : 'err') + '">' + escHtml(String(httpStatus)) + '</td>';
+                    tableHtml += '<td class="ontario-rr-errmsg" title="' + escAttr(errTitle) + '">' + escHtml(errShort) + '</td>';
+                    tableHtml += '</tr>';
+
+                    // Optional details row (final URL + duration)
+                    if (finalUrl || durationMs) {
+                        tableHtml += '<tr class="ontario-rr-details-row"><td colspan="6" style="padding-left:24px;font-size:12px;color:#666;">';
+                        if (finalUrl) {
+                            tableHtml += '<strong>Final URL:</strong> ' + escHtml(finalUrl) + ' ';
+                        }
+                        if (durationMs) {
+                            tableHtml += '<strong>Duration:</strong> ' + durationMs + ' ms';
+                        }
+                        tableHtml += '</td></tr>';
+                    }
                 });
                 tableHtml += '</tbody></table>';
                 $('#results-per-source').html(tableHtml);
@@ -313,6 +341,11 @@
             var div = document.createElement('div');
             div.appendChild(document.createTextNode(str));
             return div.innerHTML;
+        }
+
+        // v3.12.2: Escape a string for use in HTML attribute values.
+        function escAttr(str) {
+            return escHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
     });
 })(jQuery);

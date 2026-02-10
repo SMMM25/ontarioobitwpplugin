@@ -49,12 +49,44 @@
 
 /* Results panel */
 #reset-results-panel .widefat {
-    max-width: 700px;
+    max-width: 960px;
 }
 
 #reset-results-panel h3 {
     margin-top: 16px;
     margin-bottom: 8px;
+}
+
+/* v3.12.2: Per-source diagnostics table */
+.ontario-rr-diag-table th,
+.ontario-rr-diag-table td {
+    vertical-align: middle;
+}
+
+.ontario-rr-diag-table .ontario-rr-http-ok {
+    color: #00a32a;
+    font-weight: 600;
+}
+
+.ontario-rr-diag-table .ontario-rr-http-err {
+    color: #d63638;
+    font-weight: 600;
+}
+
+.ontario-rr-diag-table .ontario-rr-errmsg {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #8c8f94;
+    font-size: 12px;
+}
+
+.ontario-rr-details-row td {
+    background: #f9f9f9;
+    border-top: none !important;
+    padding-top: 2px !important;
+    padding-bottom: 6px !important;
 }
 
 /* Per-source breakdown in last result banner */

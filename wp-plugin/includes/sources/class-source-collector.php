@@ -130,6 +130,11 @@ class Ontario_Obituaries_Source_Collector {
             'added'  => 0,
             'errors' => array(),
             'pages'  => 0,
+            // v3.12.2: Per-source diagnostics for Reset & Rescan UI.
+            'http_status'   => '',
+            'error_message' => '',
+            'final_url'     => '',
+            'duration_ms'   => 0,
         );
 
         // Get adapter
@@ -182,6 +187,22 @@ class Ontario_Obituaries_Source_Collector {
 
                 // 4. Fetch listing
                 $html = $adapter->fetch_listing( $listing_url, $source );
+
+                // v3.12.2: Capture HTTP diagnostics from the adapter.
+                // Always overwrite so the last page's diagnostics are retained.
+                if ( method_exists( $adapter, 'get_last_request_diagnostics' ) ) {
+                    $diag = $adapter->get_last_request_diagnostics();
+                    if ( ! empty( $diag ) ) {
+                        $source_result['http_status']   = isset( $diag['http_status'] )   ? $diag['http_status']   : '';
+                        $source_result['final_url']     = isset( $diag['final_url'] )     ? $diag['final_url']     : '';
+                        $source_result['duration_ms']   = isset( $diag['duration_ms'] )   ? intval( $diag['duration_ms'] ) : 0;
+                        // Only overwrite error_message when there IS an error.
+                        if ( ! empty( $diag['error_message'] ) ) {
+                            $source_result['error_message'] = $diag['error_message'];
+                        }
+                    }
+                }
+
                 if ( is_wp_error( $html ) ) {
                     $source_result['errors'][] = $html->get_error_message();
                     continue;

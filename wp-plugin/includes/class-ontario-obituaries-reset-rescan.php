@@ -102,14 +102,30 @@ class Ontario_Obituaries_Reset_Rescan {
                 ); ?></p>
                 <?php if ( ! empty( $last_result['rescan_result']['per_source'] ) ) : ?>
                     <details><summary><?php esc_html_e( 'Per-source breakdown', 'ontario-obituaries' ); ?></summary>
-                    <table class="widefat striped" style="max-width:700px;margin-top:8px;">
-                        <thead><tr><th><?php esc_html_e( 'Source', 'ontario-obituaries' ); ?></th><th><?php esc_html_e( 'Found', 'ontario-obituaries' ); ?></th><th><?php esc_html_e( 'Added', 'ontario-obituaries' ); ?></th></tr></thead>
+                    <table class="widefat striped" style="max-width:960px;margin-top:8px;">
+                        <thead><tr>
+                            <th><?php esc_html_e( 'Source', 'ontario-obituaries' ); ?></th>
+                            <th><?php esc_html_e( 'Found', 'ontario-obituaries' ); ?></th>
+                            <th><?php esc_html_e( 'Added', 'ontario-obituaries' ); ?></th>
+                            <th><?php esc_html_e( 'Errors', 'ontario-obituaries' ); ?></th>
+                            <th><?php esc_html_e( 'HTTP', 'ontario-obituaries' ); ?></th>
+                            <th><?php esc_html_e( 'Last error', 'ontario-obituaries' ); ?></th>
+                        </tr></thead>
                         <tbody>
-                        <?php foreach ( $last_result['rescan_result']['per_source'] as $domain => $ps ) : ?>
+                        <?php foreach ( $last_result['rescan_result']['per_source'] as $domain => $ps ) :
+                            $err_count    = ! empty( $ps['errors'] ) ? ( is_array( $ps['errors'] ) ? count( $ps['errors'] ) : intval( $ps['errors'] ) ) : 0;
+                            $http_display = isset( $ps['http_status'] ) && '' !== $ps['http_status'] ? $ps['http_status'] : '—';
+                            $err_msg      = isset( $ps['error_message'] ) ? $ps['error_message'] : '';
+                        ?>
                             <tr>
                                 <td><?php echo esc_html( $domain ); ?></td>
                                 <td><?php echo intval( $ps['found'] ); ?></td>
                                 <td><?php echo intval( $ps['added'] ); ?></td>
+                                <td><?php echo intval( $err_count ); ?></td>
+                                <td><?php echo esc_html( $http_display ); ?></td>
+                                <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?php echo esc_attr( $err_msg ); ?>">
+                                    <?php echo esc_html( $err_msg ); ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -479,9 +495,14 @@ class Ontario_Obituaries_Reset_Rescan {
         if ( ! empty( $results['per_source'] ) ) {
             foreach ( $results['per_source'] as $domain => $ps ) {
                 $per_source[ $domain ] = array(
-                    'found'  => isset( $ps['found'] )  ? intval( $ps['found'] )  : 0,
-                    'added'  => isset( $ps['added'] )  ? intval( $ps['added'] )  : 0,
-                    'errors' => ! empty( $ps['errors'] ) ? $ps['errors']          : array(),
+                    'found'         => isset( $ps['found'] )  ? intval( $ps['found'] )  : 0,
+                    'added'         => isset( $ps['added'] )  ? intval( $ps['added'] )  : 0,
+                    'errors'        => ! empty( $ps['errors'] ) ? $ps['errors']          : array(),
+                    // v3.12.2: Per-source diagnostics.
+                    'http_status'   => isset( $ps['http_status'] )   ? $ps['http_status']          : '',
+                    'error_message' => isset( $ps['error_message'] ) ? substr( $ps['error_message'], 0, 160 ) : '',
+                    'final_url'     => isset( $ps['final_url'] )     ? $ps['final_url']            : '',
+                    'duration_ms'   => isset( $ps['duration_ms'] )   ? intval( $ps['duration_ms'] ) : 0,
                 );
             }
         }
