@@ -7,19 +7,32 @@
  * header and footer templates, bypassing the Litho theme's get_header() /
  * get_footer() which produce incorrect demo navigation.
  *
- * v3.12.0 FIX (Goal B): Added Elementor Pro Theme Builder suppression to
- * prevent duplicate header/footer rendering on SEO pages. When Elementor Pro
- * Theme Builder has site-wide header/footer conditions, it auto-injects them
- * via get_header/get_footer actions. Since this template renders headers
- * manually by ID, the auto-injection caused triple logos. The fix removes
- * the Theme Builder's auto-injection hooks before rendering.
+ * v3.12.1 FIX: Triple-logo / header duplication fix.
+ *
+ * Root cause: Three separate header systems were all active on SEO pages:
+ *   1. Elementor template 13039 (mini-header) -- rendered by this wrapper
+ *   2. Elementor template 15223 (main header) -- rendered by this wrapper
+ *   3. Elementor Pro Theme Builder auto-injecting site-wide header via
+ *      get_header/get_footer actions or elementor/theme/do_location
+ *
+ * Fix (Strategy A -- wrapper renders ONE header, suppress all others):
+ *   - Render only ONE Elementor header template (prefer ID 15223 = main
+ *     header; fall back to 13039 = mini-header; then any remaining ID).
+ *     Previously the loop rendered ALL $header_ids.
+ *   - Suppress Elementor Pro Theme Builder auto-injection via two methods:
+ *     (A) Filter elementor/theme/get_location_templates to empty array
+ *     (B) Remove Theme_Support/Locations_Manager get_header/get_footer hooks
+ *   - Emergency toggle: filter 'ontario_obituaries_seo_wrapper_render_elementor_header'
+ *     (default true). Return false to disable wrapper header output entirely.
+ *   - Same toggle for footer: 'ontario_obituaries_seo_wrapper_render_elementor_footer'
  *
  * This template:
  *   - Outputs a valid HTML5 document (DOCTYPE, html, head, body)
  *   - Calls wp_head() for all enqueued styles, scripts, and meta (Schema.org,
  *     OG tags, canonical URLs, noindex, Elementor CSS, Google Fonts, etc.)
- *   - Renders Elementor Section Builder templates by ID for header/footer
+ *   - Renders ONE Elementor header template by ID (preferred: main header)
  *   - Includes the content-only partial (hub-ontario, hub-city, or individual)
+ *   - Renders ONE Elementor footer template by ID
  *   - Calls wp_footer() for deferred scripts and Elementor frontend JS
  *   - Falls back gracefully if Elementor is unavailable (minimal nav/footer)
  *
@@ -104,57 +117,97 @@ if ( class_exists( '\Elementor\Plugin' )
     }
 }
 
-// --- v3.12.0 FIX (Goal B): Suppress Elementor Pro Theme Builder auto-inject --
+// --- v3.12.1 FIX: Suppress Elementor Pro Theme Builder auto-inject -----------
 //
-// Problem: When Elementor Pro Theme Builder has a site-wide header/footer
-// display condition, it hooks into 'get_header' and 'get_footer' WP actions
-// to replace the theme's header/footer with its own templates. Since this
-// wrapper.php already renders headers/footers manually by explicit template
-// ID (via get_builder_content_for_display), the auto-injection causes
-// duplicate (triple) logo/header rendering on SEO virtual pages.
+// Root cause of triple-logo:
+//   Logo 1: Elementor template 13039 (mini-header bar) rendered by this wrapper
+//   Logo 2: Elementor template 15223 (main nav header) rendered by this wrapper
+//   Logo 3: Elementor Pro Theme Builder auto-injecting its site-wide header
+//           condition via get_header action or wp_body_open hook
 //
-// Solution: Remove Elementor Pro's theme location hooks for header/footer
-// before we output any HTML. This is safe because:
-//   1. We render headers/footers manually below (by known template IDs).
-//   2. This template is only used for SEO virtual pages (/obituaries/ontario/...).
-//   3. Normal pages (including /ontario-obituaries/) are unaffected -- they
-//      use the theme's standard get_header()/get_footer().
-//   4. The hooks are only removed in this template's scope; other requests
-//      are completely unaffected.
+// This suppression block eliminates Logo 3. The header rendering block below
+// (also updated in v3.12.1) eliminates the Logo 1+2 duplication by rendering
+// only ONE preferred header template (15223) instead of all of them.
 //
-// Two suppression methods are used for maximum compatibility:
-//   Method A: Empty the Theme Builder's location template list for header/footer.
-//   Method B: Remove 'get_header'/'get_footer' callbacks from Theme_Support
-//             and Locations_Manager classes (Elementor Pro internals).
+// Two suppression methods for maximum compatibility:
+//   Method A: Filter location template lists to empty arrays (Elementor Pro
+//             public API -- prevents it from finding any templates to render).
+//   Method B: Remove get_header/get_footer callbacks from Elementor Pro classes
+//             (guarded $wp_filter surgery -- catches action-based injection).
+//
+// Note: Method C (elementor/theme/do_location filter) was considered but removed
+// because the return-value contract varies across Elementor Pro versions and
+// could leave behind side effects. Methods A+B combined with single-header
+// rendering are sufficient to eliminate all three logo sources.
+//
+// Safety:
+//   - Only runs when $use_elementor is true (Elementor is present).
+//   - Only affects this template file (SEO virtual pages).
+//   - Normal pages use standard get_header()/get_footer() and are unaffected.
+//   - If Elementor Pro is absent, $use_elementor may still be true (free
+//     Elementor), but Methods A/B simply have no effect (no hooks to remove).
 if ( $use_elementor ) {
     // Method A: Tell Elementor Pro that header/footer locations have no templates.
-    // Elementor Pro checks these filters before auto-rendering location content.
-    add_filter( 'elementor/theme/get_location_templates/header', '__return_empty_array' );
-    add_filter( 'elementor/theme/get_location_templates/footer', '__return_empty_array' );
+    // Priority 999 ensures this runs after any Elementor Pro filters that
+    // populate the template list.
+    add_filter( 'elementor/theme/get_location_templates/header', '__return_empty_array', 999 );
+    add_filter( 'elementor/theme/get_location_templates/footer', '__return_empty_array', 999 );
 
-    // Method B: Remove Elementor Pro Theme Support overrides if registered.
-    // ElementorPro\Modules\ThemeBuilder\Classes\Theme_Support hooks the
-    // 'get_header' and 'get_footer' WP actions to replace theme header/footer
-    // with Theme Builder templates. Remove those specific callbacks.
+    // Method B: Remove Elementor Pro Theme Support / Locations_Manager callbacks
+    // from 'get_header' and 'get_footer' WP actions. These are the hooks that
+    // auto-replace the theme header/footer with Theme Builder templates.
+    //
+    // Uses remove_action() with the exact callable rather than unsetting
+    // $wp_filter internals directly, which preserves WP_Hook bookkeeping
+    // and avoids potential PHP notices from stale iterator state.
+    //
+    // Guards:
+    //   - $wp_filter[$hook_tag] must be a WP_Hook object with a 'callbacks' property.
+    //   - Each callback must be an array with an object at index [0].
+    //   - Only Elementor Pro classes containing 'Theme_Support', 'Locations_Manager',
+    //     or 'Theme_Builder' in their class name are removed.
+    //   - Callables are collected first, then removed in a second pass to avoid
+    //     mutating the array while iterating over it.
     global $wp_filter;
     foreach ( array( 'get_header', 'get_footer' ) as $hook_tag ) {
-        if ( empty( $wp_filter[ $hook_tag ] ) ) {
+        if ( ! isset( $wp_filter[ $hook_tag ] )
+            || ! is_object( $wp_filter[ $hook_tag ] )
+            || ! isset( $wp_filter[ $hook_tag ]->callbacks )
+            || ! is_array( $wp_filter[ $hook_tag ]->callbacks )
+        ) {
             continue;
         }
+
+        // Pass 1: collect callables to remove (avoids mutating during iteration).
+        $to_remove = array();
         foreach ( $wp_filter[ $hook_tag ]->callbacks as $priority => $hooks ) {
+            if ( ! is_array( $hooks ) ) {
+                continue;
+            }
             foreach ( $hooks as $hook_key => $hook_data ) {
-                if ( ! is_array( $hook_data['function'] ) || ! is_object( $hook_data['function'][0] ) ) {
+                if ( ! isset( $hook_data['function'] )
+                    || ! is_array( $hook_data['function'] )
+                    || ! isset( $hook_data['function'][0] )
+                    || ! is_object( $hook_data['function'][0] )
+                ) {
                     continue;
                 }
                 $class_name = get_class( $hook_data['function'][0] );
-                // Match Elementor Pro's Theme_Support and Locations_Manager classes.
-                // These are the only classes that auto-inject header/footer templates.
                 if ( false !== strpos( $class_name, 'Theme_Support' )
                     || false !== strpos( $class_name, 'Locations_Manager' )
+                    || false !== strpos( $class_name, 'Theme_Builder' )
                 ) {
-                    unset( $wp_filter[ $hook_tag ]->callbacks[ $priority ][ $hook_key ] );
+                    $to_remove[] = array(
+                        'callable' => $hook_data['function'],
+                        'priority' => $priority,
+                    );
                 }
             }
+        }
+
+        // Pass 2: remove via WordPress API (safe, maintains WP_Hook state).
+        foreach ( $to_remove as $entry ) {
+            remove_action( $hook_tag, $entry['callable'], $entry['priority'] );
         }
     }
 }
@@ -174,19 +227,55 @@ if ( function_exists( 'wp_body_open' ) ) {
 ?>
 
 <?php
-// --- Header: Elementor templates or minimal fallback -------------------------
+// --- Header: ONE Elementor template or minimal fallback ----------------------
+//
+// v3.12.1 FIX: Render exactly ONE header template, not all of them.
+//
+// Previously this loop rendered every ID in $header_ids (default: 13039 +
+// 15223), producing two logo/header blocks. The site design uses:
+//   - 13039: Mini-header (top bar with phone number / hours)
+//   - 15223: Main header (site logo + navigation menu)
+//
+// Strategy: Try the PREFERRED header ID (15223) first. If it renders, done.
+// If not, fall back to the secondary ID (13039), then any remaining IDs in
+// order. If none render, show minimal fallback nav.
+//
+// This is explicit rather than relying on array order, so reordering the
+// $header_ids array via filter won't accidentally change which header renders.
+//
+// The preferred ID is filterable:
+//   add_filter( 'ontario_obituaries_seo_preferred_header_id', function() { return 13039; } );
+//
+// Emergency toggle: return false from the filter below to completely disable
+// Elementor header rendering in this wrapper (fallback nav will show instead).
+// Example: add_filter( 'ontario_obituaries_seo_wrapper_render_elementor_header', '__return_false' );
 $header_rendered = false;
 
-if ( $use_elementor && ! empty( $header_ids ) && is_array( $header_ids ) ) {
+$render_elementor_header = apply_filters( 'ontario_obituaries_seo_wrapper_render_elementor_header', true );
+
+if ( $render_elementor_header && $use_elementor && ! empty( $header_ids ) && is_array( $header_ids ) ) {
+    // Preferred header: main navigation header (15223). Filterable.
+    $preferred_header_id = intval( apply_filters( 'ontario_obituaries_seo_preferred_header_id', 15223 ) );
+
+    // Build ordered try-list: preferred first, then remaining IDs as fallbacks.
+    $try_ids = array();
+    if ( $preferred_header_id > 0 && in_array( $preferred_header_id, array_map( 'intval', $header_ids ), true ) ) {
+        $try_ids[] = $preferred_header_id;
+    }
     foreach ( $header_ids as $hid ) {
         $hid = intval( $hid );
-        if ( $hid <= 0 ) {
-            continue;
+        if ( $hid > 0 && $hid !== $preferred_header_id ) {
+            $try_ids[] = $hid;
         }
+    }
+
+    // Render the first ID that returns content, then stop.
+    foreach ( $try_ids as $hid ) {
         $header_html = \Elementor\Plugin::instance()->frontend->get_builder_content_for_display( $hid );
         if ( ! empty( $header_html ) ) {
             echo $header_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Elementor rendered content
             $header_rendered = true;
+            break; // v3.12.1: Only render ONE header template.
         }
     }
 }
@@ -214,11 +303,16 @@ if ( file_exists( $content_template ) ) {
 ?>
 
 <?php
-// --- Footer: Elementor template or minimal fallback --------------------------
+// --- Footer: ONE Elementor template or minimal fallback ----------------------
+//
+// Emergency toggle: return false to disable Elementor footer rendering.
+// Example: add_filter( 'ontario_obituaries_seo_wrapper_render_elementor_footer', '__return_false' );
 $footer_rendered = false;
 $footer_id       = intval( $footer_id );
 
-if ( $use_elementor && $footer_id > 0 ) {
+$render_elementor_footer = apply_filters( 'ontario_obituaries_seo_wrapper_render_elementor_footer', true );
+
+if ( $render_elementor_footer && $use_elementor && $footer_id > 0 ) {
     $footer_html = \Elementor\Plugin::instance()->frontend->get_builder_content_for_display( $footer_id );
     if ( ! empty( $footer_html ) ) {
         echo $footer_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Elementor rendered content
