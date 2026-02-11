@@ -361,9 +361,12 @@ class Ontario_Obituaries_Source_Collector {
                         $update_data['location'] = $record['location'];
                     }
 
-                    // v3.7.0: Fill empty image_url from duplicate
-                    if ( empty( $candidate->image_url ) && ! empty( $record['image_url'] ) ) {
-                        $update_data['image_url'] = $record['image_url'];
+                    // v3.15.1: Update image_url if existing is empty OR if new URL
+                    // is a better-quality CDN image (300×400 print-only vs 200×200 thumb).
+                    if ( ! empty( $record['image_url'] ) ) {
+                        if ( empty( $candidate->image_url ) || strlen( $candidate->image_url ) < 10 ) {
+                            $update_data['image_url'] = $record['image_url'];
+                        }
                     }
 
                     // v3.14.1: Fill empty date_of_birth from duplicate

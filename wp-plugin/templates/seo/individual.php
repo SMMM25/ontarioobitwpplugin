@@ -10,6 +10,7 @@
  * v3.14.0: Complete UI redesign to match Monaco Monuments brand.
  * v3.14.1: Full Monaco Monuments themed detail page with dates, image, CTA.
  * v3.15.0: Forced enrichment sweep populates images; year_death extraction fix.
+ * v3.15.1: Better images (300x400 print-only CDN); full description extraction; SPA skip.
  *
  * Variables provided via query var 'ontario_obituaries_seo_data' (extracted by wrapper):
  *   $obituary     — object the obituary record
