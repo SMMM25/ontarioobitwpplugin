@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.13.1
+ * Version: 3.13.2
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.13.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.13.2' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1253,6 +1253,90 @@ function ontario_obituaries_on_plugin_update() {
                 'ontario_obituaries_collection_event'
             );
             ontario_obituaries_log( 'v3.10.0: Recurring collection cron was missing — re-scheduled.', 'info' );
+        }
+    }
+
+    // v3.13.2: Force-disable 403/SPA sources that were added to seed_defaults()
+    // in v3.13.0 but never applied to the live database. The seed_defaults()
+    // changes only affect fresh installs or empty registries; existing sites
+    // retained enabled=1 for these sources, wasting ~30s of scrape time on
+    // every cron run hitting 403 walls and an empty React SPA shell.
+    //
+    // This uses targeted UPDATE queries (not seed_defaults/upsert) to:
+    //   - Disable only the specific broken domains
+    //   - Preserve all other source state (circuit breaker, last_success, etc.)
+    //   - Not overwrite any admin-customized fields
+    //
+    // Runs once via the deployed_version guard at the top of this function.
+    if ( version_compare( $stored_version, '3.13.2', '<' ) ) {
+        global $wpdb;
+        $sources_table = $wpdb->prefix . 'ontario_obituaries_sources';
+
+        // Only run if the sources table exists
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $sources_table ) ) === $sources_table ) {
+
+            // Domains confirmed broken via Rescan-Only diagnostics on 2026-02-11:
+            //   - 7x legacy.com/* : HTTP 403 (WAF/bot protection)
+            //   - 6x dignitymemorial.com/* : HTTP 403 (WAF/bot protection)
+            //   - 1x arbormemorial.ca/taylor : HTTP 200 but React SPA, 0 cards
+            $broken_domains = array(
+                'legacy.com/ca/obituaries/yorkregion',
+                'legacy.com/ca/obituaries/thestar',
+                'legacy.com/ca/obituaries/thespec',
+                'legacy.com/ca/obituaries/ottawacitizen',
+                'legacy.com/ca/obituaries/lfpress',
+                'legacy.com/ca/obituaries/therecord',
+                'legacy.com/ca/obituaries/barrieexaminer',
+                'legacy.com/ca/obituaries/windsorstar',
+                'dignitymemorial.com/newmarket-on',
+                'dignitymemorial.com/aurora-on',
+                'dignitymemorial.com/richmond-hill-on',
+                'dignitymemorial.com/markham-on',
+                'dignitymemorial.com/vaughan-on',
+                'dignitymemorial.com/toronto-on',
+                'arbormemorial.ca/taylor',
+            );
+
+            $disabled_count = 0;
+            foreach ( $broken_domains as $domain ) {
+                $updated = $wpdb->query( $wpdb->prepare(
+                    "UPDATE `{$sources_table}` SET enabled = 0 WHERE domain = %s AND enabled = 1",
+                    $domain
+                ) );
+                if ( $updated > 0 ) {
+                    $disabled_count++;
+                }
+            }
+
+            if ( $disabled_count > 0 ) {
+                ontario_obituaries_log(
+                    sprintf(
+                        'v3.13.2: Disabled %d broken sources (HTTP 403 / React SPA). '
+                        . 'Domains: %s. Re-enable via WP Admin > Ontario Obituaries > Source Registry '
+                        . 'after verifying the source returns parseable HTML.',
+                        $disabled_count,
+                        implode( ', ', $broken_domains )
+                    ),
+                    'info'
+                );
+            } else {
+                ontario_obituaries_log( 'v3.13.2: All broken sources were already disabled. No changes needed.', 'info' );
+            }
+
+            // Log post-update registry state for verification.
+            if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
+                $post_stats = Ontario_Obituaries_Source_Registry::get_stats();
+                ontario_obituaries_log(
+                    sprintf(
+                        'v3.13.2: Source registry state: %d total, %d active, %d disabled, %d circuit-broken.',
+                        intval( $post_stats['total'] ),
+                        intval( $post_stats['enabled'] ),
+                        intval( $post_stats['disabled'] ),
+                        intval( $post_stats['circuit_open'] )
+                    ),
+                    'info'
+                );
+            }
         }
     }
 
