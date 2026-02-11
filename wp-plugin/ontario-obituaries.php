@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.13.3
+ * Version: 3.14.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.13.3' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.14.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1338,6 +1338,31 @@ function ontario_obituaries_on_plugin_update() {
                 );
             }
         }
+    }
+
+    // v3.14.0: UI redesign + full obituary data retrieval.
+    //
+    // Changes:
+    //   - Complete CSS overhaul matching Monaco Monuments brand (Inter + Cardo fonts)
+    //   - Remembering.ca adapter now fetches detail pages for full obituary text
+    //   - Description cap increased from 200 to 2000 chars
+    //   - Image extraction from detail pages (respects image_allowlisted flag)
+    //   - Birth/death date extraction from obituary text on detail pages
+    //
+    // Upgrade action: Schedule a background re-scrape so that existing records
+    // get enriched with full descriptions and dates from detail pages. Existing
+    // records won't be re-scraped automatically (they exist via provenance hash
+    // dedup), but NEW records from this point forward will have full data.
+    // The cross-source dedup in insert_obituary() will also enrich existing
+    // records if the new scrape provides longer descriptions.
+    if ( version_compare( $stored_version, '3.14.0', '<' ) ) {
+        // Schedule a full background scrape to pick up the enriched data.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+            wp_schedule_single_event( time() + 120, 'ontario_obituaries_initial_collection' );
+            ontario_obituaries_log( 'v3.14.0: Scheduled background re-scrape for full obituary data enrichment.', 'info' );
+        }
+
+        ontario_obituaries_log( 'v3.14.0: UI redesign deployed. CSS, templates, and adapter updated.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );

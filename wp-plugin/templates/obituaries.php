@@ -21,6 +21,8 @@
  *           Read More link preserved for SEO internal linking.
  *           Per-card "Request removal" text link preserved (populates removal form).
  *           Modal markup removed (no Quick View trigger exists).
+ *  v3.13.3: Dates removed from listing cards per owner request.
+ *  v3.14.0: Complete UI redesign to match Monaco Monuments theme.
  */
 
 // Exit if accessed directly
@@ -135,9 +137,11 @@ $site_url = get_site_url();
                         // (next to the provenance line) for reference.
                         ?>
 
+                        <?php if ( ! empty( $obituary->description ) ) : ?>
                         <div class="ontario-obituaries-description">
                             <p><?php echo esc_html( wp_trim_words( $obituary->description, 30, '...' ) ); ?></p>
                         </div>
+                        <?php endif; ?>
 
                         <div class="ontario-obituaries-actions">
                             <?php
