@@ -21,6 +21,75 @@
     var nonce      = config.nonce   || '';
     var sessionId  = '';
 
+    /* ───────── Per-source table builder (shared) ───────── */
+
+    /**
+     * Build an HTML table for a per_source object.
+     * Used by both the Rescan-Only inline result and the full Reset results panel.
+     *
+     * @param {Object} perSource  Key=domain, value={name,found,added,errors,http_status,error_message,final_url,duration_ms}
+     * @param {string} [heading]  Optional heading above the table.
+     * @return {string} HTML string.
+     */
+    function buildPerSourceTable(perSource, heading) {
+        if (!perSource || Object.keys(perSource).length === 0) {
+            return '';
+        }
+
+        var html = '';
+        if (heading) {
+            html += '<h3>' + escHtml(heading) + '</h3>';
+        }
+
+        html += '<table class="widefat striped ontario-rr-diag-table"><thead><tr>';
+        html += '<th>Source</th><th>Found</th><th>Added</th><th>Errors</th><th>HTTP</th><th>Last error</th>';
+        html += '</tr></thead><tbody>';
+
+        $.each(perSource, function(domain, ps) {
+            var errCount   = (ps.errors && Array.isArray(ps.errors)) ? ps.errors.length : 0;
+            var httpRaw    = (ps.http_status !== undefined && ps.http_status !== '') ? ps.http_status : '';
+            var httpDisplay = httpRaw || '\u2014';
+            var httpInt    = parseInt(httpRaw, 10);
+            var httpClass  = '';
+            if (httpRaw !== '') {
+                httpClass = (httpInt >= 200 && httpInt < 400) ? 'ontario-rr-http-ok' : 'ontario-rr-http-err';
+            }
+            var errMsg     = ps.error_message || '';
+            var errTitle   = errMsg;
+            var errShort   = errMsg.length > 80 ? errMsg.substring(0, 80) + '\u2026' : errMsg;
+            var finalUrl   = ps.final_url || '';
+            var durationMs = ps.duration_ms || 0;
+            var sourceName = ps.name || domain;
+
+            html += '<tr>';
+            html += '<td><strong>' + escHtml(sourceName) + '</strong><br><small class="ontario-rr-domain">' + escHtml(domain) + '</small></td>';
+            html += '<td>' + (ps.found || 0) + '</td>';
+            html += '<td>' + (ps.added || 0) + '</td>';
+            html += '<td>' + errCount + '</td>';
+            html += '<td class="' + httpClass + '">' + escHtml(String(httpDisplay)) + '</td>';
+            html += '<td class="ontario-rr-errmsg" title="' + escAttr(errTitle) + '">' + escHtml(errShort) + '</td>';
+            html += '</tr>';
+
+            // Optional details row
+            if (finalUrl || durationMs) {
+                html += '<tr class="ontario-rr-details-row"><td colspan="6" style="padding-left:24px;font-size:12px;color:#666;">';
+                if (finalUrl) {
+                    html += '<strong>Final URL:</strong> ' + escHtml(finalUrl);
+                }
+                if (finalUrl && durationMs) {
+                    html += ' &nbsp;|&nbsp; ';
+                }
+                if (durationMs) {
+                    html += '<strong>Duration:</strong> ' + durationMs + ' ms';
+                }
+                html += '</td></tr>';
+            }
+        });
+
+        html += '</tbody></table>';
+        return html;
+    }
+
     $(document).ready(function() {
 
         /* ───────── Rescan Only (v3.12.3) ───────── */
@@ -34,23 +103,41 @@
             }
 
             $btn.prop('disabled', true);
-            $status.text('Running… This may take 30–90 seconds.').css('color', '#826200');
+            $status.text('Running\u2026 This may take 30\u201390 seconds.').css('color', '#826200');
+
+            // Remove any previous inline result
+            $('#rescan-only-inline-result').remove();
 
             $.post(ajaxUrl, {
                 action: 'ontario_obituaries_rescan_only',
                 nonce:  nonce
             }, function(response) {
+                var d = response.data || {};
                 if (response.success) {
-                    $status.text('✅ ' + response.data.message).css('color', '#00a32a');
-                    // Reload after brief delay to show updated last-result banner
-                    setTimeout(function() { location.reload(); }, 1500);
+                    $status.html('\u2705 ' + escHtml(d.message || 'Rescan complete.')).css('color', '#00a32a');
                 } else {
-                    var msg = (response.data && response.data.message) ? response.data.message : 'Rescan failed.';
-                    $status.text('❌ ' + msg).css('color', '#d63638');
-                    $btn.prop('disabled', false);
+                    var msg = d.message || 'Rescan failed.';
+                    $status.html('\u274C ' + escHtml(msg)).css('color', '#d63638');
                 }
+
+                // Render inline per-source table regardless of success/error
+                // (partial results are still useful on error)
+                if (d.per_source && Object.keys(d.per_source).length > 0) {
+                    var summaryHtml = '<p style="margin-top:12px;"><strong>Summary:</strong> '
+                        + 'Found ' + (d.found || 0)
+                        + ', Added ' + (d.added || 0)
+                        + ', Skipped ' + (d.skipped || 0)
+                        + ', Errors ' + (d.errors || 0)
+                        + '</p>';
+                    var tableHtml = buildPerSourceTable(d.per_source, 'Per-Source Breakdown');
+                    var $result = $('<div id="rescan-only-inline-result" style="margin-top:16px;">' + summaryHtml + tableHtml + '</div>');
+                    $btn.closest('.card').append($result);
+                }
+
+                $btn.prop('disabled', false);
+
             }).fail(function() {
-                $status.text('❌ Network error. Please try again.').css('color', '#d63638');
+                $status.html('\u274C Network error. Please try again.').css('color', '#d63638');
                 $btn.prop('disabled', false);
             });
         });
@@ -286,42 +373,9 @@
             summaryHtml += '<p><strong>Rescan results:</strong> Found ' + (r.found || 0) + ', Added ' + (r.added || 0) + ', Skipped ' + (r.skipped || 0) + ', Errors ' + (r.errors || 0) + '</p>';
             $('#results-summary').html(summaryHtml);
 
-            // Per-source table
+            // Per-source table (reuses shared builder)
             if (r.per_source && Object.keys(r.per_source).length > 0) {
-                var tableHtml = '<h3>Per-Source Breakdown</h3><table class="widefat striped ontario-rr-diag-table"><thead><tr><th>Source</th><th>Found</th><th>Added</th><th>Errors</th><th>HTTP</th><th>Last error</th></tr></thead><tbody>';
-                $.each(r.per_source, function(domain, ps) {
-                    var errCount   = (ps.errors && ps.errors.length) ? ps.errors.length : 0;
-                    var httpStatus = (ps.http_status !== undefined && ps.http_status !== '') ? ps.http_status : '\u2014';
-                    var errMsg     = ps.error_message || '';
-                    var errTitle   = errMsg; // full text for tooltip
-                    var errShort   = errMsg.length > 80 ? errMsg.substring(0, 80) + '\u2026' : errMsg;
-                    var finalUrl   = ps.final_url || '';
-                    var durationMs = ps.duration_ms || 0;
-                    var sourceName = ps.name || domain;
-
-                    tableHtml += '<tr>';
-                    tableHtml += '<td><strong>' + escHtml(sourceName) + '</strong><br><small style="color:#888;">' + escHtml(domain) + '</small></td>';
-                    tableHtml += '<td>' + ps.found + '</td>';
-                    tableHtml += '<td>' + ps.added + '</td>';
-                    tableHtml += '<td>' + errCount + '</td>';
-                    tableHtml += '<td class="ontario-rr-http-' + (httpStatus == 200 ? 'ok' : 'err') + '">' + escHtml(String(httpStatus)) + '</td>';
-                    tableHtml += '<td class="ontario-rr-errmsg" title="' + escAttr(errTitle) + '">' + escHtml(errShort) + '</td>';
-                    tableHtml += '</tr>';
-
-                    // Optional details row (final URL + duration)
-                    if (finalUrl || durationMs) {
-                        tableHtml += '<tr class="ontario-rr-details-row"><td colspan="6" style="padding-left:24px;font-size:12px;color:#666;">';
-                        if (finalUrl) {
-                            tableHtml += '<strong>Final URL:</strong> ' + escHtml(finalUrl) + ' ';
-                        }
-                        if (durationMs) {
-                            tableHtml += '<strong>Duration:</strong> ' + durationMs + ' ms';
-                        }
-                        tableHtml += '</td></tr>';
-                    }
-                });
-                tableHtml += '</tbody></table>';
-                $('#results-per-source').html(tableHtml);
+                $('#results-per-source').html(buildPerSourceTable(r.per_source, 'Per-Source Breakdown'));
             }
 
             // Next steps
