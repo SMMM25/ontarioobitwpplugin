@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.16.0
+ * Version: 3.16.1
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.16.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.16.1' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -92,6 +92,61 @@ function ontario_obituaries_log( $message, $level = 'info' ) {
 }
 
 /**
+ * v3.16.1: Load the Source Collector, Image Pipeline, and all Source Adapters.
+ *
+ * Extracted from ontario_obituaries_includes() so it can be called on-demand
+ * by the REST cron endpoint, the frontend stale-cron heartbeat, and the
+ * deploy migration — all of which need the Collector but may run outside
+ * admin/cron/AJAX contexts where these classes were previously loaded.
+ *
+ * Safe to call multiple times — uses require_once and a static flag.
+ *
+ * @since 3.16.1
+ */
+function ontario_obituaries_load_collector_classes() {
+    static $loaded = false;
+    if ( $loaded ) {
+        return;
+    }
+    $loaded = true;
+
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-source-collector.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/pipelines/class-image-pipeline.php';
+
+    // Source Adapters
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-generic-html.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-frontrunner.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-tribute-archive.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-legacy-com.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-remembering-ca.php';
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-dignity-memorial.php';
+
+    // Register all adapters with the Source Registry
+    Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Generic_HTML() );
+    Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_FrontRunner() );
+    Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Tribute_Archive() );
+    Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Legacy_Com() );
+    Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Remembering_Ca() );
+    Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Dignity_Memorial() );
+}
+
+/**
+ * v3.16.1: Ensure the Source Collector is available, loading it on-demand if needed.
+ *
+ * Call this before any code that needs Ontario_Obituaries_Source_Collector
+ * when running outside admin/cron/AJAX contexts (e.g., REST API, frontend heartbeat).
+ *
+ * @since 3.16.1
+ * @return bool Whether the Collector class is available after loading.
+ */
+function ontario_obituaries_ensure_collector_loaded() {
+    if ( ! class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+        ontario_obituaries_load_collector_classes();
+    }
+    return class_exists( 'Ontario_Obituaries_Source_Collector' );
+}
+
+/**
  * Include required files
  */
 function ontario_obituaries_includes() {
@@ -115,26 +170,14 @@ function ontario_obituaries_includes() {
     // SEO — needed on frontend for rewrite rules
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
 
-    // P2-1 FIX: Only load collector, adapters, and image pipeline in admin/cron contexts
-    if ( is_admin() || wp_doing_cron() || ( defined( 'DOING_AJAX' ) && DOING_AJAX ) ) {
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-source-collector.php';
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/pipelines/class-image-pipeline.php';
-
-        // Source Adapters
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-generic-html.php';
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-frontrunner.php';
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-tribute-archive.php';
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-legacy-com.php';
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-remembering-ca.php';
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/sources/class-adapter-dignity-memorial.php';
-
-        // Register all adapters with the Source Registry
-        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Generic_HTML() );
-        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_FrontRunner() );
-        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Tribute_Archive() );
-        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Legacy_Com() );
-        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Remembering_Ca() );
-        Ontario_Obituaries_Source_Registry::register_adapter( new Ontario_Obituaries_Adapter_Dignity_Memorial() );
+    // P2-1 FIX: Only load collector, adapters, and image pipeline in admin/cron contexts.
+    // v3.16.1: Also check REST_REQUEST for early REST detection (note: REST_REQUEST
+    // is set late in WP lifecycle, so this check may not match at plugins_loaded time).
+    // The primary fix for REST/frontend contexts is ontario_obituaries_ensure_collector_loaded()
+    // which is called on-demand by the REST cron handler, frontend heartbeat, and
+    // deploy migration before they instantiate the Source Collector.
+    if ( is_admin() || wp_doing_cron() || ( defined( 'DOING_AJAX' ) && DOING_AJAX ) || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+        ontario_obituaries_load_collector_classes();
     }
 
     $ajax_handler = new Ontario_Obituaries_Ajax();
@@ -1199,7 +1242,7 @@ function ontario_obituaries_on_plugin_update() {
             ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL" )
             : 0;
 
-        if ( 0 === $current_count && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+        if ( 0 === $current_count && ontario_obituaries_ensure_collector_loaded() ) {
             ontario_obituaries_log( 'v3.10.0: Obituaries table is empty — running synchronous first-page scrape.', 'info' );
 
             // Cap the synchronous scrape to 1 page per source to avoid timeouts.
@@ -1406,7 +1449,7 @@ function ontario_obituaries_on_plugin_update() {
         $table = $wpdb->prefix . 'ontario_obituaries';
         $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
 
-        if ( $table_exists && class_exists( 'Ontario_Obituaries_Source_Collector' )
+        if ( $table_exists && ontario_obituaries_ensure_collector_loaded()
              && class_exists( 'Ontario_Obituaries_Source_Registry' )
              && class_exists( 'Ontario_Obituaries_Adapter_Remembering_Ca' ) ) {
 
@@ -1534,7 +1577,7 @@ function ontario_obituaries_on_plugin_update() {
         $table = $wpdb->prefix . 'ontario_obituaries';
         $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
 
-        if ( $table_exists && class_exists( 'Ontario_Obituaries_Source_Collector' )
+        if ( $table_exists && ontario_obituaries_ensure_collector_loaded()
              && class_exists( 'Ontario_Obituaries_Source_Registry' )
              && class_exists( 'Ontario_Obituaries_Adapter_Remembering_Ca' ) ) {
 
@@ -2016,7 +2059,9 @@ function ontario_obituaries_on_plugin_update() {
         $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
 
         // Run an immediate full scrape to catch new obituaries.
-        if ( $table_exists && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+        // v3.16.1: Use ensure_collector_loaded() to handle frontend page loads
+        // where the Collector isn't pre-loaded (P2-1 gate: admin/cron/AJAX only).
+        if ( $table_exists && ontario_obituaries_ensure_collector_loaded() ) {
             ontario_obituaries_log( 'v3.16.0: Running immediate scrape to catch new obituaries (cron was broken).', 'info' );
 
             $collector    = new Ontario_Obituaries_Source_Collector();
@@ -2060,6 +2105,75 @@ function ontario_obituaries_on_plugin_update() {
         delete_transient( 'ontario_obituaries_last_cron_spawn' );
 
         ontario_obituaries_log( 'v3.16.0: WP-Cron reliability fix deployed. Heartbeat + REST cron endpoint active.', 'info' );
+    }
+
+    // ── v3.16.1: Fix collector class loading for REST/frontend contexts ──
+    //
+    // BUG (discovered in v3.16.0 code review):
+    //   The Source Collector and all adapters were only loaded in admin/cron/AJAX
+    //   contexts (P2-1 gate in ontario_obituaries_includes()). The three cron
+    //   reliability features added in v3.16.0 all run OUTSIDE these contexts:
+    //     1. REST API /cron endpoint  → REST_REQUEST, not admin/cron/AJAX
+    //     2. Frontend heartbeat sync scrape → frontend init, not admin/cron/AJAX
+    //     3. Deploy migration → init priority 1, on whichever context triggers first
+    //
+    //   class_exists('Ontario_Obituaries_Source_Collector') always returned false,
+    //   so none of the v3.16.0 scrape paths would actually execute.
+    //
+    // FIX:
+    //   1. Extracted collector loading into ontario_obituaries_load_collector_classes()
+    //   2. Added ontario_obituaries_ensure_collector_loaded() on-demand loader
+    //   3. All three scrape paths now call ensure_collector_loaded() instead of
+    //      class_exists() checks
+    //   4. REST_REQUEST constant added to the includes() pre-load condition
+    //   5. Added /wp-json/ontario-obituaries/v1/status health endpoint
+    if ( version_compare( $stored_version, '3.16.1', '<' ) ) {
+        ontario_obituaries_log( 'v3.16.1: Fixed collector class loading for REST/frontend contexts. Status endpoint added.', 'info' );
+
+        // If v3.16.0 migration ran but couldn't scrape (collector wasn't loaded),
+        // run the scrape now with the fix in place.
+        $last = get_option( 'ontario_obituaries_last_collection', array() );
+        $last_ts = ! empty( $last['completed'] ) ? strtotime( $last['completed'] ) : 0;
+        $hours_since = ( time() - $last_ts ) / 3600;
+
+        if ( $hours_since > 12 && ontario_obituaries_ensure_collector_loaded() ) {
+            ontario_obituaries_log( 'v3.16.1: Data is stale (' . round( $hours_since ) . 'h) — running collection with fixed loader.', 'info' );
+
+            $collector    = new Ontario_Obituaries_Source_Collector();
+            $sync_results = $collector->collect();
+
+            update_option( 'ontario_obituaries_last_collection', array(
+                'timestamp' => current_time( 'mysql' ),
+                'completed' => current_time( 'mysql' ),
+                'results'   => $sync_results,
+            ) );
+
+            ontario_obituaries_log(
+                sprintf(
+                    'v3.16.1: Collection complete — %d found, %d added.',
+                    isset( $sync_results['obituaries_found'] ) ? intval( $sync_results['obituaries_found'] ) : 0,
+                    isset( $sync_results['obituaries_added'] ) ? intval( $sync_results['obituaries_added'] ) : 0
+                ),
+                'info'
+            );
+
+            ontario_obituaries_purge_litespeed();
+            delete_transient( 'ontario_obituaries_locations_cache' );
+            delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+        }
+
+        // Re-ensure recurring cron is scheduled.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_collection_event' ) ) {
+            $settings  = ontario_obituaries_get_settings();
+            $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'twicedaily';
+            $time      = isset( $settings['time'] ) ? $settings['time'] : '03:00';
+            wp_schedule_event(
+                ontario_obituaries_next_cron_timestamp( $time ),
+                $frequency,
+                'ontario_obituaries_collection_event'
+            );
+            ontario_obituaries_log( 'v3.16.1: Re-scheduled recurring collection cron.', 'info' );
+        }
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
@@ -2149,7 +2263,9 @@ function ontario_obituaries_maybe_spawn_cron() {
     // run a synchronous lightweight collection on THIS request.
     // This is a safety net for sites where spawn_cron() also fails
     // (e.g., loopback blocked by firewall/WAF).
-    if ( $age > ( $max_age * 2 ) && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+    // v3.16.1: Use ensure_collector_loaded() — on frontend requests the Collector
+    // class is not pre-loaded by ontario_obituaries_includes() (P2-1 gate).
+    if ( $age > ( $max_age * 2 ) && ontario_obituaries_ensure_collector_loaded() ) {
         // Cap to first page only for speed (avoid blocking the page load).
         $cap_pages = function( $urls ) {
             return array_slice( (array) $urls, 0, 1 );
@@ -2191,7 +2307,7 @@ add_action( 'init', 'ontario_obituaries_maybe_spawn_cron', 99 );
  * v3.16.0: Register a REST API endpoint for server-side cron.
  *
  * This allows setting up a real crontab entry on the server:
- *   */15 * * * * curl -s https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron > /dev/null 2>&1
+ *   Every 15 min:  curl -s https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron > /dev/null 2>&1
  *
  * The endpoint triggers the collection event if the data is stale.
  * No authentication required (the endpoint only triggers a read/scrape).
@@ -2200,6 +2316,15 @@ function ontario_obituaries_register_cron_rest_route() {
     register_rest_route( 'ontario-obituaries/v1', '/cron', array(
         'methods'             => 'GET',
         'callback'            => 'ontario_obituaries_handle_cron_rest',
+        'permission_callback' => '__return_true',
+    ) );
+
+    // v3.16.1: Health/status endpoint for monitoring.
+    // Returns: version, record counts, last collection time, cron status, source stats.
+    // No authentication required (read-only, no sensitive data).
+    register_rest_route( 'ontario-obituaries/v1', '/status', array(
+        'methods'             => 'GET',
+        'callback'            => 'ontario_obituaries_handle_status_rest',
         'permission_callback' => '__return_true',
     ) );
 }
@@ -2236,7 +2361,9 @@ function ontario_obituaries_handle_cron_rest() {
     );
 
     // If very stale, run synchronous collection.
-    if ( $age_hours > $max_hours && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+    // v3.16.1: Use ensure_collector_loaded() — REST API requests are not
+    // admin/cron/AJAX, so the Collector may not be pre-loaded.
+    if ( $age_hours > $max_hours && ontario_obituaries_ensure_collector_loaded() ) {
         $collector    = new Ontario_Obituaries_Source_Collector();
         $collect_res  = $collector->collect();
 
@@ -2259,6 +2386,75 @@ function ontario_obituaries_handle_cron_rest() {
     }
 
     return rest_ensure_response( $result );
+}
+
+/**
+ * v3.16.1: Status/health endpoint for monitoring.
+ *
+ * Returns a JSON summary of the plugin's current state:
+ *   - version
+ *   - total active obituary records
+ *   - records added in the last 7 days
+ *   - last collection timestamp and results
+ *   - next scheduled cron event
+ *   - active source count
+ *   - collector class availability
+ *
+ * Useful for external monitoring dashboards, uptime checks, and debugging.
+ *
+ * @since 3.16.1
+ * @return WP_REST_Response
+ */
+function ontario_obituaries_handle_status_rest() {
+    global $wpdb;
+    $table = $wpdb->prefix . 'ontario_obituaries';
+
+    $status = array(
+        'status'  => 'ok',
+        'version' => ONTARIO_OBITUARIES_VERSION,
+    );
+
+    // Check if table exists
+    $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+    $status['table_exists'] = $table_exists;
+
+    if ( $table_exists ) {
+        $status['total_records']   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL" );
+        $status['recent_7d']       = (int) $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$table}` WHERE date_of_death >= %s AND suppressed_at IS NULL",
+            gmdate( 'Y-m-d', strtotime( '-7 days' ) )
+        ) );
+        $status['suppressed']      = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NOT NULL" );
+    }
+
+    // Last collection
+    $last = get_option( 'ontario_obituaries_last_collection', array() );
+    $status['last_collection'] = ! empty( $last['completed'] ) ? $last['completed'] : 'never';
+    if ( ! empty( $last['completed'] ) ) {
+        $age_h = round( ( time() - strtotime( $last['completed'] ) ) / 3600, 1 );
+        $status['age_hours'] = $age_h;
+    }
+    if ( isset( $last['results'] ) ) {
+        $status['last_found'] = isset( $last['results']['obituaries_found'] ) ? intval( $last['results']['obituaries_found'] ) : 0;
+        $status['last_added'] = isset( $last['results']['obituaries_added'] ) ? intval( $last['results']['obituaries_added'] ) : 0;
+    }
+
+    // Cron status
+    $next = wp_next_scheduled( 'ontario_obituaries_collection_event' );
+    $status['cron_scheduled']  = (bool) $next;
+    $status['cron_next']       = $next ? gmdate( 'Y-m-d H:i:s', $next ) : null;
+
+    // Source registry stats
+    if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
+        $src_stats = Ontario_Obituaries_Source_Registry::get_stats();
+        $status['sources_total']  = isset( $src_stats['total'] )  ? intval( $src_stats['total'] )  : 0;
+        $status['sources_active'] = isset( $src_stats['active'] ) ? intval( $src_stats['active'] ) : 0;
+    }
+
+    // Collector class availability
+    $status['collector_loaded'] = class_exists( 'Ontario_Obituaries_Source_Collector' );
+
+    return rest_ensure_response( $status );
 }
 
 /**
