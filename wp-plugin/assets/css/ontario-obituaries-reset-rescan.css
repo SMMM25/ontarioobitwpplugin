@@ -58,6 +58,10 @@
 }
 
 /* v3.12.2: Per-source diagnostics table */
+.ontario-rr-diag-table {
+    max-width: 960px;
+}
+
 .ontario-rr-diag-table th,
 .ontario-rr-diag-table td {
     vertical-align: middle;
@@ -82,11 +86,28 @@
     font-size: 12px;
 }
 
+/* v3.13.1: Domain slug under source name */
+.ontario-rr-diag-table .ontario-rr-domain {
+    color: #888;
+    font-size: 11px;
+}
+
 .ontario-rr-details-row td {
     background: #f9f9f9;
     border-top: none !important;
     padding-top: 2px !important;
     padding-bottom: 6px !important;
+}
+
+/* v3.13.1: Rescan-only inline result container */
+#rescan-only-inline-result {
+    border-top: 1px solid #dcdcde;
+    padding-top: 12px;
+}
+
+#rescan-only-inline-result h3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
 }
 
 /* Per-source breakdown in last result banner */
@@ -97,4 +118,13 @@
 
 .notice details[open] summary {
     margin-bottom: 8px;
+}
+
+/* v3.13.1: Source registry summary box */
+.ontario-rr-registry-summary {
+    background: #f0f6fc;
+    border-left: 4px solid #2271b1;
+    padding: 10px 14px;
+    margin: 10px 0;
+    border-radius: 4px;
 }

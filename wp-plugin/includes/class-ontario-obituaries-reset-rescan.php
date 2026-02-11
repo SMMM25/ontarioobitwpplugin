@@ -116,19 +116,25 @@ class Ontario_Obituaries_Reset_Rescan {
                         <tbody>
                         <?php foreach ( $last_result['rescan_result']['per_source'] as $domain => $ps ) :
                             $err_count    = ! empty( $ps['errors'] ) ? ( is_array( $ps['errors'] ) ? count( $ps['errors'] ) : intval( $ps['errors'] ) ) : 0;
-                            $http_display = isset( $ps['http_status'] ) && '' !== $ps['http_status'] ? $ps['http_status'] : '—';
-                            $http_class   = ( 200 == $http_display ) ? 'ontario-rr-http-ok' : 'ontario-rr-http-err';
+                            $http_raw     = isset( $ps['http_status'] ) ? $ps['http_status'] : '';
+                            $http_display = '' !== $http_raw ? $http_raw : '—';
+                            $http_class   = '';
+                            if ( '' !== $http_raw ) {
+                                $http_int   = intval( $http_raw );
+                                $http_class = ( $http_int >= 200 && $http_int < 400 ) ? 'ontario-rr-http-ok' : 'ontario-rr-http-err';
+                            }
                             $err_msg      = isset( $ps['error_message'] ) ? $ps['error_message'] : '';
+                            $err_display  = mb_strlen( $err_msg ) > 160 ? mb_substr( $err_msg, 0, 160 ) . '…' : $err_msg;
                             $source_name  = isset( $ps['name'] ) ? $ps['name'] : $domain;
                         ?>
                             <tr>
-                                <td><strong><?php echo esc_html( $source_name ); ?></strong><br><small style="color:#888;"><?php echo esc_html( $domain ); ?></small></td>
+                                <td><strong><?php echo esc_html( $source_name ); ?></strong><br><small class="ontario-rr-domain"><?php echo esc_html( $domain ); ?></small></td>
                                 <td><?php echo intval( $ps['found'] ); ?></td>
                                 <td><?php echo intval( $ps['added'] ); ?></td>
                                 <td><?php echo intval( $err_count ); ?></td>
                                 <td class="<?php echo esc_attr( $http_class ); ?>"><?php echo esc_html( $http_display ); ?></td>
                                 <td class="ontario-rr-errmsg" title="<?php echo esc_attr( $err_msg ); ?>">
-                                    <?php echo esc_html( $err_msg ); ?>
+                                    <?php echo esc_html( $err_display ); ?>
                                 </td>
                             </tr>
                             <?php if ( ! empty( $ps['final_url'] ) || ! empty( $ps['duration_ms'] ) ) : ?>
@@ -137,7 +143,7 @@ class Ontario_Obituaries_Reset_Rescan {
                                     <strong><?php esc_html_e( 'Final URL:', 'ontario-obituaries' ); ?></strong> <?php echo esc_html( $ps['final_url'] ); ?>
                                 <?php endif; ?>
                                 <?php if ( ! empty( $ps['duration_ms'] ) ) : ?>
-                                    <strong><?php esc_html_e( 'Duration:', 'ontario-obituaries' ); ?></strong> <?php echo intval( $ps['duration_ms'] ); ?> ms
+                                    &nbsp;|&nbsp;<strong><?php esc_html_e( 'Duration:', 'ontario-obituaries' ); ?></strong> <?php echo intval( $ps['duration_ms'] ); ?> ms
                                 <?php endif; ?>
                             </td></tr>
                             <?php endif; ?>
@@ -171,14 +177,23 @@ class Ontario_Obituaries_Reset_Rescan {
                 <div class="card">
                     <h2 style="color:#2271b1;"><?php esc_html_e( 'Rescan Only (No Deletion)', 'ontario-obituaries' ); ?></h2>
                     <p><?php esc_html_e( 'Run the Source Collector against the first page of each active source without deleting any existing obituary data. New records will be added; existing records are preserved.', 'ontario-obituaries' ); ?></p>
-                    <p style="font-style:italic;color:#50575e;"><?php esc_html_e( 'So give me proper navigation instructions please how do I get there', 'ontario-obituaries' ); ?></p>
-                    <p><strong><?php esc_html_e( 'Navigation:', 'ontario-obituaries' ); ?></strong> <?php esc_html_e( 'WP Admin → Ontario Obituaries → Reset & Rescan', 'ontario-obituaries' ); ?></p>
                     <?php
                     // v3.13.0: Show source registry summary.
+                    // v3.13.1: Defensive — guard against missing sources table during first activation
+                    // or if the table was dropped. get_stats() runs raw SQL; if the table is missing,
+                    // $wpdb emits a DB error and get_var() returns null which casts to (int) 0. Safe,
+                    // but the error clutters the debug log. The class_exists check ensures the file is loaded.
+                    $source_stats = null;
                     if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) :
-                        $source_stats = Ontario_Obituaries_Source_Registry::get_stats();
+                        try {
+                            $source_stats = Ontario_Obituaries_Source_Registry::get_stats();
+                        } catch ( Exception $e ) {
+                            $source_stats = null;
+                        }
+                    endif;
+                    if ( $source_stats && ! empty( $source_stats['total'] ) ) :
                     ?>
-                    <div style="background:#f0f6fc;border-left:4px solid #2271b1;padding:10px 14px;margin:10px 0;border-radius:4px;">
+                    <div class="ontario-rr-registry-summary">
                         <strong><?php esc_html_e( 'Source Registry:', 'ontario-obituaries' ); ?></strong>
                         <?php printf(
                             esc_html__( '%d total sources | %d active | %d disabled | %d circuit-broken', 'ontario-obituaries' ),
@@ -188,7 +203,7 @@ class Ontario_Obituaries_Reset_Rescan {
                             intval( $source_stats['circuit_open'] )
                         ); ?>
                     </div>
-                    <?php endif; ?>
+                    <?php endif; // source_stats ?>
                     <p>
                         <button type="button" class="button button-primary" id="btn-rescan-only">
                             <?php esc_html_e( 'Run Rescan Only', 'ontario-obituaries' ); ?>
@@ -224,19 +239,25 @@ class Ontario_Obituaries_Reset_Rescan {
                             <tbody>
                             <?php foreach ( $rescan_only_last['rescan_result']['per_source'] as $domain => $ps ) :
                                 $ro_err_count    = ! empty( $ps['errors'] ) ? ( is_array( $ps['errors'] ) ? count( $ps['errors'] ) : intval( $ps['errors'] ) ) : 0;
-                                $ro_http_display = isset( $ps['http_status'] ) && '' !== $ps['http_status'] ? $ps['http_status'] : '—';
-                                $ro_http_class   = ( 200 == $ro_http_display ) ? 'ontario-rr-http-ok' : 'ontario-rr-http-err';
+                                $ro_http_raw     = isset( $ps['http_status'] ) ? $ps['http_status'] : '';
+                                $ro_http_display = '' !== $ro_http_raw ? $ro_http_raw : '—';
+                                $ro_http_class   = '';
+                                if ( '' !== $ro_http_raw ) {
+                                    $ro_http_int   = intval( $ro_http_raw );
+                                    $ro_http_class = ( $ro_http_int >= 200 && $ro_http_int < 400 ) ? 'ontario-rr-http-ok' : 'ontario-rr-http-err';
+                                }
                                 $ro_err_msg      = isset( $ps['error_message'] ) ? $ps['error_message'] : '';
+                                $ro_err_display  = mb_strlen( $ro_err_msg ) > 160 ? mb_substr( $ro_err_msg, 0, 160 ) . '…' : $ro_err_msg;
                                 $ro_source_name  = isset( $ps['name'] ) ? $ps['name'] : $domain;
                             ?>
                                 <tr>
-                                    <td><strong><?php echo esc_html( $ro_source_name ); ?></strong><br><small style="color:#888;"><?php echo esc_html( $domain ); ?></small></td>
+                                    <td><strong><?php echo esc_html( $ro_source_name ); ?></strong><br><small class="ontario-rr-domain"><?php echo esc_html( $domain ); ?></small></td>
                                     <td><?php echo intval( $ps['found'] ); ?></td>
                                     <td><?php echo intval( $ps['added'] ); ?></td>
                                     <td><?php echo intval( $ro_err_count ); ?></td>
                                     <td class="<?php echo esc_attr( $ro_http_class ); ?>"><?php echo esc_html( $ro_http_display ); ?></td>
                                     <td class="ontario-rr-errmsg" title="<?php echo esc_attr( $ro_err_msg ); ?>">
-                                        <?php echo esc_html( $ro_err_msg ); ?>
+                                        <?php echo esc_html( $ro_err_display ); ?>
                                     </td>
                                 </tr>
                                 <?php if ( ! empty( $ps['final_url'] ) || ! empty( $ps['duration_ms'] ) ) : ?>
@@ -245,7 +266,7 @@ class Ontario_Obituaries_Reset_Rescan {
                                         <strong><?php esc_html_e( 'Final URL:', 'ontario-obituaries' ); ?></strong> <?php echo esc_html( $ps['final_url'] ); ?>
                                     <?php endif; ?>
                                     <?php if ( ! empty( $ps['duration_ms'] ) ) : ?>
-                                        <strong><?php esc_html_e( 'Duration:', 'ontario-obituaries' ); ?></strong> <?php echo intval( $ps['duration_ms'] ); ?> ms
+                                        &nbsp;|&nbsp;<strong><?php esc_html_e( 'Duration:', 'ontario-obituaries' ); ?></strong> <?php echo intval( $ps['duration_ms'] ); ?> ms
                                     <?php endif; ?>
                                 </td></tr>
                                 <?php endif; ?>
