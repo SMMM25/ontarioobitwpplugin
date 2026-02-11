@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.15.3
+ * Version: 3.16.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.15.3' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.16.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1983,9 +1983,298 @@ function ontario_obituaries_on_plugin_update() {
         ontario_obituaries_log( 'v3.15.3: Two-phase enrichment (listing + detail) deployed.', 'info' );
     }
 
+    // v3.16.0: Fix WP-Cron reliability on LiteSpeed-cached sites.
+    //
+    // ROOT CAUSE (discovered 2026-02-11):
+    //   WP-Cron only fires when a PHP page is loaded. LiteSpeed Cache
+    //   serves cached HTML for most requests, bypassing PHP entirely.
+    //   This means wp_schedule_event('twicedaily') NEVER fires because
+    //   no PHP execution occurs between scheduled runs.
+    //
+    //   Result: the scraper ran ONCE (on the v3.15.3 deploy) and never
+    //   again. The database has been stuck at 124 records since the
+    //   initial scrape. New obituaries posted to yorkregion.com (e.g.,
+    //   Douglas Rush on Feb 11, 2026) never appear on the site.
+    //
+    // FIX:
+    //   1. Added ontario_obituaries_maybe_spawn_cron() — a lightweight
+    //      heartbeat on every uncached PHP load that checks data freshness
+    //      and spawns WP-Cron if stale. If very stale (>2× interval),
+    //      runs a synchronous first-page scrape as a safety net.
+    //
+    //   2. Added REST API endpoint /wp-json/ontario-obituaries/v1/cron
+    //      for external server-side cron. Add to crontab:
+    //        */15 * * * * curl -s https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron
+    //
+    //   3. Run an immediate synchronous scrape on this deploy to catch
+    //      new obituaries posted since the last (only) scrape.
+    //
+    //   4. Re-ensure the recurring cron event is scheduled.
+    if ( version_compare( $stored_version, '3.16.0', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+
+        // Run an immediate full scrape to catch new obituaries.
+        if ( $table_exists && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+            ontario_obituaries_log( 'v3.16.0: Running immediate scrape to catch new obituaries (cron was broken).', 'info' );
+
+            $collector    = new Ontario_Obituaries_Source_Collector();
+            $sync_results = $collector->collect();
+
+            update_option( 'ontario_obituaries_last_collection', array(
+                'timestamp' => current_time( 'mysql' ),
+                'completed' => current_time( 'mysql' ),
+                'results'   => $sync_results,
+            ) );
+
+            ontario_obituaries_log(
+                sprintf(
+                    'v3.16.0: Immediate scrape complete — %d found, %d added.',
+                    isset( $sync_results['obituaries_found'] ) ? intval( $sync_results['obituaries_found'] ) : 0,
+                    isset( $sync_results['obituaries_added'] ) ? intval( $sync_results['obituaries_added'] ) : 0
+                ),
+                'info'
+            );
+
+            // Purge all caches so new data appears.
+            ontario_obituaries_purge_litespeed();
+            delete_transient( 'ontario_obituaries_locations_cache' );
+            delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+        }
+
+        // Re-ensure recurring cron is scheduled.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_collection_event' ) ) {
+            $settings  = ontario_obituaries_get_settings();
+            $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'twicedaily';
+            $time      = isset( $settings['time'] ) ? $settings['time'] : '03:00';
+            wp_schedule_event(
+                ontario_obituaries_next_cron_timestamp( $time ),
+                $frequency,
+                'ontario_obituaries_collection_event'
+            );
+            ontario_obituaries_log( 'v3.16.0: Re-scheduled recurring collection cron.', 'info' );
+        }
+
+        // Clear stale spawn transient so heartbeat runs immediately.
+        delete_transient( 'ontario_obituaries_last_cron_spawn' );
+
+        ontario_obituaries_log( 'v3.16.0: WP-Cron reliability fix deployed. Heartbeat + REST cron endpoint active.', 'info' );
+    }
+
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
 }
 add_action( 'init', 'ontario_obituaries_on_plugin_update', 1 );
+
+/**
+ * v3.16.0: Frontend stale-cron heartbeat.
+ *
+ * WP-Cron relies on page visits to fire, but LiteSpeed Cache serves
+ * cached HTML for most requests, bypassing PHP entirely. This means
+ * wp_schedule_event() events may NEVER fire on cached sites.
+ *
+ * FIX: On every uncached PHP page load (admin or frontend), check if
+ * the last collection is older than the configured interval. If stale,
+ * spawn a lightweight async loopback request to wp-cron.php so the
+ * scheduled events execute.
+ *
+ * This runs on 'init' (priority 99, after on_plugin_update) and is
+ * intentionally lightweight: one get_option() + one time comparison.
+ * The actual scraping happens asynchronously via the loopback request,
+ * so it doesn't block the current page load.
+ *
+ * Also adds a REST API endpoint for server-side cron:
+ *   curl https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron
+ * This allows setting up a real crontab entry that isn't affected by caching.
+ */
+function ontario_obituaries_maybe_spawn_cron() {
+    // Skip if this IS a cron request (avoid recursion).
+    if ( wp_doing_cron() || ( defined( 'DOING_CRON' ) && DOING_CRON ) ) {
+        return;
+    }
+
+    // Lightweight check: how long since last collection?
+    $last = get_option( 'ontario_obituaries_last_collection', array() );
+    $last_ts = 0;
+    if ( ! empty( $last['completed'] ) ) {
+        $last_ts = strtotime( $last['completed'] );
+    }
+
+    // Also check when we last attempted a spawn (throttle to once per 30 min).
+    $last_spawn = (int) get_transient( 'ontario_obituaries_last_cron_spawn' );
+    if ( $last_spawn && ( time() - $last_spawn ) < 1800 ) {
+        return; // Spawned within last 30 min, don't spam.
+    }
+
+    // Determine the collection interval from settings.
+    // Default: twicedaily = 12 hours. We trigger if stale > interval.
+    $settings  = ontario_obituaries_get_settings();
+    $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'twicedaily';
+    $intervals = array(
+        'hourly'     => HOUR_IN_SECONDS,
+        'twicedaily' => 12 * HOUR_IN_SECONDS,
+        'daily'      => DAY_IN_SECONDS,
+        'weekly'     => WEEK_IN_SECONDS,
+    );
+    $max_age = isset( $intervals[ $frequency ] ) ? $intervals[ $frequency ] : ( 12 * HOUR_IN_SECONDS );
+
+    // Is the data stale?
+    $age = time() - $last_ts;
+    if ( $age < $max_age ) {
+        return; // Data is fresh enough.
+    }
+
+    // Data is stale — spawn WP-Cron to run pending events.
+    // This is the same mechanism WordPress core uses in wp_cron().
+    set_transient( 'ontario_obituaries_last_cron_spawn', time(), 3600 );
+
+    // Method 1: Try spawn_cron() which does a non-blocking loopback.
+    if ( function_exists( 'spawn_cron' ) ) {
+        spawn_cron();
+    }
+
+    // Method 2: If no collection event is even scheduled, schedule one now.
+    // This catches the case where cron events were lost (DB migration, etc.).
+    if ( ! wp_next_scheduled( 'ontario_obituaries_collection_event' ) ) {
+        $time = isset( $settings['time'] ) ? $settings['time'] : '03:00';
+        wp_schedule_event(
+            ontario_obituaries_next_cron_timestamp( $time ),
+            $frequency,
+            'ontario_obituaries_collection_event'
+        );
+        ontario_obituaries_log( 'v3.16.0: Cron event was missing — re-scheduled.', 'info' );
+    }
+
+    // Method 3: If the last collection was VERY stale (> 2× interval),
+    // run a synchronous lightweight collection on THIS request.
+    // This is a safety net for sites where spawn_cron() also fails
+    // (e.g., loopback blocked by firewall/WAF).
+    if ( $age > ( $max_age * 2 ) && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+        // Cap to first page only for speed (avoid blocking the page load).
+        $cap_pages = function( $urls ) {
+            return array_slice( (array) $urls, 0, 1 );
+        };
+        add_filter( 'ontario_obituaries_discovered_urls', $cap_pages, 10, 1 );
+
+        try {
+            ontario_obituaries_log( 'v3.16.0: Data very stale (' . round( $age / 3600 ) . 'h) — running synchronous first-page scrape.', 'info' );
+            $collector = new Ontario_Obituaries_Source_Collector();
+            $results   = $collector->collect();
+
+            update_option( 'ontario_obituaries_last_collection', array(
+                'timestamp' => current_time( 'mysql' ),
+                'completed' => current_time( 'mysql' ),
+                'results'   => $results,
+            ) );
+
+            // Purge caches so new data appears immediately.
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+            delete_transient( 'ontario_obituaries_locations_cache' );
+            delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+            ontario_obituaries_log(
+                sprintf(
+                    'v3.16.0: Synchronous scrape complete — %d found, %d added.',
+                    isset( $results['obituaries_found'] ) ? intval( $results['obituaries_found'] ) : 0,
+                    isset( $results['obituaries_added'] ) ? intval( $results['obituaries_added'] ) : 0
+                ),
+                'info'
+            );
+        } finally {
+            remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+        }
+    }
+}
+add_action( 'init', 'ontario_obituaries_maybe_spawn_cron', 99 );
+
+/**
+ * v3.16.0: Register a REST API endpoint for server-side cron.
+ *
+ * This allows setting up a real crontab entry on the server:
+ *   */15 * * * * curl -s https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron > /dev/null 2>&1
+ *
+ * The endpoint triggers the collection event if the data is stale.
+ * No authentication required (the endpoint only triggers a read/scrape).
+ */
+function ontario_obituaries_register_cron_rest_route() {
+    register_rest_route( 'ontario-obituaries/v1', '/cron', array(
+        'methods'             => 'GET',
+        'callback'            => 'ontario_obituaries_handle_cron_rest',
+        'permission_callback' => '__return_true',
+    ) );
+}
+add_action( 'rest_api_init', 'ontario_obituaries_register_cron_rest_route' );
+
+function ontario_obituaries_handle_cron_rest() {
+    // Trigger pending cron events.
+    if ( function_exists( 'spawn_cron' ) ) {
+        spawn_cron();
+    }
+
+    // Also check if a collection should run now.
+    $last = get_option( 'ontario_obituaries_last_collection', array() );
+    $last_ts = ! empty( $last['completed'] ) ? strtotime( $last['completed'] ) : 0;
+    $age_hours = round( ( time() - $last_ts ) / 3600, 1 );
+
+    $settings  = ontario_obituaries_get_settings();
+    $frequency = isset( $settings['frequency'] ) ? $settings['frequency'] : 'twicedaily';
+    $intervals = array(
+        'hourly'     => 1,
+        'twicedaily' => 12,
+        'daily'      => 24,
+        'weekly'     => 168,
+    );
+    $max_hours = isset( $intervals[ $frequency ] ) ? $intervals[ $frequency ] : 12;
+
+    $result = array(
+        'status'             => 'ok',
+        'last_collection'    => ! empty( $last['completed'] ) ? $last['completed'] : 'never',
+        'age_hours'          => $age_hours,
+        'max_interval_hours' => $max_hours,
+        'stale'              => $age_hours > $max_hours,
+        'cron_spawned'       => true,
+    );
+
+    // If very stale, run synchronous collection.
+    if ( $age_hours > $max_hours && class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+        $collector    = new Ontario_Obituaries_Source_Collector();
+        $collect_res  = $collector->collect();
+
+        update_option( 'ontario_obituaries_last_collection', array(
+            'timestamp' => current_time( 'mysql' ),
+            'completed' => current_time( 'mysql' ),
+            'results'   => $collect_res,
+        ) );
+
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        delete_transient( 'ontario_obituaries_locations_cache' );
+        delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+        $result['collection_ran'] = true;
+        $result['found']          = isset( $collect_res['obituaries_found'] ) ? intval( $collect_res['obituaries_found'] ) : 0;
+        $result['added']          = isset( $collect_res['obituaries_added'] ) ? intval( $collect_res['obituaries_added'] ) : 0;
+
+        // Also run dedup after collection.
+        ontario_obituaries_cleanup_duplicates();
+    }
+
+    return rest_ensure_response( $result );
+}
+
+/**
+ * v3.16.0: LiteSpeed-aware cron spawning.
+ *
+ * When LiteSpeed Cache is active, tell it to exclude wp-cron.php from
+ * caching so the loopback request from spawn_cron() actually executes PHP.
+ * Also add the nocache header on cron requests.
+ */
+function ontario_obituaries_litespeed_cron_fix() {
+    // If we're serving a wp-cron.php request, ensure it's not cached.
+    if ( defined( 'DOING_CRON' ) && DOING_CRON && ! headers_sent() ) {
+        header( 'X-LiteSpeed-Cache-Control: no-cache' );
+    }
+}
+add_action( 'init', 'ontario_obituaries_litespeed_cron_fix', 0 );
 
 /**
  * Add integration with Obituary Assistant
