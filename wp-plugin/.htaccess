@@ -1,0 +1,21 @@
+# Ontario Obituaries — Plugin directory security
+# v3.17.0: Prevent directory listing and direct PHP access
+
+# Disable directory browsing
+Options -Indexes
+
+# Block direct access to PHP files except the main plugin file
+<Files *.php>
+    Order Deny,Allow
+    Deny from all
+</Files>
+
+# Allow the main plugin file (loaded by WordPress)
+<Files "ontario-obituaries.php">
+    Allow from all
+</Files>
+
+# Allow uninstall.php (used by WordPress during uninstall)
+<Files "uninstall.php">
+    Allow from all
+</Files>

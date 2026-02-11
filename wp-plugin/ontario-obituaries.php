@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.16.1
+ * Version: 3.17.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.16.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.17.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -2321,11 +2321,13 @@ function ontario_obituaries_register_cron_rest_route() {
 
     // v3.16.1: Health/status endpoint for monitoring.
     // Returns: version, record counts, last collection time, cron status, source stats.
-    // No authentication required (read-only, no sensitive data).
+    // v3.17.0: Restricted to logged-in admins to prevent data leakage.
     register_rest_route( 'ontario-obituaries/v1', '/status', array(
         'methods'             => 'GET',
         'callback'            => 'ontario_obituaries_handle_status_rest',
-        'permission_callback' => '__return_true',
+        'permission_callback' => function() {
+            return current_user_can( 'manage_options' );
+        },
     ) );
 }
 add_action( 'rest_api_init', 'ontario_obituaries_register_cron_rest_route' );
