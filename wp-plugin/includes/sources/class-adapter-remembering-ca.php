@@ -244,35 +244,53 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['published_date'] = $pm[1];
         }
 
-        // v3.14.1: Extract image from listing page.
+        // v3.15.1: Extract image from listing page — prefer the larger print-only
+        // image (300×400px) over the lazy-loaded thumbnail (200×200px).
+        //
         // The images are hosted on a public CDN (cdn-otf-cas.prfct.cc) served by
-        // Tribute Technology, not the newspaper's own servers. The CDN URLs are
-        // publicly accessible and designed for web display.
+        // Tribute Technology. The CDN encodes transform params (width/height) in
+        // a base64 JSON payload within the URL path. The print-only image is
+        // served at 300×400 which displays cleanly in our 220px card layout.
+        // The lazy-loaded thumbnail is only 200×200 and looks zoomed/blurry
+        // when upscaled to fill the card.
         //
-        // Previous behavior (v3.9.0): Intentionally skipped images citing rights
-        // concerns. Revised because: (a) CDN images are publicly served URLs,
-        // (b) the source registry's image_allowlisted flag controls display,
-        // (c) normalize() only includes the image when image_allowlisted=1.
+        // Priority:
+        //   1. Print-only img (class contains "print-only") — src attr, 300×400
+        //   2. Lazy-loaded img (class contains "ap_photo") — data-src attr, 200×200
+        //   3. Any other img within the card
         //
-        // We check both data-src (lazy-loaded) and src attributes.
-        // Filter out placeholder/spacer images.
-        $img_selectors = array(
-            './/img[contains(@class,"ap_photo") or contains(@class,"obit-image") or contains(@class,"photo")]',
-            './/div[contains(@class,"photo")]//img',
-            './/img[not(contains(@class,"print-only"))]',
-        );
-        foreach ( $img_selectors as $isel ) {
-            $img_node = $xpath->query( $isel, $node )->item( 0 );
-            if ( $img_node ) {
-                // Prefer data-src (lazy-loaded real image) over src (may be a spacer)
-                $img_src = $this->node_attr( $img_node, 'data-src' );
-                if ( empty( $img_src ) ) {
-                    $img_src = $this->node_attr( $img_node, 'src' );
-                }
-                // Skip placeholder/spacer images
-                if ( ! empty( $img_src ) && ! preg_match( '/(spacer|placeholder|default|generic|no-?photo|avatar|logo|1x1|pixel)\.(?:png|gif|jpg|svg)/i', $img_src ) ) {
-                    $card['image_url'] = $this->resolve_url( $img_src, $source['base_url'] );
-                    break;
+        // Filter out placeholder/spacer images in all cases.
+        $spacer_pattern = '/(spacer|placeholder|default|generic|no-?photo|avatar|logo|1x1|pixel)\.(?:png|gif|jpg|svg)/i';
+
+        // Strategy 1: Print-only image (larger, better quality)
+        $print_imgs = $xpath->query( './/img[contains(@class,"print-only")]', $node );
+        if ( $print_imgs && $print_imgs->length > 0 ) {
+            $print_img = $print_imgs->item( 0 );
+            $print_src = $this->node_attr( $print_img, 'src' );
+            if ( ! empty( $print_src ) && ! preg_match( $spacer_pattern, $print_src ) ) {
+                $card['image_url'] = $this->resolve_url( $print_src, $source['base_url'] );
+            }
+        }
+
+        // Strategy 2: Lazy-loaded thumbnail (fallback)
+        if ( empty( $card['image_url'] ) ) {
+            $img_selectors = array(
+                './/img[contains(@class,"ap_photo") or contains(@class,"obit-image") or contains(@class,"photo")]',
+                './/div[contains(@class,"photo")]//img',
+                './/img',
+            );
+            foreach ( $img_selectors as $isel ) {
+                $img_node = $xpath->query( $isel, $node )->item( 0 );
+                if ( $img_node ) {
+                    // Prefer data-src (lazy-loaded real image) over src (may be a spacer)
+                    $img_src = $this->node_attr( $img_node, 'data-src' );
+                    if ( empty( $img_src ) ) {
+                        $img_src = $this->node_attr( $img_node, 'src' );
+                    }
+                    if ( ! empty( $img_src ) && ! preg_match( $spacer_pattern, $img_src ) ) {
+                        $card['image_url'] = $this->resolve_url( $img_src, $source['base_url'] );
+                        break;
+                    }
                 }
             }
         }
@@ -289,139 +307,68 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['funeral_home'] = $this->node_text( $fh_node );
         }
 
-        // Description
-        $desc_node = $xpath->query( './/p | .//*[contains(@class,"excerpt")]', $node )->item( 0 );
-        if ( $desc_node && strlen( trim( $desc_node->textContent ) ) > 15 ) {
-            $card['description'] = $this->node_text( $desc_node );
+        // Description — v3.15.1: Extract ALL content paragraphs, not just the first.
+        // The listing card may contain multiple <p> tags: the first is typically the
+        // obituary content ("Ralph George Harvey Pyle 1926 - 2026 Ralph is survived...")
+        // and the second is the "Published online" line. We concatenate all content
+        // paragraphs (class="content" or generic <p> with substantive text) to get
+        // the fullest possible description from the listing page.
+        $desc_parts = array();
+        $desc_nodes = $xpath->query( './/p[contains(@class,"content")] | .//*[contains(@class,"excerpt")]', $node );
+        if ( $desc_nodes && $desc_nodes->length > 0 ) {
+            foreach ( $desc_nodes as $dn ) {
+                $dt = trim( $dn->textContent );
+                if ( strlen( $dt ) > 15 ) {
+                    $desc_parts[] = $this->node_text( $dn );
+                }
+            }
+        }
+        // Fallback: first generic <p> if no .content class found
+        if ( empty( $desc_parts ) ) {
+            $fallback_p = $xpath->query( './/p', $node );
+            if ( $fallback_p ) {
+                foreach ( $fallback_p as $fp ) {
+                    $ft = trim( $fp->textContent );
+                    // Skip the "Published online" line and very short text
+                    if ( strlen( $ft ) > 30 && stripos( $ft, 'Published online' ) === false ) {
+                        $desc_parts[] = $this->node_text( $fp );
+                    }
+                }
+            }
+        }
+        if ( ! empty( $desc_parts ) ) {
+            $card['description'] = implode( "\n\n", $desc_parts );
         }
 
         return $card;
     }
 
     /**
-     * v3.14.1: Fetch the detail page for richer obituary data.
+     * v3.15.1: Fetch detail page — SKIPPED for Remembering.ca / Tribute Technology.
      *
-     * IMPORTANT: Many Remembering.ca / Tribute Technology detail pages are
-     * React/Next.js SPAs that return empty HTML (content-length: 0) to
-     * non-browser clients. The detail page content is rendered client-side
-     * via JavaScript hydration, which our HTTP GET cannot execute.
+     * IMPORTANT: All Remembering.ca / Tribute Technology detail pages are
+     * React/Next.js SPAs that return either:
+     *   - content-length: 0 (empty body) to non-browser clients, or
+     *   - a minimal Next.js shell (<500 bytes) with no obituary content.
      *
-     * When the server returns a page smaller than 500 bytes, we assume it's
-     * a SPA shell and return null immediately to avoid wasted processing.
+     * Previous versions (v3.14.0–v3.15.0) attempted to fetch these pages,
+     * wasting ~1-2 seconds per card (rate-limited) for zero useful data.
+     * With 25 cards per page, this added ~25-50 seconds to each scrape.
      *
-     * Image extraction and most data extraction now happens at the LISTING
-     * page level in extract_card(), since that HTML is server-rendered.
+     * All useful data (name, dates, location, description, image) is now
+     * extracted at the LISTING page level in extract_card(). The listing
+     * HTML is server-rendered and contains the full content snippet.
      *
      * @param string $detail_url URL of the detail page.
      * @param array  $card       Card data from extract_obit_cards().
      * @param array  $source     Source registry row.
-     * @return array|null Enriched data or null on failure.
+     * @return array|null Always returns null — detail fetch is disabled.
      */
     public function fetch_detail( $detail_url, $card, $source ) {
-        if ( empty( $detail_url ) ) {
-            return null;
-        }
-
-        $html = $this->http_get( $detail_url, array(
-            'Accept-Language' => 'en-CA,en;q=0.9',
-        ) );
-
-        if ( is_wp_error( $html ) ) {
-            return null;
-        }
-
-        // v3.14.1: Detect SPA/empty pages. Tribute Technology detail pages
-        // return content-length: 0 or a minimal Next.js shell to non-browser
-        // clients. If the HTML is tiny, there's nothing to extract.
-        if ( strlen( $html ) < 500 ) {
-            return null;
-        }
-
-        $doc      = $this->parse_html( $html );
-        $xpath    = new DOMXPath( $doc );
-        $enriched = array();
-
-        // ── Full obituary text ──────────────────────────────────────
-        $desc_selectors = array(
-            '//div[contains(@class,"obituary-text")]',
-            '//div[contains(@class,"obit-text")]',
-            '//div[contains(@class,"article-content")]',
-            '//div[contains(@class,"obituary-body")]',
-            '//div[contains(@class,"entry-content")]',
-            '//div[contains(@class,"obit_body")]',
-            '//div[contains(@class,"content-area")]//article',
-            '//div[contains(@class,"main-content")]//p/..',
-        );
-
-        foreach ( $desc_selectors as $sel ) {
-            $node = $xpath->query( $sel )->item( 0 );
-            if ( $node && strlen( trim( $node->textContent ) ) > 80 ) {
-                $full_text = $this->node_text( $node );
-                $listing_desc_len = isset( $card['description'] ) ? strlen( $card['description'] ) : 0;
-                if ( strlen( $full_text ) > $listing_desc_len + 50 ) {
-                    $enriched['description'] = $full_text;
-                }
-                break;
-            }
-        }
-
-        // ── Portrait image (fallback — prefer listing-page extraction) ──
-        if ( empty( $card['image_url'] ) ) {
-            $img_selectors = array(
-                '//div[contains(@class,"obituary")]//img[contains(@class,"portrait") or contains(@class,"photo") or contains(@class,"obit-image")]',
-                '//div[contains(@class,"obituary")]//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder")) and not(contains(@src,"default"))]',
-                '//article//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder"))]',
-                '//div[contains(@class,"photo")]//img',
-            );
-
-            foreach ( $img_selectors as $sel ) {
-                $img = $xpath->query( $sel )->item( 0 );
-                if ( $img ) {
-                    $src = $this->node_attr( $img, 'data-src' );
-                    if ( empty( $src ) ) {
-                        $src = $this->node_attr( $img, 'src' );
-                    }
-                    if ( ! empty( $src ) && ! preg_match( '/(placeholder|default|generic|no-?photo|avatar|logo|spacer|1x1|pixel)/i', $src ) ) {
-                        $enriched['image_url'] = $this->resolve_url( $src, $source['base_url'] );
-                        break;
-                    }
-                }
-            }
-        }
-
-        // ── Better date extraction from detail page ──────────────────
-        if ( empty( $card['death_date_from_text'] ) ) {
-            $detail_text = isset( $enriched['description'] ) ? $enriched['description'] : '';
-            if ( ! empty( $detail_text ) ) {
-                $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
-                $death_phrases = array(
-                    '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                    '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                    '/died(?:\s+\w+){0,2}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                    '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                );
-                foreach ( $death_phrases as $pattern ) {
-                    if ( preg_match( $pattern, $detail_text, $death_m ) ) {
-                        $enriched['death_date_from_text'] = trim( $death_m[1] );
-                        break;
-                    }
-                }
-
-                $birth_phrases = array(
-                    '/\bborn(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-                    '/(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}~]\s*(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/u',
-                );
-
-                foreach ( $birth_phrases as $pattern ) {
-                    if ( preg_match( $pattern, $detail_text, $birth_m ) ) {
-                        $enriched['birth_date_from_text'] = trim( $birth_m[1] );
-                        break;
-                    }
-                }
-            }
-        }
-
-        return ! empty( $enriched ) ? $enriched : null;
+        // v3.15.1: SPA detail pages return empty HTML. All data extraction
+        // happens in extract_card() from the server-rendered listing page.
+        // Returning null immediately saves ~1-2s per card.
+        return null;
     }
 
     public function normalize( $card, $source ) {

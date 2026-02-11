@@ -86,11 +86,11 @@ if ( ! defined( 'ABSPATH' ) ) {
             ?>
                 <div class="ontario-obituary-card" style="background: #fff; border: 1px solid #f0f0f0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06); transition: all 0.25s ease; display: flex; flex-direction: column;">
                     <?php if ( ! empty( $obit->image_url ) ) : ?>
-                    <div style="height: 200px; overflow: hidden; background: #f7f7f7;">
+                    <div style="height: 220px; overflow: hidden; background: #f7f7f7; display: flex; align-items: center; justify-content: center;">
                         <img src="<?php echo esc_url( $obit->image_url ); ?>"
                              alt="<?php echo esc_attr( sprintf( __( 'Photo of %s', 'ontario-obituaries' ), $obit->name ) ); ?>"
                              loading="lazy"
-                             style="width: 100%; height: 100%; object-fit: cover;">
+                             style="width: 100%; height: 100%; object-fit: contain; object-position: center; padding: 12px;">
                     </div>
                     <?php endif; ?>
 
