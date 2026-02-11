@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.15.1
+ * Version: 3.15.2
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.15.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.15.2' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1643,6 +1643,163 @@ function ontario_obituaries_on_plugin_update() {
         }
 
         ontario_obituaries_log( 'v3.15.1: Better images (300x400) + full descriptions + SPA skip deployed.', 'info' );
+    }
+
+    // v3.15.2: Full detail-page scrape + enrichment sweep.
+    //
+    // ROOT CAUSE OF REMAINING ISSUES:
+    //   1. Description still truncated: v3.15.1 wrongly assumed detail pages
+    //      were empty SPAs and disabled fetch_detail(). In reality, Tribute
+    //      Technology's Next.js pages are fully SSR with the complete obituary
+    //      in <div id="obituaryDescription"> (e.g., Allan Dawe: 1017 chars
+    //      vs. listing snippet: 319 chars).
+    //   2. No funeral home: the listing page doesn't include funeral home data.
+    //      Detail pages have "Funeral Arrangements by" with the full name
+    //      (e.g., "Roadhouse and Rose Funeral Home").
+    //   3. No location for some cards: the new listing template removed the
+    //      .city div. Detail pages have location in RSC payload.
+    //   4. Listing CSS class changed: "content" → "copy-featured" in the
+    //      Bishop Waterfall July 2022+ template. Fixed in extract_card().
+    //   5. Higher-res images available: detail pages serve full-size portraits
+    //      from d1q40j6jx1d8h6.cloudfront.net/Obituaries/{id}/Image.jpg.
+    //
+    // FIX: Re-enable fetch_detail() with proper SSR extraction. On deploy,
+    // scrape listing page 1 AND detail pages, then UPDATE all matching records
+    // with full descriptions, funeral homes, images, and ages.
+    if ( version_compare( $stored_version, '3.15.2', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+
+        if ( $table_exists && class_exists( 'Ontario_Obituaries_Source_Collector' )
+             && class_exists( 'Ontario_Obituaries_Source_Registry' )
+             && class_exists( 'Ontario_Obituaries_Adapter_Remembering_Ca' ) ) {
+
+            ontario_obituaries_log( 'v3.15.2: Starting full detail-page enrichment sweep (descriptions + funeral homes + images).', 'info' );
+
+            $sources = Ontario_Obituaries_Source_Registry::get_active_sources();
+            $enriched_count = 0;
+
+            foreach ( $sources as $source ) {
+                $adapter = Ontario_Obituaries_Source_Registry::get_adapter( $source['adapter_type'] );
+                if ( ! $adapter ) continue;
+
+                $source['config_parsed'] = ! empty( $source['config'] ) ? json_decode( $source['config'], true ) : array();
+                if ( ! is_array( $source['config_parsed'] ) ) {
+                    $source['config_parsed'] = array();
+                }
+
+                // Fetch first page only (avoid timeout)
+                $listing_urls = $adapter->discover_listing_urls( $source, 7 );
+                $listing_urls = array_slice( $listing_urls, 0, 1 );
+
+                foreach ( $listing_urls as $url ) {
+                    $html = $adapter->fetch_listing( $url, $source );
+                    if ( is_wp_error( $html ) || empty( $html ) ) continue;
+
+                    $cards = $adapter->extract_obit_cards( $html, $source );
+
+                    foreach ( $cards as $card ) {
+                        // v3.15.2: Fetch detail page for full content
+                        if ( ! empty( $card['detail_url'] ) ) {
+                            $detail_data = $adapter->fetch_detail( $card['detail_url'], $card, $source );
+                            if ( $detail_data ) {
+                                $card = array_merge( $card, $detail_data );
+                            }
+                            // Brief pause between detail fetches to avoid rate limiting
+                            usleep( 500000 ); // 0.5s
+                        }
+
+                        $record = $adapter->normalize( $card, $source );
+                        if ( empty( $record['name'] ) ) continue;
+
+                        // Build normalized name for matching
+                        $clean_name = strtolower( trim( $record['name'] ) );
+                        $clean_name = preg_replace( '/\b(mr|mrs|ms|dr|jr|sr|ii|iii|obituary)\b\.?/i', '', $clean_name );
+                        $clean_name = preg_replace( '/\([^)]*\)/', '', $clean_name );
+                        $clean_name = preg_replace( '/[^a-z\s]/', '', $clean_name );
+                        $clean_name = preg_replace( '/\s+/', ' ', trim( $clean_name ) );
+
+                        if ( strlen( $clean_name ) < 4 ) continue;
+
+                        // Find matching records by name LIKE pattern
+                        $name_parts = explode( ' ', $clean_name );
+                        $like_pattern = '%' . $wpdb->esc_like( $name_parts[0] ) . '%' . $wpdb->esc_like( end( $name_parts ) ) . '%';
+
+                        $matches = $wpdb->get_results( $wpdb->prepare(
+                            "SELECT id, name, image_url, date_of_birth, age, description, funeral_home, location FROM `{$table}`
+                             WHERE LOWER(name) LIKE %s
+                               AND suppressed_at IS NULL
+                             LIMIT 5",
+                            $like_pattern
+                        ) );
+
+                        foreach ( $matches as $match ) {
+                            $update_data = array();
+
+                            // Always update description if new is longer (detail page has full text)
+                            $new_desc_len = ! empty( $record['description'] ) ? strlen( $record['description'] ) : 0;
+                            $old_desc_len = ! empty( $match->description ) ? strlen( $match->description ) : 0;
+                            if ( $new_desc_len > $old_desc_len && $new_desc_len > 50 ) {
+                                $update_data['description'] = $record['description'];
+                            }
+
+                            // Always update image_url if new source provides one
+                            if ( ! empty( $record['image_url'] ) && (
+                                empty( $match->image_url )
+                                || strlen( $match->image_url ) < 10
+                                || strpos( $match->image_url, 'w%22%3A200' ) !== false  // Old 200×200
+                                || strpos( $match->image_url, '"w":200' ) !== false
+                            ) ) {
+                                $update_data['image_url'] = $record['image_url'];
+                            }
+
+                            // Update funeral_home if empty
+                            if ( empty( $match->funeral_home ) && ! empty( $record['funeral_home'] ) ) {
+                                $update_data['funeral_home'] = $record['funeral_home'];
+                            }
+
+                            // Update location if empty
+                            if ( empty( $match->location ) && ! empty( $record['location'] ) ) {
+                                $update_data['location'] = $record['location'];
+                            }
+
+                            // Update date_of_birth if empty
+                            if ( ( empty( $match->date_of_birth ) || '0000-00-00' === $match->date_of_birth ) && ! empty( $record['date_of_birth'] ) ) {
+                                $update_data['date_of_birth'] = $record['date_of_birth'];
+                            }
+
+                            // Update age if 0
+                            if ( ( empty( $match->age ) || 0 === intval( $match->age ) ) && ! empty( $record['age'] ) && intval( $record['age'] ) > 0 ) {
+                                $update_data['age'] = intval( $record['age'] );
+                            }
+
+                            if ( ! empty( $update_data ) ) {
+                                $wpdb->update( $table, $update_data, array( 'id' => $match->id ) );
+                                $enriched_count++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            ontario_obituaries_log(
+                sprintf( 'v3.15.2: Detail-page enrichment complete — %d records updated (full descriptions/funeral homes/images).', $enriched_count ),
+                'info'
+            );
+
+            // Schedule full background scrape for remaining pages
+            if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+                wp_schedule_single_event( time() + 120, 'ontario_obituaries_initial_collection' );
+            }
+
+            // Purge caches
+            ontario_obituaries_purge_litespeed();
+            delete_transient( 'ontario_obituaries_locations_cache' );
+            delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+        }
+
+        ontario_obituaries_log( 'v3.15.2: Full detail-page scrape + enrichment deployed.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
