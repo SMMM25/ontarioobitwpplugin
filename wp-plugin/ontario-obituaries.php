@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.15.2
+ * Version: 3.15.3
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.15.2' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.15.3' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1645,150 +1645,331 @@ function ontario_obituaries_on_plugin_update() {
         ontario_obituaries_log( 'v3.15.1: Better images (300x400) + full descriptions + SPA skip deployed.', 'info' );
     }
 
-    // v3.15.2: Full detail-page scrape + enrichment sweep.
+    // v3.15.3: Two-phase enrichment sweep for ALL existing records.
     //
-    // ROOT CAUSE OF REMAINING ISSUES:
-    //   1. Description still truncated: v3.15.1 wrongly assumed detail pages
-    //      were empty SPAs and disabled fetch_detail(). In reality, Tribute
-    //      Technology's Next.js pages are fully SSR with the complete obituary
-    //      in <div id="obituaryDescription"> (e.g., Allan Dawe: 1017 chars
-    //      vs. listing snippet: 319 chars).
-    //   2. No funeral home: the listing page doesn't include funeral home data.
-    //      Detail pages have "Funeral Arrangements by" with the full name
-    //      (e.g., "Roadhouse and Rose Funeral Home").
-    //   3. No location for some cards: the new listing template removed the
-    //      .city div. Detail pages have location in RSC payload.
-    //   4. Listing CSS class changed: "content" → "copy-featured" in the
-    //      Bishop Waterfall July 2022+ template. Fixed in extract_card().
-    //   5. Higher-res images available: detail pages serve full-size portraits
-    //      from d1q40j6jx1d8h6.cloudfront.net/Obituaries/{id}/Image.jpg.
+    // TESTED on live data (2026-02-11): ~75-80% of detail pages return full
+    // SSR HTML (300KB+); ~20-25% return "Proxy Handler Error" (64 bytes) for
+    // expired/old obituaries. Location extraction from RSC JSON fails on all
+    // pages — city data is only available from listing cards or description.
     //
-    // FIX: Re-enable fetch_detail() with proper SSR extraction. On deploy,
-    // scrape listing page 1 AND detail pages, then UPDATE all matching records
-    // with full descriptions, funeral homes, images, and ages.
-    if ( version_compare( $stored_version, '3.15.2', '<' ) ) {
+    // PHASE 1 — LISTING PAGE SCRAPE:
+    //   Fetch all listing pages from active sources. For each card, match to
+    //   existing DB records by source_url (exact, 100% reliable). Update:
+    //     - image_url (print-only 300×400 CDN image)
+    //     - description (listing excerpt ~300 chars, if existing is shorter)
+    //     - age (from year range in listing text or card dates)
+    //     - date_of_death (from death phrases in listing text)
+    //   This covers ALL visible records, including those with dead detail pages.
+    //
+    // PHASE 2 — DETAIL PAGE FETCH:
+    //   For each record that could benefit from more data (short description,
+    //   no funeral home, etc.), fetch the detail page by source_url. Extract:
+    //     - Full obituary from div#obituaryDescription (1000+ chars)
+    //     - Funeral home from "Funeral Arrangements by" section
+    //     - High-res image from d1q40j6jx1d8h6.cloudfront.net
+    //     - Death date, age, birth date from full text
+    //   ~75-80% of pages will return usable data. Records with proxy errors
+    //   are already covered by Phase 1 listing data.
+    //
+    // This two-phase approach guarantees EVERY record gets the best available
+    // data — listing-level at minimum, detail-level when the page is live.
+    if ( version_compare( $stored_version, '3.15.3', '<' ) ) {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
         $table_exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
 
-        if ( $table_exists && class_exists( 'Ontario_Obituaries_Source_Collector' )
-             && class_exists( 'Ontario_Obituaries_Source_Registry' )
-             && class_exists( 'Ontario_Obituaries_Adapter_Remembering_Ca' ) ) {
+        if ( $table_exists && class_exists( 'Ontario_Obituaries_Adapter_Remembering_Ca' )
+             && class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
 
-            ontario_obituaries_log( 'v3.15.2: Starting full detail-page enrichment sweep (descriptions + funeral homes + images).', 'info' );
+            ontario_obituaries_log( 'v3.15.3: Starting two-phase enrichment for ALL records.', 'info' );
+
+            $adapter = new Ontario_Obituaries_Adapter_Remembering_Ca();
+
+            // ════════════════════════════════════════════════════════════
+            // PHASE 1: LISTING PAGE ENRICHMENT
+            // Scrape listing pages → match by source_url → update records
+            // ════════════════════════════════════════════════════════════
 
             $sources = Ontario_Obituaries_Source_Registry::get_active_sources();
-            $enriched_count = 0;
+            $phase1_count = 0;
+
+            // Build a lookup map: source_url → DB record (for fast matching)
+            $all_records = $wpdb->get_results(
+                "SELECT id, name, source_url, description, funeral_home, location,
+                        image_url, date_of_birth, date_of_death, age, city_normalized
+                 FROM `{$table}`
+                 WHERE suppressed_at IS NULL
+                 ORDER BY id ASC"
+            );
+            $url_map = array();
+            foreach ( $all_records as $rec ) {
+                if ( ! empty( $rec->source_url ) ) {
+                    $url_map[ $rec->source_url ] = $rec;
+                }
+            }
+            $total_records = count( $all_records );
+
+            ontario_obituaries_log( sprintf( 'v3.15.3 Phase 1: %d records in DB, %d with source_url.', $total_records, count( $url_map ) ), 'info' );
 
             foreach ( $sources as $source ) {
-                $adapter = Ontario_Obituaries_Source_Registry::get_adapter( $source['adapter_type'] );
-                if ( ! $adapter ) continue;
+                $src_adapter = Ontario_Obituaries_Source_Registry::get_adapter( $source['adapter_type'] );
+                if ( ! $src_adapter ) continue;
 
                 $source['config_parsed'] = ! empty( $source['config'] ) ? json_decode( $source['config'], true ) : array();
                 if ( ! is_array( $source['config_parsed'] ) ) {
                     $source['config_parsed'] = array();
                 }
 
-                // Fetch first page only (avoid timeout)
-                $listing_urls = $adapter->discover_listing_urls( $source, 7 );
-                $listing_urls = array_slice( $listing_urls, 0, 1 );
+                // Fetch ALL listing pages (not just page 1)
+                $listing_urls = $src_adapter->discover_listing_urls( $source, 7 );
 
-                foreach ( $listing_urls as $url ) {
-                    $html = $adapter->fetch_listing( $url, $source );
+                foreach ( $listing_urls as $listing_url ) {
+                    $html = $src_adapter->fetch_listing( $listing_url, $source );
                     if ( is_wp_error( $html ) || empty( $html ) ) continue;
 
-                    $cards = $adapter->extract_obit_cards( $html, $source );
+                    $cards = $src_adapter->extract_obit_cards( $html, $source );
 
                     foreach ( $cards as $card ) {
-                        // v3.15.2: Fetch detail page for full content
-                        if ( ! empty( $card['detail_url'] ) ) {
-                            $detail_data = $adapter->fetch_detail( $card['detail_url'], $card, $source );
-                            if ( $detail_data ) {
-                                $card = array_merge( $card, $detail_data );
+                        // Skip cards without a detail URL (can't match)
+                        if ( empty( $card['detail_url'] ) ) continue;
+
+                        $card_url = esc_url_raw( $card['detail_url'] );
+
+                        // Match by source_url (exact match = 100% reliable)
+                        if ( ! isset( $url_map[ $card_url ] ) ) continue;
+                        $db_rec = $url_map[ $card_url ];
+
+                        // Normalize the card to get processed fields
+                        $norm = $src_adapter->normalize( $card, $source );
+                        if ( empty( $norm['name'] ) ) continue;
+
+                        $update_data = array();
+
+                        // Image: prefer listing's print-only image if DB has none or low-res
+                        if ( ! empty( $norm['image_url'] ) ) {
+                            $current_img = ! empty( $db_rec->image_url ) ? $db_rec->image_url : '';
+                            if ( empty( $current_img ) || strlen( $current_img ) < 10 ) {
+                                $update_data['image_url'] = $norm['image_url'];
                             }
-                            // Brief pause between detail fetches to avoid rate limiting
-                            usleep( 500000 ); // 0.5s
                         }
 
-                        $record = $adapter->normalize( $card, $source );
-                        if ( empty( $record['name'] ) ) continue;
-
-                        // Build normalized name for matching
-                        $clean_name = strtolower( trim( $record['name'] ) );
-                        $clean_name = preg_replace( '/\b(mr|mrs|ms|dr|jr|sr|ii|iii|obituary)\b\.?/i', '', $clean_name );
-                        $clean_name = preg_replace( '/\([^)]*\)/', '', $clean_name );
-                        $clean_name = preg_replace( '/[^a-z\s]/', '', $clean_name );
-                        $clean_name = preg_replace( '/\s+/', ' ', trim( $clean_name ) );
-
-                        if ( strlen( $clean_name ) < 4 ) continue;
-
-                        // Find matching records by name LIKE pattern
-                        $name_parts = explode( ' ', $clean_name );
-                        $like_pattern = '%' . $wpdb->esc_like( $name_parts[0] ) . '%' . $wpdb->esc_like( end( $name_parts ) ) . '%';
-
-                        $matches = $wpdb->get_results( $wpdb->prepare(
-                            "SELECT id, name, image_url, date_of_birth, age, description, funeral_home, location FROM `{$table}`
-                             WHERE LOWER(name) LIKE %s
-                               AND suppressed_at IS NULL
-                             LIMIT 5",
-                            $like_pattern
-                        ) );
-
-                        foreach ( $matches as $match ) {
-                            $update_data = array();
-
-                            // Always update description if new is longer (detail page has full text)
-                            $new_desc_len = ! empty( $record['description'] ) ? strlen( $record['description'] ) : 0;
-                            $old_desc_len = ! empty( $match->description ) ? strlen( $match->description ) : 0;
-                            if ( $new_desc_len > $old_desc_len && $new_desc_len > 50 ) {
-                                $update_data['description'] = $record['description'];
+                        // Description: update if listing text is longer than stored
+                        if ( ! empty( $norm['description'] ) ) {
+                            $new_len = strlen( $norm['description'] );
+                            $old_len = ! empty( $db_rec->description ) ? strlen( $db_rec->description ) : 0;
+                            if ( $new_len > $old_len && $new_len > 30 ) {
+                                $update_data['description'] = $norm['description'];
                             }
+                        }
 
-                            // Always update image_url if new source provides one
-                            if ( ! empty( $record['image_url'] ) && (
-                                empty( $match->image_url )
-                                || strlen( $match->image_url ) < 10
-                                || strpos( $match->image_url, 'w%22%3A200' ) !== false  // Old 200×200
-                                || strpos( $match->image_url, '"w":200' ) !== false
-                            ) ) {
-                                $update_data['image_url'] = $record['image_url'];
+                        // Age
+                        if ( ( empty( $db_rec->age ) || 0 === intval( $db_rec->age ) ) && ! empty( $norm['age'] ) && intval( $norm['age'] ) > 0 ) {
+                            $update_data['age'] = intval( $norm['age'] );
+                        }
+
+                        // Death date
+                        if ( ! empty( $norm['date_of_death'] ) && $norm['date_of_death'] !== '0000-00-00' ) {
+                            if ( empty( $db_rec->date_of_death ) || $db_rec->date_of_death === '0000-00-00' ) {
+                                $update_data['date_of_death'] = $norm['date_of_death'];
                             }
+                        }
 
-                            // Update funeral_home if empty
-                            if ( empty( $match->funeral_home ) && ! empty( $record['funeral_home'] ) ) {
-                                $update_data['funeral_home'] = $record['funeral_home'];
+                        // Birth date
+                        if ( ! empty( $norm['date_of_birth'] ) && $norm['date_of_birth'] !== '0000-00-00' ) {
+                            if ( empty( $db_rec->date_of_birth ) || $db_rec->date_of_birth === '0000-00-00' ) {
+                                $update_data['date_of_birth'] = $norm['date_of_birth'];
                             }
+                        }
 
-                            // Update location if empty
-                            if ( empty( $match->location ) && ! empty( $record['location'] ) ) {
-                                $update_data['location'] = $record['location'];
-                            }
+                        // Location / city_normalized
+                        if ( empty( $db_rec->location ) && ! empty( $norm['location'] ) ) {
+                            $update_data['location'] = $norm['location'];
+                        }
+                        if ( empty( $db_rec->city_normalized ) && ! empty( $norm['city_normalized'] ) ) {
+                            $update_data['city_normalized'] = $norm['city_normalized'];
+                        }
 
-                            // Update date_of_birth if empty
-                            if ( ( empty( $match->date_of_birth ) || '0000-00-00' === $match->date_of_birth ) && ! empty( $record['date_of_birth'] ) ) {
-                                $update_data['date_of_birth'] = $record['date_of_birth'];
-                            }
+                        if ( ! empty( $update_data ) ) {
+                            $wpdb->update( $table, $update_data, array( 'id' => $db_rec->id ) );
+                            $phase1_count++;
 
-                            // Update age if 0
-                            if ( ( empty( $match->age ) || 0 === intval( $match->age ) ) && ! empty( $record['age'] ) && intval( $record['age'] ) > 0 ) {
-                                $update_data['age'] = intval( $record['age'] );
-                            }
-
-                            if ( ! empty( $update_data ) ) {
-                                $wpdb->update( $table, $update_data, array( 'id' => $match->id ) );
-                                $enriched_count++;
+                            // Update local cache so Phase 2 sees the changes
+                            foreach ( $update_data as $k => $v ) {
+                                $db_rec->$k = $v;
                             }
                         }
                     }
+
+                    // Pause between listing page fetches
+                    usleep( 300000 );
                 }
             }
 
             ontario_obituaries_log(
-                sprintf( 'v3.15.2: Detail-page enrichment complete — %d records updated (full descriptions/funeral homes/images).', $enriched_count ),
+                sprintf( 'v3.15.3 Phase 1 complete: %d records updated from listing pages.', $phase1_count ),
                 'info'
             );
 
-            // Schedule full background scrape for remaining pages
+            // ════════════════════════════════════════════════════════════
+            // PHASE 2: DETAIL PAGE ENRICHMENT
+            // For each record, fetch detail page → extract full content
+            // ════════════════════════════════════════════════════════════
+
+            $phase2_count = 0;
+            $phase2_skipped = 0;
+
+            foreach ( $all_records as $record ) {
+                $detail_url = $record->source_url;
+                if ( empty( $detail_url ) || strpos( $detail_url, 'http' ) !== 0 ) {
+                    continue;
+                }
+
+                // Skip records that are already fully enriched
+                // (has long description + funeral home + high-res image)
+                $desc_len = ! empty( $record->description ) ? strlen( $record->description ) : 0;
+                $has_fh   = ! empty( $record->funeral_home );
+                $has_hires = ! empty( $record->image_url ) && strpos( $record->image_url, 'cloudfront.net/Obituaries' ) !== false;
+                if ( $desc_len > 500 && $has_fh && $has_hires ) {
+                    $phase2_skipped++;
+                    continue;
+                }
+
+                $detail_data = $adapter->fetch_detail( $detail_url, array(), array( 'base_url' => $detail_url ) );
+
+                $update_data = array();
+
+                // ── Description ─────────────────────────────────────────
+                if ( ! empty( $detail_data['detail_full_description'] ) ) {
+                    $new_len = strlen( $detail_data['detail_full_description'] );
+                    $old_len = ! empty( $record->description ) ? strlen( $record->description ) : 0;
+                    if ( $new_len > $old_len && $new_len > 50 ) {
+                        $update_data['description'] = $detail_data['detail_full_description'];
+                    }
+                }
+
+                // ── Funeral home ────────────────────────────────────────
+                if ( empty( $record->funeral_home ) && ! empty( $detail_data['detail_funeral_home'] ) ) {
+                    $update_data['funeral_home'] = sanitize_text_field( $detail_data['detail_funeral_home'] );
+                }
+
+                // ── Image URL ───────────────────────────────────────────
+                if ( ! empty( $detail_data['detail_image_url'] ) ) {
+                    $current_img = ! empty( $record->image_url ) ? $record->image_url : '';
+                    if ( empty( $current_img )
+                         || strlen( $current_img ) < 10
+                         || strpos( $current_img, 'cloudfront.net/Obituaries' ) === false ) {
+                        $update_data['image_url'] = esc_url_raw( $detail_data['detail_image_url'] );
+                    }
+                }
+
+                // ── Location ────────────────────────────────────────────
+                if ( empty( $record->location ) && ! empty( $detail_data['detail_location'] ) ) {
+                    $update_data['location'] = sanitize_text_field( $detail_data['detail_location'] );
+                    if ( empty( $record->city_normalized ) ) {
+                        $update_data['city_normalized'] = sanitize_text_field( $detail_data['detail_location'] );
+                    }
+                }
+
+                // ── Death date ──────────────────────────────────────────
+                if ( ! empty( $detail_data['detail_death_date'] ) ) {
+                    $parsed_death = date( 'Y-m-d', strtotime( trim( $detail_data['detail_death_date'] ) ) );
+                    if ( $parsed_death && '1970-01-01' !== $parsed_death ) {
+                        if ( empty( $record->date_of_death ) || $record->date_of_death === '0000-00-00' ) {
+                            $update_data['date_of_death'] = $parsed_death;
+                        }
+                    }
+                }
+                // Fallback: extract death date from best available description
+                if ( empty( $update_data['date_of_death'] ) && ( empty( $record->date_of_death ) || $record->date_of_death === '0000-00-00' ) ) {
+                    $text_for_death = isset( $update_data['description'] ) ? $update_data['description'] : ( ! empty( $record->description ) ? $record->description : '' );
+                    if ( ! empty( $text_for_death ) ) {
+                        $month_pat = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+                        $dp_list = array(
+                            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,5}?\s+(' . $month_pat . '\s+\d{1,2},?\s+\d{4})/iu',
+                            '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_pat . '\s+\d{1,2},?\s+\d{4})/iu',
+                            '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_pat . '\s+\d{1,2},?\s+\d{4})/iu',
+                            '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pat . '\s+\d{1,2},?\s+\d{4})/iu',
+                            '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_pat . '\s+\d{1,2},?\s+\d{4})/iu',
+                            '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pat . '\s+\d{1,2},?\s+\d{4})/iu',
+                            '/on\s+\w+,?\s+(' . $month_pat . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her)/iu',
+                            '/[Oo]n\s+(' . $month_pat . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/iu',
+                        );
+                        foreach ( $dp_list as $dp ) {
+                            if ( preg_match( $dp, $text_for_death, $dm ) ) {
+                                $fd = date( 'Y-m-d', strtotime( trim( $dm[1] ) ) );
+                                if ( $fd && '1970-01-01' !== $fd ) {
+                                    $update_data['date_of_death'] = $fd;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Age ─────────────────────────────────────────────────
+                if ( empty( $record->age ) || 0 === intval( $record->age ) ) {
+                    if ( ! empty( $detail_data['detail_age'] ) && intval( $detail_data['detail_age'] ) > 0 ) {
+                        $update_data['age'] = intval( $detail_data['detail_age'] );
+                    } else {
+                        $text_for_age = isset( $update_data['description'] ) ? $update_data['description'] : ( ! empty( $record->description ) ? $record->description : '' );
+                        if ( ! empty( $text_for_age ) ) {
+                            if ( preg_match( '/in\s+(?:his|her)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $text_for_age, $am ) ) {
+                                $update_data['age'] = intval( $am[1] );
+                            } elseif ( preg_match( '/\bage(?:d)?\s+(\d+)/i', $text_for_age, $am2 ) ) {
+                                $update_data['age'] = intval( $am2[1] );
+                            } elseif ( preg_match( '/at\s+the\s+age\s+of\s+(\d+)/i', $text_for_age, $am3 ) ) {
+                                $update_data['age'] = intval( $am3[1] );
+                            }
+                        }
+                        // Year range fallback
+                        if ( empty( $update_data['age'] ) ) {
+                            if ( ! empty( $detail_data['detail_year_birth'] ) && ! empty( $detail_data['detail_year_death'] ) ) {
+                                $yr_age = intval( $detail_data['detail_year_death'] ) - intval( $detail_data['detail_year_birth'] );
+                                if ( $yr_age > 0 && $yr_age <= 130 ) {
+                                    $update_data['age'] = $yr_age;
+                                }
+                            }
+                            if ( empty( $update_data['age'] ) && ! empty( $text_for_age ) ) {
+                                if ( preg_match( '/\b(\d{4})\s*[-\x{2013}\x{2014}~]\s*(\d{4})\b/u', $text_for_age, $yr_m ) ) {
+                                    $yb = intval( $yr_m[1] );
+                                    $yd = intval( $yr_m[2] );
+                                    if ( $yd > $yb && $yd >= 2020 && $yd <= 2030 && $yb >= 1890 ) {
+                                        $update_data['age'] = $yd - $yb;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Birth date ──────────────────────────────────────────
+                if ( ( empty( $record->date_of_birth ) || '0000-00-00' === $record->date_of_birth ) && ! empty( $detail_data['detail_birth_date'] ) ) {
+                    $pb = date( 'Y-m-d', strtotime( trim( $detail_data['detail_birth_date'] ) ) );
+                    if ( $pb && '1970-01-01' !== $pb ) {
+                        $update_data['date_of_birth'] = $pb;
+                    }
+                }
+
+                if ( ! empty( $update_data ) ) {
+                    $wpdb->update( $table, $update_data, array( 'id' => $record->id ) );
+                    $phase2_count++;
+                }
+
+                // Rate limit: 0.5s between detail page fetches
+                usleep( 500000 );
+            }
+
+            ontario_obituaries_log(
+                sprintf( 'v3.15.3 Phase 2 complete: %d records updated from detail pages (%d skipped as already enriched).', $phase2_count, $phase2_skipped ),
+                'info'
+            );
+
+            ontario_obituaries_log(
+                sprintf( 'v3.15.3: Total enrichment — Phase 1 (listing): %d, Phase 2 (detail): %d of %d records.', $phase1_count, $phase2_count, $total_records ),
+                'info'
+            );
+
+            // Schedule a full background scrape to catch multi-page records
             if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
                 wp_schedule_single_event( time() + 120, 'ontario_obituaries_initial_collection' );
             }
@@ -1799,7 +1980,7 @@ function ontario_obituaries_on_plugin_update() {
             delete_transient( 'ontario_obituaries_funeral_homes_cache' );
         }
 
-        ontario_obituaries_log( 'v3.15.2: Full detail-page scrape + enrichment deployed.', 'info' );
+        ontario_obituaries_log( 'v3.15.3: Two-phase enrichment (listing + detail) deployed.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );

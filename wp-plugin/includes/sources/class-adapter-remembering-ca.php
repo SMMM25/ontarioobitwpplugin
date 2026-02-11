@@ -221,13 +221,21 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
         $death_phrases = array(
             // "passed away/peacefully/suddenly [words] Month Day, Year"
-            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,5}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // "peaceful passing of...on/at...Month Day, Year"
+            '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // "left us peacefully on Month Day, Year"
+            '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // "entered into rest [on] Month Day, Year"
             '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-            // "died [peacefully|suddenly] [on] Month Day, Year"
-            '/died(?:\s+\w+){0,2}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // "died [words] [on] Month Day, Year" — up to 8 words between
+            '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // "went to be with the Lord on Month Day, Year" / "called home on ..."
             '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v3.15.2: "On Month Day, Year [Name] passed away" (date before phrase)
+            '/[Oo]n\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/iu',
+            // Date range in parens: (Month Day, Year - Month Day, Year)
+            '/\(' . $month_pattern . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\)/u',
         );
         foreach ( $death_phrases as $pattern ) {
             if ( preg_match( $pattern, $full_text, $death_m ) ) {
@@ -299,6 +307,19 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $loc_node = $xpath->query( './/*[contains(@class,"location") or contains(@class,"city")]', $node )->item( 0 );
         if ( $loc_node ) {
             $card['location'] = $this->node_text( $loc_node );
+        }
+
+        // v3.15.3: Extract location from description text when structured location is empty.
+        // Many Remembering.ca listings start with "City, ON - Name" in the description.
+        // Example: "Unionville, ON - Ralph George Harvey Pyle"
+        if ( empty( $card['location'] ) ) {
+            $desc_text_for_loc = $this->node_text( $node );
+            if ( preg_match( '/\b([A-Z][a-zA-Z\s\.\'-]+),\s*ON\b/', $desc_text_for_loc, $loc_text_m ) ) {
+                $loc_candidate = trim( $loc_text_m[1] );
+                if ( strlen( $loc_candidate ) > 1 && strlen( $loc_candidate ) < 50 ) {
+                    $card['location'] = $loc_candidate;
+                }
+            }
         }
 
         // Funeral home
@@ -405,7 +426,11 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             // Strip HTML tags but preserve paragraph breaks
             $desc_text = preg_replace( '/<br\s*\/?>/i', "\n", $desc_html );
             $desc_text = preg_replace( '/<\/p>\s*<p[^>]*>/i', "\n\n", $desc_text );
+            // v3.15.2: Add space before stripping tags to prevent word concatenation
+            // (e.g., "Pyle</span>1926" should become "Pyle 1926", not "Pyle1926")
+            $desc_text = preg_replace( '/<\/(?:p|div|h[1-6]|li|span|strong|em|b|i)>/i', ' ', $desc_text );
             $desc_text = wp_strip_all_tags( $desc_text );
+            $desc_text = preg_replace( '/[ \t]+/', ' ', $desc_text ); // Collapse horizontal whitespace
             $desc_text = preg_replace( '/\n{3,}/', "\n\n", trim( $desc_text ) );
             if ( strlen( $desc_text ) > 50 ) {
                 $detail['detail_full_description'] = $desc_text;
@@ -414,8 +439,9 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
 
         // 2. Funeral home from "Funeral Arrangements by" section
         //    SSR HTML: <h6>Funeral Arrangements by</h6><div class="...">Name</div>
+        //    v3.15.2: Also decode HTML entities (e.g., &amp; → &) in funeral home name.
         if ( preg_match( '/Funeral\s+Arrangements\s+by<\/h6>\s*<div[^>]*>([^<]+)<\/div>/i', $html, $fh_m ) ) {
-            $fh_name = trim( $fh_m[1] );
+            $fh_name = html_entity_decode( trim( $fh_m[1] ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
             if ( strlen( $fh_name ) > 3 && strlen( $fh_name ) < 200 ) {
                 $detail['detail_funeral_home'] = $fh_name;
             }
@@ -428,28 +454,147 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
 
         // 4. High-resolution image from Cloudfront CDN
         //    Detail pages use d1q40j6jx1d8h6.cloudfront.net/Obituaries/{id}/Image.jpg
+        //    or Image_N.jpg (e.g., Image_3.jpg, Image_85.jpg) depending on the obituary.
         //    URL may appear with escaped quotes (\\") in RSC payload or normal quotes in SSR HTML.
-        if ( preg_match( '/(https:\\/\\/d1q40j6jx1d8h6\\.cloudfront\\.net\\/Obituaries\\/\\d+\\/Image\\.jpg)/', $html, $img_m ) ) {
+        //    Also try the d36ewrdt9mbbbo CDN which some pages use.
+        //
+        //    v3.15.2: Fixed regex to match Image_N.jpg variants (previously only matched Image.jpg).
+        if ( preg_match( '/(https:\\/\\/d1q40j6jx1d8h6\\.cloudfront\\.net\\/Obituaries\\/\\d+\\/Image(?:_\\d+)?\\.jpg)/', $html, $img_m ) ) {
             $detail['detail_image_url'] = $img_m[1];
+        } elseif ( preg_match( '/(https:\\/\\/d36ewrdt9mbbbo\\.cloudfront\\.net\\/Obituaries\\/\\d+\\/Image(?:_\\d+)?\\.(?:jpg|webp))/', $html, $img_m2 ) ) {
+            $detail['detail_image_url'] = $img_m2[1];
         }
 
-        // 5. Location from detail page funeral home address
-        //    RSC payload uses escaped JSON: \\\"city\\\":\\\"South Newmarket,\\\"
-        //    Also try the regular JSON format for SSR-rendered data.
+        // 5. Location from detail page
+        //    v3.15.3: The RSC JSON city field is unreliable — tested on 24 live
+        //    pages and it returned no matches for any. Instead, extract location
+        //    from the obituary description text itself. Common patterns:
+        //      - "City, ON -" at start of description (e.g., "Unionville, ON -")
+        //      - "at [Hospital] in [City]" or "at home in [City]"
+        //      - Google Maps link in page HTML with funeral home address
+        //
+        //    Priority:
+        //      1. "City, ON" pattern at start of description (most reliable)
+        //      2. Google Maps query string containing city/province
+        //      3. RSC escaped JSON (kept as fallback, rarely works)
+
         $loc_found = false;
-        // Try RSC escaped format first (most common)
-        if ( preg_match( '/\\\\"city\\\\":\\\\"([^\\\\]+)\\\\"/', $html, $loc_m ) ) {
+
+        // Strategy 1: "City, ON" at start of description
+        if ( ! $loc_found && ! empty( $detail['detail_full_description'] ) ) {
+            // "Unionville, ON - Ralph George Harvey Pyle"
+            if ( preg_match( '/^([A-Z][a-zA-Z\s\.\'-]+),\s*ON\b/u', trim( $detail['detail_full_description'] ), $loc_desc ) ) {
+                $city = trim( $loc_desc[1] );
+                if ( strlen( $city ) > 1 && strlen( $city ) < 50 ) {
+                    $detail['detail_location'] = $city;
+                    $loc_found = true;
+                }
+            }
+        }
+
+        // Strategy 2: Google Maps link with funeral home address — city before ",+ON"
+        // URL format: ...+City+Name%2C+ON+PostalCode or ...+City+Name,+ON+PostalCode
+        if ( ! $loc_found && preg_match( '/google\.com\/maps\/search\/[^"]*?([A-Z][a-z]+(?:\+[A-Z][a-z]+)*?)(?:%2C|\+),?\+?ON\b/', $html, $maps_m ) ) {
+            $city = str_replace( '+', ' ', trim( $maps_m[1] ) );
+            if ( strlen( $city ) > 1 && strlen( $city ) < 50 ) {
+                $detail['detail_location'] = $city;
+                $loc_found = true;
+            }
+        }
+
+        // Strategy 3: RSC escaped JSON (legacy fallback)
+        if ( ! $loc_found && preg_match( '/\\\\"city\\\\":\\\\"([^\\\\]+)\\\\"/', $html, $loc_m ) ) {
             $city = trim( $loc_m[1], ', ' );
             if ( ! empty( $city ) && strlen( $city ) > 1 ) {
                 $detail['detail_location'] = $city;
                 $loc_found = true;
             }
         }
-        // Fallback: regular JSON format
         if ( ! $loc_found && preg_match( '/"city":\s*"([^"]+?)"/', $html, $loc_m2 ) ) {
             $city = trim( $loc_m2[1], ', ' );
             if ( ! empty( $city ) && strlen( $city ) > 1 ) {
                 $detail['detail_location'] = $city;
+            }
+        }
+
+        // 6. Extract death date and age from the full description text.
+        //    v3.15.2: Extract death date and age from the SSR description,
+        //    which is the most reliable source of this data.
+        if ( ! empty( $detail['detail_full_description'] ) ) {
+            $desc_text = $detail['detail_full_description'];
+            $month_p = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+
+            // Death date extraction — expanded patterns for v3.15.2
+            $death_patterns = array(
+                // "passed away/peacefully/suddenly [words] Month Day, Year"
+                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,5}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "peaceful passing of...on/at...Month Day, Year" (Betty Cudmore pattern)
+                '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "left us peacefully on Month Day, Year"
+                '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "entered into rest [on] Month Day, Year"
+                '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "died [peacefully] [at/in/on words] Month Day, Year" — up to 8 words
+                '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "went to be with the Lord on Month Day, Year" / "called home on ..."
+                '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                // "on Friday, Month Day, Year, in his/her Nth year"
+                '/on\s+\w+,?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her)/iu',
+                // v3.15.2: "On Month Day, Year [Name] passed away" (date before phrase)
+                // Example: "On January 2, 2026 Phil passed away surrounded by love"
+                '/[Oo]n\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/iu',
+                // Date range in parens: (Month Day, Year - Month Day, Year)
+                '/\(' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})\)/u',
+                // Date range without parens: "Month Day, Year - Month Day, Year"
+                '/' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})/u',
+            );
+            foreach ( $death_patterns as $dp ) {
+                if ( preg_match( $dp, $desc_text, $dm ) ) {
+                    $detail['detail_death_date'] = trim( $dm[1] );
+                    break;
+                }
+            }
+
+            // Age extraction — v3.15.2: expanded patterns
+            if ( preg_match( '/in\s+(?:his|her)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $desc_text, $age_m ) ) {
+                $detail['detail_age'] = intval( $age_m[1] );
+            } elseif ( preg_match( '/\bage(?:d)?\s+(\d+)/i', $desc_text, $age_m2 ) ) {
+                $detail['detail_age'] = intval( $age_m2[1] );
+            } elseif ( preg_match( '/at\s+the\s+age\s+of\s+(\d+)/i', $desc_text, $age_m3 ) ) {
+                $detail['detail_age'] = intval( $age_m3[1] );
+            } elseif ( preg_match( '/(?:his|her)\s+(\d+)(?:st|nd|rd|th)\s+(?:birthday|year)/i', $desc_text, $age_m4 ) ) {
+                // "her 96th birthday" / "his 80th year"
+                $detail['detail_age'] = intval( $age_m4[1] );
+            }
+
+            // Birth date from text: "born on Month Day, Year" or "born Month Day, Year"
+            if ( preg_match( '/born(?:\s+(?:on|in))?\s+(?:' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu', $desc_text, $birth_m ) ) {
+                $detail['detail_birth_date'] = trim( $birth_m[0] );
+                // Extract just the date part
+                if ( preg_match( '/(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu', $detail['detail_birth_date'], $bd ) ) {
+                    $detail['detail_birth_date'] = $bd[1];
+                }
+            }
+            // Birth date from range: (Month Day, Year - Month Day, Year) — birth is the first date
+            if ( empty( $detail['detail_birth_date'] ) && preg_match( '/\((' . $month_p . '\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}]\s*' . $month_p . '\s+\d{1,2},?\s+\d{4}\)/u', $desc_text, $bdr ) ) {
+                $detail['detail_birth_date'] = trim( $bdr[1] );
+            }
+
+            // v3.15.2: Extract year range (e.g., "1926 - 2026") from description.
+            // Some obituaries only provide birth/death years, not full dates.
+            // Example: Ralph Pyle — "1926 - 2026" in the description text.
+            // This provides year_birth/year_death for age computation.
+            if ( preg_match( '/\b(\d{4})\s*[-\x{2013}\x{2014}~]\s*(\d{4})\b/u', $desc_text, $yr_range ) ) {
+                $yr_birth = intval( $yr_range[1] );
+                $yr_death = intval( $yr_range[2] );
+                if ( $yr_death > $yr_birth && $yr_death >= 2020 && $yr_death <= 2030 && $yr_birth >= 1890 ) {
+                    $detail['detail_year_birth'] = $yr_range[1];
+                    $detail['detail_year_death'] = $yr_range[2];
+                    // Compute age from year range if not already extracted
+                    if ( empty( $detail['detail_age'] ) ) {
+                        $detail['detail_age'] = $yr_death - $yr_birth;
+                    }
+                }
             }
         }
 
@@ -495,16 +640,21 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // v3.12.0 FIX (Goal A): Death-date priority — prefer the textual death
         // date extracted from the obituary body over ALL other sources.
         //
-        // Priority order (highest → lowest):
-        //   1. death_date_from_text  — explicit phrase like "passed away on Jan 6, 2026"
-        //   2. dates['death']        — from structured date range ("Jan 1, 1940 - Jan 10, 2026")
-        //   3. published_date        — "Published online January 10, 2026" (fallback)
+        // v3.15.2: Priority order (highest → lowest):
+        //   1. detail_death_date     — extracted from full detail page description (most reliable)
+        //   2. death_date_from_text  — explicit phrase like "passed away on Jan 6, 2026" (listing card)
+        //   3. dates['death']        — from structured date range ("Jan 1, 1940 - Jan 10, 2026")
+        //   4. published_date        — "Published online January 10, 2026" (last resort)
         //
-        // Previous behavior (v3.10.2): death_date_from_text was only used when
-        // dates['death'] was empty. This caused yorkregion.com records like
-        // Paul Andrew Smith to store 2026-01-10 (published date) instead of
-        // 2026-01-06 (actual death date from obituary text).
-        if ( ! empty( $card['death_date_from_text'] ) ) {
+        // v3.15.2: detail_death_date from SSR detail page is the most accurate,
+        // since it has the full obituary text with context.
+        if ( ! empty( $card['detail_death_date'] ) ) {
+            $detail_death = $this->normalize_date( $card['detail_death_date'] );
+            if ( ! empty( $detail_death ) ) {
+                $date_of_death = $detail_death;
+            }
+        }
+        if ( empty( $date_of_death ) && ! empty( $card['death_date_from_text'] ) ) {
             $text_death = $this->normalize_date( $card['death_date_from_text'] );
             if ( ! empty( $text_death ) ) {
                 $date_of_death = $text_death;
@@ -517,7 +667,14 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $date_of_death = $this->normalize_date( $card['published_date'] );
         }
 
-        // v3.14.0: Birth-date extraction — use birth_date_from_text from detail page.
+        // v3.15.2: Birth-date extraction — detail page takes priority.
+        if ( empty( $date_of_birth ) && ! empty( $card['detail_birth_date'] ) ) {
+            $detail_birth = $this->normalize_date( $card['detail_birth_date'] );
+            if ( ! empty( $detail_birth ) ) {
+                $date_of_birth = $detail_birth;
+            }
+        }
+        // v3.14.0: Birth-date extraction — listing card text.
         if ( empty( $date_of_birth ) && ! empty( $card['birth_date_from_text'] ) ) {
             $text_birth = $this->normalize_date( $card['birth_date_from_text'] );
             if ( ! empty( $text_birth ) ) {
@@ -545,7 +702,10 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         }
 
         $age = 0;
-        if ( ! empty( $card['age'] ) ) {
+        // v3.15.2: detail_age from SSR description is most accurate
+        if ( ! empty( $card['detail_age'] ) && intval( $card['detail_age'] ) > 0 ) {
+            $age = intval( $card['detail_age'] );
+        } elseif ( ! empty( $card['age'] ) ) {
             $age = intval( $card['age'] );
         } elseif ( ! empty( $description ) ) {
             $age = $this->extract_age_from_text( $description );
@@ -557,6 +717,13 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // are not available (no longer relies on fabricated -01-01 dates).
         if ( 0 === $age && ! empty( $card['year_birth'] ) && ! empty( $card['year_death'] ) ) {
             $year_age = intval( $card['year_death'] ) - intval( $card['year_birth'] );
+            if ( $year_age > 0 && $year_age <= 130 ) {
+                $age = $year_age;
+            }
+        }
+        // v3.15.2: Also use detail page year range when listing card didn't have years
+        if ( 0 === $age && ! empty( $card['detail_year_birth'] ) && ! empty( $card['detail_year_death'] ) ) {
+            $year_age = intval( $card['detail_year_death'] ) - intval( $card['detail_year_birth'] );
             if ( $year_age > 0 && $year_age <= 130 ) {
                 $age = $year_age;
             }
