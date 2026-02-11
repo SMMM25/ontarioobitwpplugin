@@ -23,6 +23,38 @@
 
     $(document).ready(function() {
 
+        /* ───────── Rescan Only (v3.12.3) ───────── */
+
+        $('#btn-rescan-only').on('click', function() {
+            var $btn    = $(this);
+            var $status = $('#rescan-only-status');
+
+            if (!confirm('Run a rescan now? This will NOT delete any existing data.')) {
+                return;
+            }
+
+            $btn.prop('disabled', true);
+            $status.text('Running… This may take 30–90 seconds.').css('color', '#826200');
+
+            $.post(ajaxUrl, {
+                action: 'ontario_obituaries_rescan_only',
+                nonce:  nonce
+            }, function(response) {
+                if (response.success) {
+                    $status.text('✅ ' + response.data.message).css('color', '#00a32a');
+                    // Reload after brief delay to show updated last-result banner
+                    setTimeout(function() { location.reload(); }, 1500);
+                } else {
+                    var msg = (response.data && response.data.message) ? response.data.message : 'Rescan failed.';
+                    $status.text('❌ ' + msg).css('color', '#d63638');
+                    $btn.prop('disabled', false);
+                }
+            }).fail(function() {
+                $status.text('❌ Network error. Please try again.').css('color', '#d63638');
+                $btn.prop('disabled', false);
+            });
+        });
+
         /* ───────── Gate validation ───────── */
 
         var $gateUnderstand = $('#gate-understand');
