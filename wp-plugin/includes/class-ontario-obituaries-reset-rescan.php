@@ -18,6 +18,7 @@
  *   - ontario_obituaries_reset_session    — Active session lock.
  *   - ontario_obituaries_reset_progress   — Purge/rescan progress state.
  *   - ontario_obituaries_reset_last_result — Last completed reset + rescan results.
+ *   - ontario_obituaries_rescan_only_last_result — Last rescan-only (no deletion) result.
  *
  * @package Ontario_Obituaries
  * @since   3.11.0
@@ -42,6 +43,7 @@ class Ontario_Obituaries_Reset_Rescan {
         add_action( 'wp_ajax_ontario_obituaries_reset_purge',     array( $this, 'ajax_purge_batch' ) );
         add_action( 'wp_ajax_ontario_obituaries_reset_rescan',    array( $this, 'ajax_rescan' ) );
         add_action( 'wp_ajax_ontario_obituaries_reset_cancel',    array( $this, 'ajax_cancel' ) );
+        add_action( 'wp_ajax_ontario_obituaries_rescan_only',       array( $this, 'ajax_rescan_only' ) );
     }
 
     /* ─────────────────────── PERMISSIONS ───────────────────────── */
@@ -151,6 +153,70 @@ class Ontario_Obituaries_Reset_Rescan {
                 </p>
             </div>
             <?php endif; ?>
+
+            <!-- Rescan Only card (v3.12.3) — safe, no deletion -->
+            <div id="rescan-only-panel" style="max-width:800px;">
+                <div class="card">
+                    <h2 style="color:#2271b1;">🔄 <?php esc_html_e( 'Rescan Only (No Deletion)', 'ontario-obituaries' ); ?></h2>
+                    <p><?php esc_html_e( 'Run the Source Collector against the first page of each active source without deleting any existing obituary data. New records will be added; existing records are preserved.', 'ontario-obituaries' ); ?></p>
+                    <p style="font-style:italic;color:#50575e;"><?php esc_html_e( 'So give me proper navigation instructions please how do I get there', 'ontario-obituaries' ); ?></p>
+                    <p><strong><?php esc_html_e( 'Navigation:', 'ontario-obituaries' ); ?></strong> <?php esc_html_e( 'WP Admin → Ontario Obituaries → Reset & Rescan', 'ontario-obituaries' ); ?></p>
+                    <p>
+                        <button type="button" class="button button-primary" id="btn-rescan-only">
+                            <?php esc_html_e( 'Run Rescan Only', 'ontario-obituaries' ); ?>
+                        </button>
+                        <span id="rescan-only-status" style="margin-left:10px;"></span>
+                    </p>
+                    <?php
+                    // Show last rescan-only result if available.
+                    $rescan_only_last = get_option( 'ontario_obituaries_rescan_only_last_result', array() );
+                    if ( ! empty( $rescan_only_last['completed_at'] ) ) :
+                    ?>
+                    <hr>
+                    <p><strong><?php esc_html_e( 'Last Rescan-Only Result', 'ontario-obituaries' ); ?></strong></p>
+                    <p><?php printf(
+                        esc_html__( 'Completed: %s | Found: %s, Added: %s, Skipped: %s, Errors: %s', 'ontario-obituaries' ),
+                        esc_html( $rescan_only_last['completed_at'] ),
+                        esc_html( isset( $rescan_only_last['rescan_result']['found'] ) ? $rescan_only_last['rescan_result']['found'] : '0' ),
+                        esc_html( isset( $rescan_only_last['rescan_result']['added'] ) ? $rescan_only_last['rescan_result']['added'] : '0' ),
+                        esc_html( isset( $rescan_only_last['rescan_result']['skipped'] ) ? $rescan_only_last['rescan_result']['skipped'] : '0' ),
+                        esc_html( isset( $rescan_only_last['rescan_result']['errors'] ) ? $rescan_only_last['rescan_result']['errors'] : '0' )
+                    ); ?></p>
+                    <?php if ( ! empty( $rescan_only_last['rescan_result']['per_source'] ) ) : ?>
+                        <details><summary><?php esc_html_e( 'Per-source breakdown', 'ontario-obituaries' ); ?></summary>
+                        <table class="widefat striped" style="max-width:960px;margin-top:8px;">
+                            <thead><tr>
+                                <th><?php esc_html_e( 'Source', 'ontario-obituaries' ); ?></th>
+                                <th><?php esc_html_e( 'Found', 'ontario-obituaries' ); ?></th>
+                                <th><?php esc_html_e( 'Added', 'ontario-obituaries' ); ?></th>
+                                <th><?php esc_html_e( 'Errors', 'ontario-obituaries' ); ?></th>
+                                <th><?php esc_html_e( 'HTTP', 'ontario-obituaries' ); ?></th>
+                                <th><?php esc_html_e( 'Last error', 'ontario-obituaries' ); ?></th>
+                            </tr></thead>
+                            <tbody>
+                            <?php foreach ( $rescan_only_last['rescan_result']['per_source'] as $domain => $ps ) :
+                                $ro_err_count    = ! empty( $ps['errors'] ) ? ( is_array( $ps['errors'] ) ? count( $ps['errors'] ) : intval( $ps['errors'] ) ) : 0;
+                                $ro_http_display = isset( $ps['http_status'] ) && '' !== $ps['http_status'] ? $ps['http_status'] : '—';
+                                $ro_err_msg      = isset( $ps['error_message'] ) ? $ps['error_message'] : '';
+                            ?>
+                                <tr>
+                                    <td><?php echo esc_html( $domain ); ?></td>
+                                    <td><?php echo intval( $ps['found'] ); ?></td>
+                                    <td><?php echo intval( $ps['added'] ); ?></td>
+                                    <td><?php echo intval( $ro_err_count ); ?></td>
+                                    <td><?php echo esc_html( $ro_http_display ); ?></td>
+                                    <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?php echo esc_attr( $ro_err_msg ); ?>">
+                                        <?php echo esc_html( $ro_err_msg ); ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        </details>
+                    <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+            </div>
 
             <!-- Main panel (hidden while lock is active) -->
             <div id="reset-main-panel" <?php echo $has_lock ? 'style="display:none;"' : ''; ?>>
@@ -560,6 +626,132 @@ class Ontario_Obituaries_Reset_Rescan {
             'errors'      => $errors,
             'per_source'  => $per_source,
             'last_result' => $last_result,
+        ) );
+    }
+
+    /* ─────────────────────── AJAX: RESCAN ONLY ────────────────── */
+
+    /**
+     * AJAX: Run the Source Collector once (first-page cap) WITHOUT deleting data.
+     *
+     * Does NOT require a reset session or lock. Safe to run at any time.
+     * Results are stored separately in 'ontario_obituaries_rescan_only_last_result'.
+     *
+     * @since 3.12.3
+     */
+    public function ajax_rescan_only() {
+        $this->verify_request();
+
+        // Source Collector MUST be available
+        if ( ! class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Source Collector is not available. Cannot rescan.', 'ontario-obituaries' ) ) );
+        }
+
+        // Cap each source to 1 listing URL (first-page safety)
+        $cap_pages = function( $urls ) {
+            return array_slice( (array) $urls, 0, 1 );
+        };
+        add_filter( 'ontario_obituaries_discovered_urls', $cap_pages, 10, 1 );
+
+        $rescan_error = null;
+        $results      = array();
+        try {
+            $collector = new Ontario_Obituaries_Source_Collector();
+            $results   = $collector->collect();
+        } catch ( Exception $e ) {
+            $rescan_error = $e->getMessage();
+        } finally {
+            remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
+        }
+
+        // Persist last collection (same format as cron/manual scrape)
+        update_option( 'ontario_obituaries_last_collection', array(
+            'timestamp' => current_time( 'mysql' ),
+            'completed' => current_time( 'mysql' ),
+            'results'   => $results,
+        ) );
+
+        // Clear caches
+        delete_transient( 'ontario_obituaries_locations_cache' );
+        delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+        // Purge LiteSpeed
+        if ( function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        }
+
+        // Build structured result
+        $found   = isset( $results['obituaries_found'] )  ? intval( $results['obituaries_found'] )  : 0;
+        $added   = isset( $results['obituaries_added'] )  ? intval( $results['obituaries_added'] )  : 0;
+        $sources = isset( $results['sources_processed'] ) ? intval( $results['sources_processed'] )  : 0;
+        $skipped = isset( $results['sources_skipped'] )   ? intval( $results['sources_skipped'] )    : 0;
+        $errors  = ! empty( $results['errors'] )          ? count( $results['errors'] )              : 0;
+
+        $per_source = array();
+        if ( ! empty( $results['per_source'] ) ) {
+            foreach ( $results['per_source'] as $domain => $ps ) {
+                $err_msg = isset( $ps['error_message'] ) ? substr( $ps['error_message'], 0, 160 ) : '';
+
+                // v3.12.3: Fallback — if error_message is blank but errors[] exists,
+                // use the first errors[] string so the UI always shows something useful.
+                if ( empty( $err_msg ) && ! empty( $ps['errors'] ) && is_array( $ps['errors'] ) ) {
+                    $err_msg = substr( $ps['errors'][0], 0, 160 );
+                }
+
+                $per_source[ $domain ] = array(
+                    'found'         => isset( $ps['found'] )  ? intval( $ps['found'] )  : 0,
+                    'added'         => isset( $ps['added'] )  ? intval( $ps['added'] )  : 0,
+                    'errors'        => ! empty( $ps['errors'] ) ? $ps['errors']          : array(),
+                    'http_status'   => isset( $ps['http_status'] )   ? $ps['http_status']          : '',
+                    'error_message' => $err_msg,
+                    'final_url'     => isset( $ps['final_url'] )     ? $ps['final_url']            : '',
+                    'duration_ms'   => isset( $ps['duration_ms'] )   ? intval( $ps['duration_ms'] ) : 0,
+                );
+            }
+        }
+
+        // Store result separately (do NOT overwrite reset history)
+        $last_result = array(
+            'completed_at'  => current_time( 'mysql' ),
+            'rescan_result' => array(
+                'found'      => $found,
+                'added'      => $added,
+                'skipped'    => $skipped,
+                'errors'     => $errors,
+                'per_source' => $per_source,
+            ),
+        );
+        update_option( 'ontario_obituaries_rescan_only_last_result', $last_result );
+
+        ontario_obituaries_log(
+            sprintf(
+                'Rescan-only complete (no deletion). %d found, %d added, %d sources, %d errors.',
+                $found, $added, $sources, $errors
+            ),
+            'info'
+        );
+
+        if ( $rescan_error ) {
+            wp_send_json_error( array(
+                'message'     => sprintf( __( 'Rescan encountered an error: %s', 'ontario-obituaries' ), $rescan_error ),
+                'found'       => $found,
+                'added'       => $added,
+                'skipped'     => $skipped,
+                'errors'      => $errors,
+                'per_source'  => $per_source,
+            ) );
+        }
+
+        wp_send_json_success( array(
+            'message'     => sprintf(
+                __( 'Rescan complete. Found %d obituaries, added %d new. No data was deleted.', 'ontario-obituaries' ),
+                $found, $added
+            ),
+            'found'       => $found,
+            'added'       => $added,
+            'skipped'     => $skipped,
+            'errors'      => $errors,
+            'per_source'  => $per_source,
         ) );
     }
 
