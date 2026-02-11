@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.14.0
+ * Version: 3.14.1
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.14.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.14.1' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1363,6 +1363,27 @@ function ontario_obituaries_on_plugin_update() {
         }
 
         ontario_obituaries_log( 'v3.14.0: UI redesign deployed. CSS, templates, and adapter updated.', 'info' );
+    }
+
+    // v3.14.1: Detail page UI fix + data enrichment re-scrape.
+    //
+    // Changes:
+    //   - Individual obituary detail page redesigned with hero layout,
+    //     visible birth/death dates, image display, and full Monaco branding
+    //   - AJAX detail modal updated with dates and improved formatting
+    //   - CSS enhanced for detail page hero section and responsive design
+    //
+    // Upgrade action: Force a fresh background scrape so existing records
+    // are enriched with full descriptions, dates, and images from detail pages.
+    // The cross-source dedup will update existing records with longer descriptions.
+    if ( version_compare( $stored_version, '3.14.1', '<' ) ) {
+        // Schedule a full background scrape for data enrichment.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+            wp_schedule_single_event( time() + 60, 'ontario_obituaries_initial_collection' );
+            ontario_obituaries_log( 'v3.14.1: Scheduled background re-scrape for data enrichment (full descriptions, dates, images).', 'info' );
+        }
+
+        ontario_obituaries_log( 'v3.14.1: Detail page UI redesign deployed. Individual, modal, and CSS updated.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );

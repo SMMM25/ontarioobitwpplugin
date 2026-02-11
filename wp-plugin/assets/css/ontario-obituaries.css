@@ -2,6 +2,7 @@
  * Ontario Obituaries — Frontend Styles
  *
  * v3.14.0: Complete redesign to match Monaco Monuments brand.
+ * v3.14.1: Enhanced detail page, hero section, dates display.
  *
  * Design tokens (from monacomonuments.ca):
  *   Primary font:    "Inter", sans-serif
@@ -557,43 +558,243 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   SEO PAGES — Individual Obituary
+   SEO PAGES — Individual Obituary Detail (v3.14.1)
    ═══════════════════════════════════════════════════════════════════ */
 .ontario-obituary-individual {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 20px;
     font-family: var(--oo-font-body);
     color: var(--oo-color-text);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-.ontario-obituary-individual h1 {
+/* Hero section: image + name + dates */
+.ontario-obituary-hero {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    margin-bottom: 40px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--oo-color-border-light);
+}
+
+.ontario-obituary-hero-image {
+    flex-shrink: 0;
+    width: 200px;
+}
+
+.ontario-obituary-hero-image img {
+    width: 100%;
+    height: auto;
+    border-radius: var(--oo-radius-lg);
+    box-shadow: var(--oo-shadow-card);
+    display: block;
+}
+
+.ontario-obituary-hero-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.ontario-obituary-hero-info h1 {
     font-family: var(--oo-font-display);
     font-size: 36px;
     font-weight: 700;
     color: var(--oo-color-text);
-    margin-bottom: 8px;
+    margin: 0 0 12px 0;
     line-height: 1.2;
     letter-spacing: -0.02em;
 }
 
-.ontario-obituary-individual img {
-    max-width: 100%;
-    height: auto;
-}
-
-.ontario-obituary-image img {
-    border-radius: var(--oo-radius-lg) !important;
-    box-shadow: var(--oo-shadow-card);
-}
-
-.ontario-obituary-content {
+.ontario-obituary-dates {
+    font-family: var(--oo-font-body);
     font-size: 16px;
-    line-height: 1.8;
+    color: var(--oo-color-text-secondary);
+    margin-bottom: 4px;
+    font-weight: 400;
+}
+
+.ontario-obituary-age {
+    font-size: 14px;
+    color: var(--oo-color-text-muted);
+    margin-bottom: 16px;
+}
+
+.ontario-obituary-meta-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ontario-obituary-location-tag,
+.ontario-obituary-funeral-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
     color: var(--oo-color-text-secondary);
 }
 
-.ontario-obituary-content p {
+.ontario-obituary-location-tag svg,
+.ontario-obituary-funeral-tag svg {
+    flex-shrink: 0;
+    color: var(--oo-color-accent);
+}
+
+/* Obituary body text */
+.ontario-obituary-body {
+    font-size: 16px;
+    line-height: 1.8;
+    color: var(--oo-color-text-secondary);
+    margin-bottom: 40px;
+}
+
+.ontario-obituary-body p {
     margin-bottom: 16px;
+}
+
+.ontario-obituary-body-minimal {
+    background: var(--oo-color-surface);
+    padding: 32px;
+    border-radius: var(--oo-radius-lg);
+    text-align: center;
+}
+
+/* Footer / provenance */
+.ontario-obituary-footer {
+    border-top: 1px solid var(--oo-color-border-light);
+    padding-top: 24px;
+    margin-top: 40px;
+}
+
+.ontario-obituary-provenance {
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 4px;
+}
+
+.ontario-obituary-published-date {
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 16px;
+}
+
+.ontario-obituary-back-link {
+    display: inline-block;
+    color: var(--oo-color-accent);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    transition: var(--oo-transition);
+    padding: 8px 0;
+}
+
+.ontario-obituary-back-link:hover {
+    color: var(--oo-color-gold);
+}
+
+/* CTA Block */
+.ontario-obituaries-cta-block {
+    margin-top: 48px;
+    background: linear-gradient(135deg, #f0f4f8 0%, #e8eef5 100%);
+    border-radius: var(--oo-radius-lg);
+    border-left: 4px solid var(--oo-color-accent);
+    overflow: hidden;
+}
+
+.ontario-obituaries-cta-inner {
+    padding: 36px;
+}
+
+.ontario-obituaries-cta-block h3 {
+    font-family: var(--oo-font-display);
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--oo-color-text);
+    margin: 0 0 4px 0;
+    line-height: 1.2;
+}
+
+.ontario-cta-subtitle {
+    font-size: 15px;
+    color: var(--oo-color-accent);
+    font-weight: 500;
+    margin: 0 0 16px 0;
+    letter-spacing: 0.02em;
+}
+
+.ontario-cta-desc {
+    color: var(--oo-color-text-secondary);
+    line-height: 1.7;
+    margin: 0 0 12px 0;
+    font-size: 14px;
+}
+
+.ontario-cta-address {
+    color: var(--oo-color-text-muted);
+    font-size: 13px;
+    margin: 0 0 20px 0;
+}
+
+.ontario-cta-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+}
+
+.ontario-cta-btn-primary {
+    display: inline-block;
+    padding: 12px 28px;
+    background: var(--oo-color-accent);
+    color: #fff !important;
+    text-decoration: none;
+    border-radius: var(--oo-radius-sm);
+    font-family: var(--oo-font-body);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: var(--oo-transition);
+}
+
+.ontario-cta-btn-primary:hover {
+    background: var(--oo-color-accent-hover);
+    color: #fff !important;
+    text-decoration: none;
+}
+
+.ontario-cta-btn-secondary {
+    color: var(--oo-color-accent) !important;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 14px;
+    transition: var(--oo-transition);
+}
+
+.ontario-cta-btn-secondary:hover {
+    color: var(--oo-color-gold) !important;
+}
+
+/* Removal notice */
+.ontario-obituary-removal-notice {
+    margin-top: 24px;
+    font-size: 12px;
+    color: #aaa;
+}
+
+.ontario-obituary-removal-notice a {
+    color: #aaa;
+    text-decoration: underline;
+    transition: var(--oo-transition);
+}
+
+.ontario-obituary-removal-notice a:hover {
+    color: var(--oo-color-accent);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -667,7 +868,7 @@
    SEO PAGES — Breadcrumbs
    ═══════════════════════════════════════════════════════════════════ */
 .ontario-obituaries-breadcrumbs {
-    margin-bottom: 24px;
+    margin-bottom: 28px;
     font-size: 13px;
     color: var(--oo-color-text-muted);
     letter-spacing: 0.01em;
@@ -683,8 +884,17 @@
     color: var(--oo-color-gold);
 }
 
+.ontario-breadcrumb-sep {
+    margin: 0 4px;
+    color: #ccc;
+}
+
+.ontario-breadcrumb-current {
+    color: #aaa;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
-   SEO PAGES — CTA Block (Monaco Monuments)
+   SEO PAGES — CTA Block (Monaco Monuments) — legacy selectors
    ═══════════════════════════════════════════════════════════════════ */
 .ontario-obituaries-cta,
 .ontario-obituaries-local-services,
@@ -817,25 +1027,76 @@
     100% { transform: rotate(360deg); }
 }
 
-/* Detail in modal */
+/* Detail in modal (v3.14.1) */
 .ontario-obituary-detail {
     font-family: var(--oo-font-body);
+    color: var(--oo-color-text);
+}
+
+.ontario-obituary-detail-header {
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--oo-color-border-light);
 }
 
 .ontario-obituary-detail-name {
     font-family: var(--oo-font-display);
     font-size: 28px;
+    font-weight: 700;
     color: var(--oo-color-text);
-    margin-bottom: 8px;
+    margin: 0 0 8px 0;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+}
+
+.ontario-obituary-detail-dates {
+    font-size: 15px;
+    color: var(--oo-color-text-secondary);
+    margin-bottom: 4px;
+}
+
+.ontario-obituary-detail-age {
+    font-size: 13px;
+    color: var(--oo-color-text-muted);
+    margin-bottom: 12px;
+}
+
+.ontario-obituary-detail-meta {
+    margin-top: 8px;
+}
+
+.ontario-obituary-detail-location {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+}
+
+.ontario-obituary-detail-location .ontario-obituary-location-tag,
+.ontario-obituary-detail-location .ontario-obituary-funeral-home {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: var(--oo-color-text-secondary);
+}
+
+.ontario-obituary-detail-location svg {
+    color: var(--oo-color-accent);
+    flex-shrink: 0;
+}
+
+.ontario-obituary-detail-content {
+    margin-top: 20px;
 }
 
 .ontario-obituary-detail-image {
     text-align: center;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
 }
 
 .ontario-obituary-detail-image img {
-    max-width: 300px;
+    max-width: 280px;
     height: auto;
     border-radius: var(--oo-radius-lg);
     box-shadow: var(--oo-shadow-card);
@@ -844,6 +1105,11 @@
 .ontario-obituary-detail-description {
     line-height: 1.8;
     color: var(--oo-color-text-secondary);
+    font-size: 15px;
+}
+
+.ontario-obituary-detail-description p {
+    margin-bottom: 12px;
 }
 
 .ontario-obituary-detail-footer {
@@ -898,8 +1164,49 @@
         font-size: 20px;
     }
 
-    .ontario-obituary-individual h1 {
+    /* Detail page responsive */
+    .ontario-obituary-individual {
+        padding: 24px 16px;
+    }
+
+    .ontario-obituary-hero {
+        flex-direction: column;
+        gap: 20px;
+        align-items: center;
+        text-align: center;
+    }
+
+    .ontario-obituary-hero-image {
+        width: 160px;
+    }
+
+    .ontario-obituary-hero-info h1 {
         font-size: 28px;
+    }
+
+    .ontario-obituary-meta-details {
+        align-items: center;
+    }
+
+    .ontario-obituaries-cta-inner {
+        padding: 24px;
+    }
+
+    .ontario-obituaries-cta-block h3 {
+        font-size: 22px;
+    }
+
+    .ontario-cta-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ontario-cta-btn-primary {
+        text-align: center;
+    }
+
+    .ontario-cta-btn-secondary {
+        text-align: center;
     }
 
     .ontario-obituaries-seo-hub h1,
@@ -939,6 +1246,18 @@
     .ontario-obituaries-card-content {
         padding: 16px;
     }
+
+    .ontario-obituary-hero-image {
+        width: 140px;
+    }
+
+    .ontario-obituary-hero-info h1 {
+        font-size: 24px;
+    }
+
+    .ontario-obituary-detail-name {
+        font-size: 24px;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -964,13 +1283,15 @@
     .ontario-obituary-social-sharing,
     .ontario-obituary-assistant-actions,
     .ontario-obituaries-cta,
+    .ontario-obituaries-cta-block,
     .ontario-obituaries-breadcrumbs,
     .ontario-obituaries-local-services,
     .ontario-obituaries-disclaimer,
     .ontario-obituaries-filters,
     .ontario-obituaries-pagination,
     .ontario-obituaries-actions,
-    .ontario-obituaries-removal-form {
+    .ontario-obituaries-removal-form,
+    .ontario-obituary-removal-notice {
         display: none !important;
     }
 
@@ -983,5 +1304,13 @@
         break-inside: avoid;
         box-shadow: none;
         border: 1px solid #ccc;
+    }
+
+    .ontario-obituary-hero {
+        border-bottom: 1px solid #ccc;
+    }
+
+    .ontario-obituary-hero-image img {
+        box-shadow: none;
     }
 }
