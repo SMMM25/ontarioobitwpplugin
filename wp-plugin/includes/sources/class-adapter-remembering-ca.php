@@ -250,10 +250,133 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
     }
 
     /**
-     * No detail page fetch — facts only from listings.
+     * v3.14.0: Fetch the detail page for richer obituary data.
+     *
+     * Previously this method returned null (listing-level facts only).
+     * Now we fetch the individual obituary page to extract:
+     *   - Full obituary description (instead of the truncated listing excerpt)
+     *   - Birth/death dates when embedded in the obituary text
+     *   - Portrait image (if available and not a generic placeholder)
+     *
+     * Rate limiting is handled by the Source Collector, which pauses
+     * between detail requests per the source's min_request_interval.
+     *
+     * Note: We still DO NOT hotlink images from Remembering.ca; they are
+     * paid obituary images. However, we extract the URL so that future
+     * allowlisting per source can selectively enable image display.
+     * The normalize() method respects the image_allowlisted flag.
+     *
+     * @param string $detail_url URL of the detail page.
+     * @param array  $card       Card data from extract_obit_cards().
+     * @param array  $source     Source registry row.
+     * @return array|null Enriched data or null on failure.
      */
     public function fetch_detail( $detail_url, $card, $source ) {
-        return null;
+        if ( empty( $detail_url ) ) {
+            return null;
+        }
+
+        $html = $this->http_get( $detail_url, array(
+            'Accept-Language' => 'en-CA,en;q=0.9',
+        ) );
+
+        if ( is_wp_error( $html ) ) {
+            return null;
+        }
+
+        $doc      = $this->parse_html( $html );
+        $xpath    = new DOMXPath( $doc );
+        $enriched = array();
+
+        // ── Full obituary text ──────────────────────────────────────
+        // Remembering.ca / Postmedia detail pages use various content wrappers.
+        $desc_selectors = array(
+            '//div[contains(@class,"obituary-text")]',
+            '//div[contains(@class,"obit-text")]',
+            '//div[contains(@class,"article-content")]',
+            '//div[contains(@class,"obituary-body")]',
+            '//div[contains(@class,"entry-content")]',
+            '//div[contains(@class,"obit_body")]',
+            '//div[contains(@class,"content-area")]//article',
+            // Fallback: the main content region
+            '//div[contains(@class,"main-content")]//p/..',
+        );
+
+        foreach ( $desc_selectors as $sel ) {
+            $node = $xpath->query( $sel )->item( 0 );
+            if ( $node && strlen( trim( $node->textContent ) ) > 80 ) {
+                $full_text = $this->node_text( $node );
+                // Only enrich if the detail text is substantially longer than what we had.
+                $listing_desc_len = isset( $card['description'] ) ? strlen( $card['description'] ) : 0;
+                if ( strlen( $full_text ) > $listing_desc_len + 50 ) {
+                    $enriched['description'] = $full_text;
+                }
+                break;
+            }
+        }
+
+        // ── Portrait image ──────────────────────────────────────────
+        // Extract the portrait image URL from the detail page.
+        // The normalize() method will decide whether to include it
+        // based on source.image_allowlisted flag.
+        $img_selectors = array(
+            '//div[contains(@class,"obituary")]//img[contains(@class,"portrait") or contains(@class,"photo") or contains(@class,"obit-image")]',
+            '//div[contains(@class,"obituary")]//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder")) and not(contains(@src,"default"))]',
+            '//article//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder"))]',
+            '//div[contains(@class,"photo")]//img',
+        );
+
+        foreach ( $img_selectors as $sel ) {
+            $img = $xpath->query( $sel )->item( 0 );
+            if ( $img ) {
+                $src = $this->node_attr( $img, 'data-src' );
+                if ( empty( $src ) ) {
+                    $src = $this->node_attr( $img, 'src' );
+                }
+                if ( ! empty( $src ) && ! preg_match( '/(placeholder|default|generic|no-?photo|avatar|logo|spacer|1x1|pixel)/i', $src ) ) {
+                    $enriched['image_url'] = $this->resolve_url( $src, $source['base_url'] );
+                    break;
+                }
+            }
+        }
+
+        // ── Better date extraction from detail page ──────────────────
+        // The detail page often has more structured date information
+        // than the listing page. Extract if not already found.
+        if ( empty( $card['death_date_from_text'] ) ) {
+            $detail_text = isset( $enriched['description'] ) ? $enriched['description'] : '';
+            if ( ! empty( $detail_text ) ) {
+                $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+                $death_phrases = array(
+                    '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                    '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                    '/died(?:\s+\w+){0,2}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                    '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                );
+                foreach ( $death_phrases as $pattern ) {
+                    if ( preg_match( $pattern, $detail_text, $death_m ) ) {
+                        $enriched['death_date_from_text'] = trim( $death_m[1] );
+                        break;
+                    }
+                }
+
+                // Try to extract birth date from detail text
+                // Common patterns: "born [on] Month Day, Year" or "Month Day, Year - Month Day, Year"
+                $birth_phrases = array(
+                    '/\bborn(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+                    '/(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}~]\s*(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/u',
+                );
+
+                foreach ( $birth_phrases as $pattern ) {
+                    if ( preg_match( $pattern, $detail_text, $birth_m ) ) {
+                        $enriched['birth_date_from_text'] = trim( $birth_m[1] );
+                        break;
+                    }
+                }
+            }
+        }
+
+        return ! empty( $enriched ) ? $enriched : null;
     }
 
     public function normalize( $card, $source ) {
@@ -291,6 +414,14 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $date_of_death = $this->normalize_date( $card['published_date'] );
         }
 
+        // v3.14.0: Birth-date extraction — use birth_date_from_text from detail page.
+        if ( empty( $date_of_birth ) && ! empty( $card['birth_date_from_text'] ) ) {
+            $text_birth = $this->normalize_date( $card['birth_date_from_text'] );
+            if ( ! empty( $text_birth ) ) {
+                $date_of_birth = $text_birth;
+            }
+        }
+
         // v3.10.2: REMOVED Jan 1 fabrication for year-only dates.
         // Previously (v3.6.0): $date_of_death = $card['year_death'] . '-01-01';
         // If no trustworthy death date exists after all extraction attempts,
@@ -302,9 +433,12 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // v3.10.2: Do NOT fabricate birth dates either. date_of_birth is
         // DATE DEFAULT NULL, so empty is safe — no fabrication needed.
 
-        // Truncate to facts-only length
-        if ( strlen( $description ) > 200 ) {
-            $description = substr( $description, 0, 197 ) . '...';
+        // v3.14.0: Allow full description from detail page (up to 2000 chars).
+        // Previously truncated to 200 chars (facts-only). Now that fetch_detail()
+        // retrieves the full obituary text, we allow a much longer description
+        // to give the detail page real content.
+        if ( strlen( $description ) > 2000 ) {
+            $description = substr( $description, 0, 1997 ) . '...';
         }
 
         $age = 0;
@@ -340,7 +474,7 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             'age'              => $age,
             'funeral_home'     => $funeral_home,
             'location'         => sanitize_text_field( $location ),
-            'image_url'        => '', // Do NOT hotlink newspaper images
+            'image_url'        => '', // v3.14.0: See image logic below
             'description'      => $description,
             'source_url'       => isset( $card['detail_url'] ) ? esc_url_raw( $card['detail_url'] ) : '',
             'source_domain'    => $this->extract_domain( $source['base_url'] ),
@@ -348,6 +482,15 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             'city_normalized'  => $city_normalized,
             'provenance_hash'  => '',
         );
+
+        // v3.14.0: Conditionally include image from detail page.
+        // By default, Remembering.ca images are NOT hotlinked (paid obituary images).
+        // If the source has image_allowlisted=1 in the registry, we include the image.
+        // The detail page fetch_detail() may have populated card['image_url'].
+        $image_allowlisted = ! empty( $source['image_allowlisted'] );
+        if ( $image_allowlisted && ! empty( $card['image_url'] ) ) {
+            $record['image_url'] = esc_url_raw( $card['image_url'] );
+        }
 
         $record['provenance_hash'] = $this->generate_provenance_hash( $record );
         return $record;
