@@ -297,9 +297,10 @@
                     var errShort   = errMsg.length > 80 ? errMsg.substring(0, 80) + '\u2026' : errMsg;
                     var finalUrl   = ps.final_url || '';
                     var durationMs = ps.duration_ms || 0;
+                    var sourceName = ps.name || domain;
 
                     tableHtml += '<tr>';
-                    tableHtml += '<td>' + escHtml(domain) + '</td>';
+                    tableHtml += '<td><strong>' + escHtml(sourceName) + '</strong><br><small style="color:#888;">' + escHtml(domain) + '</small></td>';
                     tableHtml += '<td>' + ps.found + '</td>';
                     tableHtml += '<td>' + ps.added + '</td>';
                     tableHtml += '<td>' + errCount + '</td>';

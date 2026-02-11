@@ -399,6 +399,10 @@ class Ontario_Obituaries_Source_Registry {
                 'region'       => 'York Region',
                 'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — arbormemorial.ca is a React SPA (Adobe AEM +
+            // client-side rendering). Server-side HTML contains only <div id="spa-root"></div>
+            // with no obituary data. The generic_html adapter cannot extract cards from
+            // JS-rendered content. Confirmed via curl: HTTP 200, 4 KB HTML shell, 0 cards.
             array(
                 'domain'       => 'arbormemorial.ca/taylor',
                 'name'         => 'Taylor Funeral Home (Arbor Memorial)',
@@ -406,6 +410,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'generic_html',
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             // v3.10.0: DISABLED — FrontRunner JS-rendered site (same issue as roadhouseandrose).
             array(
@@ -439,6 +444,8 @@ class Ontario_Obituaries_Source_Registry {
                 'region'       => 'York Region',
                 'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — dignitymemorial.com returns HTTP 403 (WAF/bot
+            // protection). Confirmed via Rescan-Only diagnostics 2026-02-11.
             array(
                 'domain'       => 'dignitymemorial.com/newmarket-on',
                 'name'         => 'Dignity Memorial - Newmarket',
@@ -446,6 +453,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'dignity_memorial',
                 'city'         => 'Newmarket',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             // v3.10.0: DISABLED — FrontRunner JS-rendered site (same issue as roadhouseandrose).
             array(
@@ -477,6 +485,7 @@ class Ontario_Obituaries_Source_Registry {
                 'region'       => 'York Region',
                 'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — dignitymemorial.com returns HTTP 403.
             array(
                 'domain'       => 'dignitymemorial.com/aurora-on',
                 'name'         => 'Dignity Memorial - Aurora',
@@ -484,7 +493,9 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'dignity_memorial',
                 'city'         => 'Aurora',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — dignitymemorial.com returns HTTP 403.
             array(
                 'domain'       => 'dignitymemorial.com/richmond-hill-on',
                 'name'         => 'Dignity Memorial - Richmond Hill',
@@ -492,6 +503,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'dignity_memorial',
                 'city'         => 'Richmond Hill',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
             // York Region aggregators (highest volume local sources)
             array(
@@ -502,6 +514,8 @@ class Ontario_Obituaries_Source_Registry {
                 'city'         => '',
                 'region'       => 'York Region',
             ),
+            // v3.13.0: DISABLED — legacy.com returns HTTP 403 (WAF/bot protection).
+            // Confirmed via Rescan-Only diagnostics 2026-02-11.
             array(
                 'domain'       => 'legacy.com/ca/obituaries/yorkregion',
                 'name'         => 'Legacy.com - York Region',
@@ -509,6 +523,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
 
             // ══════════════════════════════════════════════════════════════
@@ -516,6 +531,7 @@ class Ontario_Obituaries_Source_Registry {
             // Drives broader regional traffic + positions Monaco Monuments
             // as the Ontario obituary resource.
             // ══════════════════════════════════════════════════════════════
+            // v3.13.0: DISABLED — dignitymemorial.com returns HTTP 403.
             array(
                 'domain'       => 'dignitymemorial.com/toronto-on',
                 'name'         => 'Dignity Memorial - Toronto',
@@ -523,7 +539,9 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'dignity_memorial',
                 'city'         => 'Toronto',
                 'region'       => 'Greater Toronto Area',
+                'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — dignitymemorial.com returns HTTP 403.
             array(
                 'domain'       => 'dignitymemorial.com/markham-on',
                 'name'         => 'Dignity Memorial - Markham',
@@ -531,7 +549,9 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'dignity_memorial',
                 'city'         => 'Markham',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — dignitymemorial.com returns HTTP 403.
             array(
                 'domain'       => 'dignitymemorial.com/vaughan-on',
                 'name'         => 'Dignity Memorial - Vaughan',
@@ -539,7 +559,9 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'dignity_memorial',
                 'city'         => 'Vaughan',
                 'region'       => 'York Region',
+                'enabled'      => 0,
             ),
+            // v3.13.0: DISABLED — legacy.com returns HTTP 403.
             array(
                 'domain'       => 'legacy.com/ca/obituaries/thestar',
                 'name'         => 'Legacy.com - Toronto Star',
@@ -547,6 +569,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Greater Toronto Area',
+                'enabled'      => 0,
             ),
             // v3.9.0: DISABLED — remembering.ca/obituaries/toronto-on returns HTTP 404.
             array(
@@ -563,6 +586,10 @@ class Ontario_Obituaries_Source_Registry {
             // PRIORITY 3 — Ontario-wide (provincial coverage for SEO reach)
             // ══════════════════════════════════════════════════════════════
 
+            // v3.13.0: ALL Legacy.com sources DISABLED — HTTP 403 (WAF/bot protection).
+            // Confirmed via Rescan-Only diagnostics 2026-02-11. Domain keys preserved
+            // in the DB for history; can be re-enabled if access is restored.
+
             // Hamilton / Niagara
             array(
                 'domain'       => 'legacy.com/ca/obituaries/thespec',
@@ -571,6 +598,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Hamilton',
+                'enabled'      => 0,
             ),
             // Ottawa
             array(
@@ -580,6 +608,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Ottawa',
+                'enabled'      => 0,
             ),
             // London
             array(
@@ -589,6 +618,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'London',
+                'enabled'      => 0,
             ),
             // Kitchener / Waterloo
             array(
@@ -598,6 +628,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Kitchener-Waterloo',
+                'enabled'      => 0,
             ),
             // Barrie / Simcoe
             array(
@@ -607,6 +638,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Barrie',
+                'enabled'      => 0,
             ),
             // Windsor
             array(
@@ -616,6 +648,7 @@ class Ontario_Obituaries_Source_Registry {
                 'adapter_type' => 'legacy_com',
                 'city'         => '',
                 'region'       => 'Windsor',
+                'enabled'      => 0,
             ),
         );
 
