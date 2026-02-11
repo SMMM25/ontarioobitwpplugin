@@ -52,19 +52,15 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
             </div>
             <?php endif; ?>
 
-            <div class="ontario-obituary-dates" style="color: #555; font-size: 1.1em; margin-bottom: 10px;">
-                <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
-                    <span itemprop="birthDate" content="<?php echo esc_attr( $obituary->date_of_birth ); ?>">
-                        <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_birth ) ) ); ?>
-                    </span> &ndash;
-                <?php endif; ?>
-                <span itemprop="deathDate" content="<?php echo esc_attr( $obituary->date_of_death ); ?>">
-                    <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_death ) ) ); ?>
-                </span>
-                <?php if ( ! empty( $obituary->age ) && $obituary->age > 0 ) : ?>
-                    <span>(<?php echo esc_html( $obituary->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>
-                <?php endif; ?>
-            </div>
+            <?php
+            // v3.13.3: Visible dates removed from header per owner request.
+            // Dates moved to the provenance footer as "Date published: ..."
+            // Schema.org markup kept as hidden meta for SEO (Google rich results).
+            ?>
+            <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
+                <meta itemprop="birthDate" content="<?php echo esc_attr( $obituary->date_of_birth ); ?>">
+            <?php endif; ?>
+            <meta itemprop="deathDate" content="<?php echo esc_attr( $obituary->date_of_death ); ?>">
 
             <?php if ( ! empty( $obituary->location ) ) : ?>
                 <div style="color: #666; margin-bottom: 5px;" itemprop="deathPlace" itemscope itemtype="https://schema.org/Place">
@@ -92,6 +88,16 @@ $city_name = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized 
                      source_url retained in DB for provenance/audit. -->
                 <p style="font-size: 0.8em; color: #999;">
                     <?php esc_html_e( 'Source record retained internally for provenance.', 'ontario-obituaries' ); ?>
+                </p>
+            <?php endif; ?>
+
+            <?php // v3.13.3: "Date published" shown here (moved from header per owner request). ?>
+            <?php if ( ! empty( $obituary->created_at ) ) : ?>
+                <p style="font-size: 0.8em; color: #999;">
+                    <?php printf(
+                        esc_html__( 'Date published: %s', 'ontario-obituaries' ),
+                        esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->created_at ) ) )
+                    ); ?>
                 </p>
             <?php endif; ?>
 

@@ -25,15 +25,10 @@ if ( ! defined( 'ABSPATH' ) ) {
         <h2 class="ontario-obituary-detail-name"><?php echo esc_html( $obituary->name ); ?></h2>
 
         <div class="ontario-obituary-detail-meta">
-            <div class="ontario-obituary-detail-dates">
-                <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
-                    <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_birth ) ) ); ?> - </span>
-                <?php endif; ?>
-                <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_death ) ) ); ?></span>
-                <?php if ( ! empty( $obituary->age ) ) : ?>
-                    <span>(<?php echo esc_html( $obituary->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>
-                <?php endif; ?>
-            </div>
+            <?php
+            // v3.13.3: Dates removed from detail header per owner request.
+            // They are shown as "Date published" in the provenance footer on the SEO page.
+            ?>
 
             <?php if ( ! empty( $obituary->location ) || ! empty( $obituary->funeral_home ) ) : ?>
             <div class="ontario-obituary-detail-location">

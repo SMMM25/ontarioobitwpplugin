@@ -61,19 +61,14 @@ if ( ! defined( 'ABSPATH' ) ) {
                         </a>
                     </h3>
 
-                    <div style="color: #666; margin: 8px 0;">
-                        <?php if ( ! empty( $obit->date_of_birth ) && '0000-00-00' !== $obit->date_of_birth ) : ?>
-                            <span itemprop="birthDate" content="<?php echo esc_attr( $obit->date_of_birth ); ?>">
-                                <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obit->date_of_birth ) ) ); ?>
-                            </span> &ndash;
-                        <?php endif; ?>
-                        <span itemprop="deathDate" content="<?php echo esc_attr( $obit->date_of_death ); ?>">
-                            <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obit->date_of_death ) ) ); ?>
-                        </span>
-                        <?php if ( ! empty( $obit->age ) && $obit->age > 0 ) : ?>
-                            <span>(<?php echo esc_html( $obit->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>
-                        <?php endif; ?>
-                    </div>
+                    <?php
+                    // v3.13.3: Visible dates removed from listing cards per owner request.
+                    // Schema.org markup kept as hidden meta for SEO (Google rich results).
+                    ?>
+                    <?php if ( ! empty( $obit->date_of_birth ) && '0000-00-00' !== $obit->date_of_birth ) : ?>
+                        <meta itemprop="birthDate" content="<?php echo esc_attr( $obit->date_of_birth ); ?>">
+                    <?php endif; ?>
+                    <meta itemprop="deathDate" content="<?php echo esc_attr( $obit->date_of_death ); ?>">
 
                     <?php if ( ! empty( $obit->funeral_home ) ) : ?>
                         <p style="color: #888; font-size: 0.9em; margin: 5px 0;"><?php echo esc_html( $obit->funeral_home ); ?></p>
