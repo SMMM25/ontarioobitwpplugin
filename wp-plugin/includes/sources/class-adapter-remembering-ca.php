@@ -307,30 +307,44 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['funeral_home'] = $this->node_text( $fh_node );
         }
 
-        // Description — v3.15.1: Extract ALL content paragraphs, not just the first.
-        // The listing card may contain multiple <p> tags: the first is typically the
-        // obituary content ("Ralph George Harvey Pyle 1926 - 2026 Ralph is survived...")
-        // and the second is the "Published online" line. We concatenate all content
-        // paragraphs (class="content" or generic <p> with substantive text) to get
-        // the fullest possible description from the listing page.
+        // Description — v3.15.2: Extract content from listing card.
+        // The Tribute Technology platform uses different CSS classes across
+        // template versions:
+        //   - Old: <p class="content"> (Bishop Waterfall v1)
+        //   - New: <p class="copy-featured"> (Bishop Waterfall July 2022+)
+        //   - Generic: <p> within .list-panel-info
+        // We check for all known content classes, then fall back to generic <p>.
         $desc_parts = array();
-        $desc_nodes = $xpath->query( './/p[contains(@class,"content")] | .//*[contains(@class,"excerpt")]', $node );
-        if ( $desc_nodes && $desc_nodes->length > 0 ) {
-            foreach ( $desc_nodes as $dn ) {
-                $dt = trim( $dn->textContent );
-                if ( strlen( $dt ) > 15 ) {
-                    $desc_parts[] = $this->node_text( $dn );
+        $desc_selectors = array(
+            './/p[contains(@class,"copy-featured") or contains(@class,"copy-featuredhidden")]',
+            './/p[contains(@class,"content")]',
+            './/*[contains(@class,"excerpt")]',
+        );
+        foreach ( $desc_selectors as $dsel ) {
+            $desc_nodes = $xpath->query( $dsel, $node );
+            if ( $desc_nodes && $desc_nodes->length > 0 ) {
+                foreach ( $desc_nodes as $dn ) {
+                    $dt = trim( $dn->textContent );
+                    if ( strlen( $dt ) > 15 ) {
+                        $desc_parts[] = $this->node_text( $dn );
+                    }
                 }
+                break; // Use the first matching selector
             }
         }
-        // Fallback: first generic <p> if no .content class found
+        // Fallback: generic <p> tags if no known content class found
         if ( empty( $desc_parts ) ) {
             $fallback_p = $xpath->query( './/p', $node );
             if ( $fallback_p ) {
                 foreach ( $fallback_p as $fp ) {
                     $ft = trim( $fp->textContent );
-                    // Skip the "Published online" line and very short text
-                    if ( strlen( $ft ) > 30 && stripos( $ft, 'Published online' ) === false ) {
+                    $fc = $fp->getAttribute( 'class' );
+                    // Skip structural paragraphs (name, dates, category)
+                    if ( strlen( $ft ) > 30
+                         && stripos( $ft, 'Published online' ) === false
+                         && stripos( $fc, 'name' ) === false
+                         && stripos( $fc, 'dates' ) === false
+                         && stripos( $fc, 'category' ) === false ) {
                         $desc_parts[] = $this->node_text( $fp );
                     }
                 }
@@ -344,31 +358,102 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
     }
 
     /**
-     * v3.15.1: Fetch detail page — SKIPPED for Remembering.ca / Tribute Technology.
+     * v3.15.2: Fetch detail page and extract full obituary content.
      *
-     * IMPORTANT: All Remembering.ca / Tribute Technology detail pages are
-     * React/Next.js SPAs that return either:
-     *   - content-length: 0 (empty body) to non-browser clients, or
-     *   - a minimal Next.js shell (<500 bytes) with no obituary content.
+     * CORRECTION from v3.15.1: The detail pages are NOT empty SPAs.
+     * Tribute Technology's Next.js pages are Server-Side Rendered (SSR)
+     * and contain the full obituary in:
+     *   - <div id="obituaryDescription"> — complete obituary text (SSR HTML)
+     *   - "Funeral Arrangements by" section — funeral home name
+     *   - Published date line — publication date and newspaper
+     *   - High-resolution images from d1q40j6jx1d8h6.cloudfront.net
      *
-     * Previous versions (v3.14.0–v3.15.0) attempted to fetch these pages,
-     * wasting ~1-2 seconds per card (rate-limited) for zero useful data.
-     * With 25 cards per page, this added ~25-50 seconds to each scrape.
-     *
-     * All useful data (name, dates, location, description, image) is now
-     * extracted at the LISTING page level in extract_card(). The listing
-     * HTML is server-rendered and contains the full content snippet.
+     * The pages are large (~300KB) because they include RSC payloads,
+     * but the SSR HTML contains all the data we need.
      *
      * @param string $detail_url URL of the detail page.
      * @param array  $card       Card data from extract_obit_cards().
      * @param array  $source     Source registry row.
-     * @return array|null Always returns null — detail fetch is disabled.
+     * @return array|null Enriched card data, or null on failure.
      */
     public function fetch_detail( $detail_url, $card, $source ) {
-        // v3.15.1: SPA detail pages return empty HTML. All data extraction
-        // happens in extract_card() from the server-rendered listing page.
-        // Returning null immediately saves ~1-2s per card.
-        return null;
+        if ( empty( $detail_url ) ) {
+            return null;
+        }
+
+        $html = $this->http_get( $detail_url, array(
+            'Accept-Language' => 'en-CA,en;q=0.9',
+        ) );
+
+        if ( is_wp_error( $html ) || empty( $html ) ) {
+            return null;
+        }
+
+        // v3.15.2: Minimum size check — true empty shells are <1KB.
+        // Valid SSR pages are 100KB+. Use a generous threshold.
+        if ( strlen( $html ) < 5000 ) {
+            return null;
+        }
+
+        $detail = array();
+
+        // 1. Full obituary text from SSR-rendered div#obituaryDescription
+        //    This contains the complete obituary as server-rendered HTML
+        //    paragraphs (not requiring JavaScript to display).
+        if ( preg_match( '/id=["\']obituaryDescription["\'][^>]*>(.*?)<\/div>/s', $html, $desc_m ) ) {
+            $desc_html = $desc_m[1];
+            // Strip HTML tags but preserve paragraph breaks
+            $desc_text = preg_replace( '/<br\s*\/?>/i', "\n", $desc_html );
+            $desc_text = preg_replace( '/<\/p>\s*<p[^>]*>/i', "\n\n", $desc_text );
+            $desc_text = wp_strip_all_tags( $desc_text );
+            $desc_text = preg_replace( '/\n{3,}/', "\n\n", trim( $desc_text ) );
+            if ( strlen( $desc_text ) > 50 ) {
+                $detail['detail_full_description'] = $desc_text;
+            }
+        }
+
+        // 2. Funeral home from "Funeral Arrangements by" section
+        //    SSR HTML: <h6>Funeral Arrangements by</h6><div class="...">Name</div>
+        if ( preg_match( '/Funeral\s+Arrangements\s+by<\/h6>\s*<div[^>]*>([^<]+)<\/div>/i', $html, $fh_m ) ) {
+            $fh_name = trim( $fh_m[1] );
+            if ( strlen( $fh_name ) > 3 && strlen( $fh_name ) < 200 ) {
+                $detail['detail_funeral_home'] = $fh_name;
+            }
+        }
+
+        // 3. Published date from detail page
+        if ( preg_match( '/Published\s+on\s+<!--\s*-->([^<]+?)<!--/i', $html, $pub_m ) ) {
+            $detail['detail_published_date'] = trim( $pub_m[1] );
+        }
+
+        // 4. High-resolution image from Cloudfront CDN
+        //    Detail pages use d1q40j6jx1d8h6.cloudfront.net/Obituaries/{id}/Image.jpg
+        //    URL may appear with escaped quotes (\\") in RSC payload or normal quotes in SSR HTML.
+        if ( preg_match( '/(https:\\/\\/d1q40j6jx1d8h6\\.cloudfront\\.net\\/Obituaries\\/\\d+\\/Image\\.jpg)/', $html, $img_m ) ) {
+            $detail['detail_image_url'] = $img_m[1];
+        }
+
+        // 5. Location from detail page funeral home address
+        //    RSC payload uses escaped JSON: \\\"city\\\":\\\"South Newmarket,\\\"
+        //    Also try the regular JSON format for SSR-rendered data.
+        $loc_found = false;
+        // Try RSC escaped format first (most common)
+        if ( preg_match( '/\\\\"city\\\\":\\\\"([^\\\\]+)\\\\"/', $html, $loc_m ) ) {
+            $city = trim( $loc_m[1], ', ' );
+            if ( ! empty( $city ) && strlen( $city ) > 1 ) {
+                $detail['detail_location'] = $city;
+                $loc_found = true;
+            }
+        }
+        // Fallback: regular JSON format
+        if ( ! $loc_found && preg_match( '/"city":\s*"([^"]+?)"/', $html, $loc_m2 ) ) {
+            $city = trim( $loc_m2[1], ', ' );
+            if ( ! empty( $city ) && strlen( $city ) > 1 ) {
+                $detail['detail_location'] = $city;
+            }
+        }
+
+        return ! empty( $detail ) ? $detail : null;
     }
 
     public function normalize( $card, $source ) {
@@ -380,6 +465,32 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $funeral_home  = isset( $card['funeral_home'] ) ? sanitize_text_field( $card['funeral_home'] ) : '';
         $location      = isset( $card['location'] ) ? $card['location'] : '';
         $description   = isset( $card['description'] ) ? wp_strip_all_tags( $card['description'] ) : '';
+
+        // v3.15.2: Use detail page data when available (richer than listing snippet).
+        // The detail page is an SSR-rendered Next.js page with the full obituary text,
+        // funeral home, high-res image, and location extracted by fetch_detail().
+        // Detail keys are prefixed with 'detail_' to avoid collision with listing data
+        // when array_merge is used by the collector.
+
+        // Full description from detail page supersedes listing snippet
+        if ( ! empty( $card['detail_full_description'] ) && strlen( $card['detail_full_description'] ) > strlen( $description ) ) {
+            $description = $card['detail_full_description'];
+        }
+
+        // Funeral home from detail page (structured, reliable)
+        if ( empty( $funeral_home ) && ! empty( $card['detail_funeral_home'] ) ) {
+            $funeral_home = sanitize_text_field( $card['detail_funeral_home'] );
+        }
+
+        // Location from detail page funeral home address
+        if ( empty( $location ) && ! empty( $card['detail_location'] ) ) {
+            $location = $card['detail_location'];
+        }
+
+        // Published date from detail page as fallback
+        if ( empty( $card['published_date'] ) && ! empty( $card['detail_published_date'] ) ) {
+            $card['published_date'] = $card['detail_published_date'];
+        }
 
         // v3.12.0 FIX (Goal A): Death-date priority — prefer the textual death
         // date extracted from the obituary body over ALL other sources.
@@ -480,12 +591,21 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // which are public, hotlinkable URLs designed for web display. These are
         // NOT the newspaper's own servers — they're the obituary platform's CDN.
         //
+        // v3.15.2: Also allow d1q40j6jx1d8h6.cloudfront.net (Tribute Technology
+        // detail page CDN) which serves higher-resolution obituary images.
+        //
         // Policy:
-        //   - CDN images (prfct.cc, tributetechnology, cdn-otf) are always included
+        //   - CDN images (prfct.cc, tributetechnology, cdn-otf, cloudfront.net/Obituaries) are always included
         //   - Other image sources require image_allowlisted=1 in the source registry
         $image_allowlisted = ! empty( $source['image_allowlisted'] );
+
+        // v3.15.2: Prefer detail page high-res image (cloudfront CDN) over listing thumbnail
+        if ( ! empty( $card['detail_image_url'] ) ) {
+            $card['image_url'] = $card['detail_image_url'];
+        }
+
         if ( ! empty( $card['image_url'] ) ) {
-            $is_cdn_image = (bool) preg_match( '/prfct\.cc|tributetech|cdn-otf/i', $card['image_url'] );
+            $is_cdn_image = (bool) preg_match( '/prfct\.cc|tributetech|cdn-otf|cloudfront\.net\/Obituaries/i', $card['image_url'] );
             if ( $is_cdn_image || $image_allowlisted ) {
                 $record['image_url'] = esc_url_raw( $card['image_url'] );
             }
