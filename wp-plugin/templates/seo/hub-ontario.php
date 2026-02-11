@@ -88,12 +88,12 @@ if ( ! defined( 'ABSPATH' ) ) {
                             <?php echo esc_html( $obit->name ); ?>
                         </a>
                     </h3>
+                    <?php // v3.13.3: Date removed from listing cards per owner request. ?>
+                    <?php if ( ! empty( $obit->location ) ) : ?>
                     <p style="color: #666; margin: 5px 0;">
-                        <?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obit->date_of_death ) ) ); ?>
-                        <?php if ( ! empty( $obit->location ) ) : ?>
-                            &mdash; <?php echo esc_html( $obit->location ); ?>
-                        <?php endif; ?>
+                        <?php echo esc_html( $obit->location ); ?>
                     </p>
+                    <?php endif; ?>
                     <?php if ( ! empty( $obit->funeral_home ) ) : ?>
                         <p style="color: #888; font-size: 0.9em;"><?php echo esc_html( $obit->funeral_home ); ?></p>
                     <?php endif; ?>

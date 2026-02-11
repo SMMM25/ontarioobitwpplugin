@@ -129,15 +129,11 @@ $site_url = get_site_url();
 
                         <h3 class="ontario-obituaries-name"><?php echo esc_html( $obituary->name ); ?></h3>
 
-                        <div class="ontario-obituaries-dates">
-                            <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
-                                <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_birth ) ) ); ?> &ndash; </span>
-                            <?php endif; ?>
-                            <span><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $obituary->date_of_death ) ) ); ?></span>
-                            <?php if ( ! empty( $obituary->age ) ) : ?>
-                                <span>(<?php echo esc_html( $obituary->age ); ?> <?php esc_html_e( 'years', 'ontario-obituaries' ); ?>)</span>
-                            <?php endif; ?>
-                        </div>
+                        <?php
+                        // v3.13.3: Dates removed from listing cards per owner request.
+                        // Dates are still available on the individual obituary detail page
+                        // (next to the provenance line) for reference.
+                        ?>
 
                         <div class="ontario-obituaries-description">
                             <p><?php echo esc_html( wp_trim_words( $obituary->description, 30, '...' ) ); ?></p>
