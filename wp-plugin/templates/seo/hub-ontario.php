@@ -84,7 +84,17 @@ if ( ! defined( 'ABSPATH' ) ) {
                 $city_slug = ! empty( $city_raw ) ? sanitize_title( $city_raw ) : 'ontario';
                 $name_slug = sanitize_title( $obit->name ) . '-' . $obit->id;
             ?>
-                <div class="ontario-obituary-card" style="background: #fff; border: 1px solid #f0f0f0; border-radius: 12px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); transition: all 0.25s ease;">
+                <div class="ontario-obituary-card" style="background: #fff; border: 1px solid #f0f0f0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06); transition: all 0.25s ease; display: flex; flex-direction: column;">
+                    <?php if ( ! empty( $obit->image_url ) ) : ?>
+                    <div style="height: 200px; overflow: hidden; background: #f7f7f7;">
+                        <img src="<?php echo esc_url( $obit->image_url ); ?>"
+                             alt="<?php echo esc_attr( sprintf( __( 'Photo of %s', 'ontario-obituaries' ), $obit->name ) ); ?>"
+                             loading="lazy"
+                             style="width: 100%; height: 100%; object-fit: cover;">
+                    </div>
+                    <?php endif; ?>
+
+                    <div style="padding: 24px; flex: 1; display: flex; flex-direction: column;">
                     <h3 style="margin-top: 0; margin-bottom: 10px; font-family: 'Cardo', Georgia, serif; font-size: 20px; line-height: 1.3;">
                         <a href="<?php echo esc_url( home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' ) ); ?>"
                            style="text-decoration: none; color: #232323;">
@@ -104,6 +114,7 @@ if ( ! defined( 'ABSPATH' ) ) {
                         <a href="<?php echo esc_url( home_url( '/obituaries/ontario/' . $city_slug . '/' . $name_slug . '/' ) ); ?>" style="font-size: 13px; color: #2c3e50; text-decoration: none; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;">
                             <?php esc_html_e( 'Read More', 'ontario-obituaries' ); ?> &rarr;
                         </a>
+                    </div>
                     </div>
                 </div>
             <?php endforeach; ?>

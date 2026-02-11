@@ -319,7 +319,7 @@ class Ontario_Obituaries_Source_Collector {
         // Check all records with the same death date for a name match
         if ( $existing ) {
             $candidates = $wpdb->get_results( $wpdb->prepare(
-                "SELECT id, name, description, source_url, funeral_home, city_normalized, location, image_url FROM `{$table_name}`
+                "SELECT id, name, description, source_url, funeral_home, city_normalized, location, image_url, date_of_birth, age FROM `{$table_name}`
                  WHERE date_of_death = %s
                    AND suppressed_at IS NULL",
                 $record['date_of_death']
@@ -364,6 +364,16 @@ class Ontario_Obituaries_Source_Collector {
                     // v3.7.0: Fill empty image_url from duplicate
                     if ( empty( $candidate->image_url ) && ! empty( $record['image_url'] ) ) {
                         $update_data['image_url'] = $record['image_url'];
+                    }
+
+                    // v3.14.1: Fill empty date_of_birth from duplicate
+                    if ( ( empty( $candidate->date_of_birth ) || '0000-00-00' === $candidate->date_of_birth ) && ! empty( $record['date_of_birth'] ) ) {
+                        $update_data['date_of_birth'] = $record['date_of_birth'];
+                    }
+
+                    // v3.14.1: Update age if existing is 0 and new has a value
+                    if ( ( empty( $candidate->age ) || 0 === intval( $candidate->age ) ) && ! empty( $record['age'] ) && intval( $record['age'] ) > 0 ) {
+                        $update_data['age'] = intval( $record['age'] );
                     }
 
                     if ( ! empty( $update_data ) ) {

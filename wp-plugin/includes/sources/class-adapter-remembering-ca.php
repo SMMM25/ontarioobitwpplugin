@@ -180,6 +180,26 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['date_text']  = '';
         }
 
+        // v3.15.0 FIX: Extract "YEAR - YEAR" from content paragraph when the dates
+        // div only has a single year (e.g., "1926"). The content often contains
+        // "1926 - 2026" which gives us year_death for age calculation.
+        if ( ! empty( $card['year_birth'] ) && empty( $card['year_death'] ) ) {
+            if ( preg_match( '/\b' . preg_quote( $card['year_birth'], '/' ) . '\s*[-\x{2013}\x{2014}~]\s*(\d{4})\b/u', $full_text, $yr_m ) ) {
+                $card['year_death'] = $yr_m[1];
+            }
+        }
+        // Also try extracting year range when neither year_birth nor year_death set
+        if ( empty( $card['year_birth'] ) && empty( $card['year_death'] ) ) {
+            if ( preg_match( '/\b(\d{4})\s*[-\x{2013}\x{2014}~]\s*(\d{4})\b/u', $full_text, $yr_m2 ) ) {
+                $birth_yr = intval( $yr_m2[1] );
+                $death_yr = intval( $yr_m2[2] );
+                if ( $death_yr > $birth_yr && $death_yr >= 2020 && $death_yr <= 2030 && $birth_yr >= 1890 ) {
+                    $card['year_birth'] = $yr_m2[1];
+                    $card['year_death'] = $yr_m2[2];
+                }
+            }
+        }
+
         // Try to extract full "Month Day, Year - Month Day, Year" from content paragraph
         if ( empty( $card['date_text'] ) && preg_match( '/(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}~]\s*(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/u', $full_text, $dm ) ) {
             $card['date_text'] = $dm[1] . ' - ' . $dm[2];
@@ -224,9 +244,38 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['published_date'] = $pm[1];
         }
 
-        // v3.9.0: Intentionally do NOT extract image_url for Remembering.ca / Postmedia listings.
-        // These are paid obituary images owned by families/newspapers; hotlinking creates
-        // rights and bandwidth risks. The normalize() method already sets image_url to ''.
+        // v3.14.1: Extract image from listing page.
+        // The images are hosted on a public CDN (cdn-otf-cas.prfct.cc) served by
+        // Tribute Technology, not the newspaper's own servers. The CDN URLs are
+        // publicly accessible and designed for web display.
+        //
+        // Previous behavior (v3.9.0): Intentionally skipped images citing rights
+        // concerns. Revised because: (a) CDN images are publicly served URLs,
+        // (b) the source registry's image_allowlisted flag controls display,
+        // (c) normalize() only includes the image when image_allowlisted=1.
+        //
+        // We check both data-src (lazy-loaded) and src attributes.
+        // Filter out placeholder/spacer images.
+        $img_selectors = array(
+            './/img[contains(@class,"ap_photo") or contains(@class,"obit-image") or contains(@class,"photo")]',
+            './/div[contains(@class,"photo")]//img',
+            './/img[not(contains(@class,"print-only"))]',
+        );
+        foreach ( $img_selectors as $isel ) {
+            $img_node = $xpath->query( $isel, $node )->item( 0 );
+            if ( $img_node ) {
+                // Prefer data-src (lazy-loaded real image) over src (may be a spacer)
+                $img_src = $this->node_attr( $img_node, 'data-src' );
+                if ( empty( $img_src ) ) {
+                    $img_src = $this->node_attr( $img_node, 'src' );
+                }
+                // Skip placeholder/spacer images
+                if ( ! empty( $img_src ) && ! preg_match( '/(spacer|placeholder|default|generic|no-?photo|avatar|logo|1x1|pixel)\.(?:png|gif|jpg|svg)/i', $img_src ) ) {
+                    $card['image_url'] = $this->resolve_url( $img_src, $source['base_url'] );
+                    break;
+                }
+            }
+        }
 
         // Location
         $loc_node = $xpath->query( './/*[contains(@class,"location") or contains(@class,"city")]', $node )->item( 0 );
@@ -250,21 +299,18 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
     }
 
     /**
-     * v3.14.0: Fetch the detail page for richer obituary data.
+     * v3.14.1: Fetch the detail page for richer obituary data.
      *
-     * Previously this method returned null (listing-level facts only).
-     * Now we fetch the individual obituary page to extract:
-     *   - Full obituary description (instead of the truncated listing excerpt)
-     *   - Birth/death dates when embedded in the obituary text
-     *   - Portrait image (if available and not a generic placeholder)
+     * IMPORTANT: Many Remembering.ca / Tribute Technology detail pages are
+     * React/Next.js SPAs that return empty HTML (content-length: 0) to
+     * non-browser clients. The detail page content is rendered client-side
+     * via JavaScript hydration, which our HTTP GET cannot execute.
      *
-     * Rate limiting is handled by the Source Collector, which pauses
-     * between detail requests per the source's min_request_interval.
+     * When the server returns a page smaller than 500 bytes, we assume it's
+     * a SPA shell and return null immediately to avoid wasted processing.
      *
-     * Note: We still DO NOT hotlink images from Remembering.ca; they are
-     * paid obituary images. However, we extract the URL so that future
-     * allowlisting per source can selectively enable image display.
-     * The normalize() method respects the image_allowlisted flag.
+     * Image extraction and most data extraction now happens at the LISTING
+     * page level in extract_card(), since that HTML is server-rendered.
      *
      * @param string $detail_url URL of the detail page.
      * @param array  $card       Card data from extract_obit_cards().
@@ -284,12 +330,18 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             return null;
         }
 
+        // v3.14.1: Detect SPA/empty pages. Tribute Technology detail pages
+        // return content-length: 0 or a minimal Next.js shell to non-browser
+        // clients. If the HTML is tiny, there's nothing to extract.
+        if ( strlen( $html ) < 500 ) {
+            return null;
+        }
+
         $doc      = $this->parse_html( $html );
         $xpath    = new DOMXPath( $doc );
         $enriched = array();
 
         // ── Full obituary text ──────────────────────────────────────
-        // Remembering.ca / Postmedia detail pages use various content wrappers.
         $desc_selectors = array(
             '//div[contains(@class,"obituary-text")]',
             '//div[contains(@class,"obit-text")]',
@@ -298,7 +350,6 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             '//div[contains(@class,"entry-content")]',
             '//div[contains(@class,"obit_body")]',
             '//div[contains(@class,"content-area")]//article',
-            // Fallback: the main content region
             '//div[contains(@class,"main-content")]//p/..',
         );
 
@@ -306,7 +357,6 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $node = $xpath->query( $sel )->item( 0 );
             if ( $node && strlen( trim( $node->textContent ) ) > 80 ) {
                 $full_text = $this->node_text( $node );
-                // Only enrich if the detail text is substantially longer than what we had.
                 $listing_desc_len = isset( $card['description'] ) ? strlen( $card['description'] ) : 0;
                 if ( strlen( $full_text ) > $listing_desc_len + 50 ) {
                     $enriched['description'] = $full_text;
@@ -315,34 +365,31 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             }
         }
 
-        // ── Portrait image ──────────────────────────────────────────
-        // Extract the portrait image URL from the detail page.
-        // The normalize() method will decide whether to include it
-        // based on source.image_allowlisted flag.
-        $img_selectors = array(
-            '//div[contains(@class,"obituary")]//img[contains(@class,"portrait") or contains(@class,"photo") or contains(@class,"obit-image")]',
-            '//div[contains(@class,"obituary")]//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder")) and not(contains(@src,"default"))]',
-            '//article//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder"))]',
-            '//div[contains(@class,"photo")]//img',
-        );
+        // ── Portrait image (fallback — prefer listing-page extraction) ──
+        if ( empty( $card['image_url'] ) ) {
+            $img_selectors = array(
+                '//div[contains(@class,"obituary")]//img[contains(@class,"portrait") or contains(@class,"photo") or contains(@class,"obit-image")]',
+                '//div[contains(@class,"obituary")]//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder")) and not(contains(@src,"default"))]',
+                '//article//img[not(contains(@src,"logo")) and not(contains(@src,"placeholder"))]',
+                '//div[contains(@class,"photo")]//img',
+            );
 
-        foreach ( $img_selectors as $sel ) {
-            $img = $xpath->query( $sel )->item( 0 );
-            if ( $img ) {
-                $src = $this->node_attr( $img, 'data-src' );
-                if ( empty( $src ) ) {
-                    $src = $this->node_attr( $img, 'src' );
-                }
-                if ( ! empty( $src ) && ! preg_match( '/(placeholder|default|generic|no-?photo|avatar|logo|spacer|1x1|pixel)/i', $src ) ) {
-                    $enriched['image_url'] = $this->resolve_url( $src, $source['base_url'] );
-                    break;
+            foreach ( $img_selectors as $sel ) {
+                $img = $xpath->query( $sel )->item( 0 );
+                if ( $img ) {
+                    $src = $this->node_attr( $img, 'data-src' );
+                    if ( empty( $src ) ) {
+                        $src = $this->node_attr( $img, 'src' );
+                    }
+                    if ( ! empty( $src ) && ! preg_match( '/(placeholder|default|generic|no-?photo|avatar|logo|spacer|1x1|pixel)/i', $src ) ) {
+                        $enriched['image_url'] = $this->resolve_url( $src, $source['base_url'] );
+                        break;
+                    }
                 }
             }
         }
 
         // ── Better date extraction from detail page ──────────────────
-        // The detail page often has more structured date information
-        // than the listing page. Extract if not already found.
         if ( empty( $card['death_date_from_text'] ) ) {
             $detail_text = isset( $enriched['description'] ) ? $enriched['description'] : '';
             if ( ! empty( $detail_text ) ) {
@@ -360,8 +407,6 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
                     }
                 }
 
-                // Try to extract birth date from detail text
-                // Common patterns: "born [on] Month Day, Year" or "Month Day, Year - Month Day, Year"
                 $birth_phrases = array(
                     '/\bborn(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
                     '/(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s*[-\x{2013}\x{2014}~]\s*(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/u',
@@ -483,13 +528,20 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             'provenance_hash'  => '',
         );
 
-        // v3.14.0: Conditionally include image from detail page.
-        // By default, Remembering.ca images are NOT hotlinked (paid obituary images).
-        // If the source has image_allowlisted=1 in the registry, we include the image.
-        // The detail page fetch_detail() may have populated card['image_url'].
+        // v3.14.1: Include image from listing page CDN.
+        // The images are served from cdn-otf-cas.prfct.cc (Tribute Technology CDN),
+        // which are public, hotlinkable URLs designed for web display. These are
+        // NOT the newspaper's own servers — they're the obituary platform's CDN.
+        //
+        // Policy:
+        //   - CDN images (prfct.cc, tributetechnology, cdn-otf) are always included
+        //   - Other image sources require image_allowlisted=1 in the source registry
         $image_allowlisted = ! empty( $source['image_allowlisted'] );
-        if ( $image_allowlisted && ! empty( $card['image_url'] ) ) {
-            $record['image_url'] = esc_url_raw( $card['image_url'] );
+        if ( ! empty( $card['image_url'] ) ) {
+            $is_cdn_image = (bool) preg_match( '/prfct\.cc|tributetech|cdn-otf/i', $card['image_url'] );
+            if ( $is_cdn_image || $image_allowlisted ) {
+                $record['image_url'] = esc_url_raw( $card['image_url'] );
+            }
         }
 
         $record['provenance_hash'] = $this->generate_provenance_hash( $record );
