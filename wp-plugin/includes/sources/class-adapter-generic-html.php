@@ -116,6 +116,9 @@ class Ontario_Obituaries_Adapter_Generic_HTML extends Ontario_Obituaries_Source_
         $dates = $this->parse_date_range( isset( $card['date_text'] ) ? $card['date_text'] : '' );
 
         $name          = isset( $card['name'] ) ? sanitize_text_field( $card['name'] ) : '';
+        // v3.17.0 FIX: Strip trailing 'Obituary' / 'Obit' suffix from names
+        $name = preg_replace( '/\s+Obituary$/i', '', $name );
+        $name = preg_replace( '/\s+Obit\.?$/i', '', $name );
         $date_of_death = ! empty( $dates['death'] ) ? $dates['death'] : '';
         $date_of_birth = ! empty( $dates['birth'] ) ? $dates['birth'] : '';
         $funeral_home  = ! empty( $card['funeral_home'] ) ? sanitize_text_field( $card['funeral_home'] ) : ( isset( $source['name'] ) ? $source['name'] : '' );

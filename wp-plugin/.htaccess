@@ -5,17 +5,37 @@
 Options -Indexes
 
 # Block direct access to PHP files except the main plugin file
+# Uses both Apache 2.2 and 2.4 syntax for maximum compatibility with LiteSpeed
 <Files *.php>
-    Order Deny,Allow
-    Deny from all
+    # Apache 2.4+
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    # Apache 2.2 / LiteSpeed fallback
+    <IfModule !mod_authz_core.c>
+        Order Deny,Allow
+        Deny from all
+    </IfModule>
 </Files>
 
 # Allow the main plugin file (loaded by WordPress)
 <Files "ontario-obituaries.php">
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 # Allow uninstall.php (used by WordPress during uninstall)
 <Files "uninstall.php">
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>

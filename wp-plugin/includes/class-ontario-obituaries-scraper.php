@@ -141,6 +141,12 @@ class Ontario_Obituaries_Scraper {
                         $results['regions'][ $region ]['complete']++;
                     }
 
+                    // v3.17.0 FIX: Strip trailing 'Obituary' / 'Obit' from names before
+                    // dedup check and INSERT to prevent near-duplicate records where
+                    // one source appends the suffix and another doesn't.
+                    $obituary['name'] = preg_replace( '/\s+Obituary$/i', '', $obituary['name'] );
+                    $obituary['name'] = preg_replace( '/\s+Obit\.?$/i', '', $obituary['name'] );
+
                     // P1-9 FIX: Fuzzy dedup (optional, runs BEFORE insert to prevent insertion)
                     if ( $this->fuzzy_dedupe && $this->check_for_duplicates( $obituary, $table_name ) ) {
                         ontario_obituaries_log( 'Fuzzy duplicate skipped: ' . $obituary['name'], 'info' );
@@ -580,6 +586,12 @@ class Ontario_Obituaries_Scraper {
         $results['obituaries_found']           += count( $obituaries );
 
         foreach ( $obituaries as $obituary ) {
+            // v3.17.0 FIX: Strip trailing 'Obituary' / 'Obit' from names
+            if ( isset( $obituary['name'] ) ) {
+                $obituary['name'] = preg_replace( '/\s+Obituary$/i', '', $obituary['name'] );
+                $obituary['name'] = preg_replace( '/\s+Obit\.?$/i', '', $obituary['name'] );
+            }
+
             // v3.6.0: Compute v3 columns for historical inserts
             $city_normalized = '';
             if ( ! empty( $obituary['location'] ) ) {

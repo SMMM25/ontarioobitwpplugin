@@ -43,8 +43,10 @@ class Ontario_Obituaries {
         // ARCH-01: single admin menu registration point
         add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
 
-        // Shortcode
+        // Shortcode (v3.17.0: also register [obituaries] alias for compatibility
+        // with Elementor pages that use the short form)
         add_shortcode( 'ontario_obituaries', array( $this, 'render_shortcode' ) );
+        add_shortcode( 'obituaries', array( $this, 'render_shortcode' ) );
 
         // Assets
         add_action( 'wp_enqueue_scripts',    array( $this, 'enqueue_scripts' ) );
