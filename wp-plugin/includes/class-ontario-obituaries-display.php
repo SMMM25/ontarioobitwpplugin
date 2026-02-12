@@ -196,6 +196,17 @@ class Ontario_Obituaries_Display {
         }
 
         $results = $wpdb->get_results( $query );
+
+        // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix from display names.
+        // Existing DB records may still carry the suffix until the dedup sweep
+        // updates them, so we clean at display time as a safety net.
+        if ( $results ) {
+            foreach ( $results as $row ) {
+                $row->name = preg_replace( '/\s+Obituary$/i', '', $row->name );
+                $row->name = preg_replace( '/\s+Obit\.?$/i', '', $row->name );
+            }
+        }
+
         return $results ? $results : array();
     }
 
@@ -218,10 +229,18 @@ class Ontario_Obituaries_Display {
         }
 
         // v3.3.0: Exclude suppressed records from single lookups too
-        return $wpdb->get_row( $wpdb->prepare(
+        $row = $wpdb->get_row( $wpdb->prepare(
             "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
+
+        // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix at display time
+        if ( $row ) {
+            $row->name = preg_replace( '/\s+Obituary$/i', '', $row->name );
+            $row->name = preg_replace( '/\s+Obit\.?$/i', '', $row->name );
+        }
+
+        return $row;
     }
 
     /**

@@ -124,7 +124,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
     <section class="ontario-obituaries-services" style="margin-top: 48px; padding: 32px; background: linear-gradient(135deg, #f0f4f8 0%, #e8eef5 100%); border-radius: 12px; border-left: 4px solid #2c3e50;">
         <h2 style="font-family: 'Cardo', Georgia, serif; font-size: 26px; margin-top: 0; margin-bottom: 12px; color: #232323;"><?php esc_html_e( 'Monaco Monuments — Personalized Memorials in Newmarket', 'ontario-obituaries' ); ?></h2>
-        <p style="color: #555; line-height: 1.7; margin-bottom: 12px;"><?php esc_html_e( 'Located at 109 Harry Walker Pkwy S, Newmarket, Ontario, Monaco Monuments creates unique, one-of-a-kind monuments and memorials meant to be cherished for eternity. We serve families throughout York Region and Southern Ontario.', 'ontario-obituaries' ); ?></p>
+        <p style="color: #555; line-height: 1.7; margin-bottom: 12px;"><?php esc_html_e( 'Located at 1190 Twinney Dr. Unit #8, Newmarket, Ontario, Monaco Monuments creates unique, one-of-a-kind monuments and memorials meant to be cherished for eternity. We serve families throughout York Region and Southern Ontario.', 'ontario-obituaries' ); ?></p>
         <p style="color: #888; font-size: 13px; margin-bottom: 20px;">
             <?php esc_html_e( 'Serving: Newmarket, Aurora, Richmond Hill, Markham, Vaughan, King City, Stouffville, Barrie, and all of Southern Ontario.', 'ontario-obituaries' ); ?>
         </p>
@@ -135,8 +135,8 @@ if ( ! defined( 'ABSPATH' ) ) {
             <a href="https://monacomonuments.ca/contact/" style="color: #2c3e50; text-decoration: none; font-weight: 500; font-size: 14px;">
                 <?php esc_html_e( 'Contact Us', 'ontario-obituaries' ); ?> &rarr;
             </a>
-            <a href="tel:+19058986262" style="color: #2c3e50; text-decoration: none; font-weight: 500; font-size: 14px;">
-                <?php esc_html_e( '(905) 898-6262', 'ontario-obituaries' ); ?>
+            <a href="tel:+19053920778" style="color: #2c3e50; text-decoration: none; font-weight: 500; font-size: 14px;">
+                <?php esc_html_e( '(905) 392-0778', 'ontario-obituaries' ); ?>
             </a>
         </div>
     </section>

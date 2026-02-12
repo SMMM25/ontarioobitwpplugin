@@ -322,7 +322,7 @@ if ( $render_elementor_footer && $use_elementor && $footer_id > 0 ) {
 
 if ( ! $footer_rendered ) {
     echo '<footer class="ontario-obituaries-fallback-footer" style="background:#2c3e50;color:#ecf0f1;padding:20px;text-align:center;font-size:0.85em;margin-top:40px;">';
-    echo '<p>&copy; ' . esc_html( gmdate( 'Y' ) ) . ' <a href="https://monacomonuments.ca" style="color:#ecf0f1;">Monaco Monuments</a> &mdash; 109 Harry Walker Pkwy S, Newmarket, ON L3Y 7B3 &mdash; (905) 898-6262</p>';
+    echo '<p>&copy; ' . esc_html( gmdate( 'Y' ) ) . ' <a href="https://monacomonuments.ca" style="color:#ecf0f1;">Monaco Monuments</a> &mdash; 1190 Twinney Dr. Unit #8, Newmarket, ON &mdash; (905) 392-0778</p>';
     echo '</footer>';
 }
 ?>

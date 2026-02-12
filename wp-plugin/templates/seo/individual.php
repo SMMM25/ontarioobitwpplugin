@@ -163,7 +163,7 @@ if ( $birth_display && $death_display ) {
             <p class="ontario-cta-subtitle"><?php esc_html_e( 'Monaco Monuments, Newmarket', 'ontario-obituaries' ); ?></p>
             <p class="ontario-cta-desc"><?php esc_html_e( 'Each monument we create is unique, a one-of-a-kind celebration of life meant to be cherished for eternity. Serving families in York Region, Newmarket, Aurora, Richmond Hill, and throughout Southern Ontario.', 'ontario-obituaries' ); ?></p>
             <p class="ontario-cta-address">
-                <?php esc_html_e( '109 Harry Walker Pkwy S, Newmarket, ON L3Y 7B3', 'ontario-obituaries' ); ?> &bull; <?php esc_html_e( '(905) 898-6262', 'ontario-obituaries' ); ?>
+                <?php esc_html_e( '1190 Twinney Dr. Unit #8, Newmarket, ON', 'ontario-obituaries' ); ?> &bull; <?php esc_html_e( '(905) 392-0778', 'ontario-obituaries' ); ?>
             </p>
             <div class="ontario-cta-buttons">
                 <a href="https://monacomonuments.ca/contact/" class="ontario-cta-btn-primary">
