@@ -288,12 +288,16 @@ function monaco_output_localbusiness_schema() {
 add_action( 'wp_head', 'monaco_output_localbusiness_schema', 3 );
 
 // ─────────────────────────────────────────────
-// 9. REDIRECT /ontario-obituaries/ → /obituaries/
-//    (Duplicate content fix)
+// 9. REDIRECT /obituaries/ → /ontario-obituaries/
+//    The /obituaries/ page is a blank Elementor placeholder.
+//    The real shortcode listing lives at /ontario-obituaries/.
+//    Also redirect the old /ontario-obituaries/ slug kept for
+//    backwards compatibility via the SEO hub (/obituaries/ontario/).
 // ─────────────────────────────────────────────
 function monaco_redirect_duplicate_obituaries() {
-    if ( is_page( 'ontario-obituaries' ) ) {
-        wp_safe_redirect( home_url( '/obituaries/' ), 301 );
+    // /obituaries/ Elementor page → real listing page
+    if ( is_page( 'obituaries' ) && ! get_query_var( 'ontario_obituaries_hub' ) && ! get_query_var( 'ontario_obituaries_seo' ) ) {
+        wp_safe_redirect( home_url( '/ontario-obituaries/' ), 301 );
         exit;
     }
 }
