@@ -127,7 +127,7 @@ if ( ! defined( 'ABSPATH' ) ) {
             esc_html( $city_name )
         ); ?></p>
         <p style="color: #888; font-size: 13px; margin-bottom: 20px;">
-            <?php esc_html_e( '109 Harry Walker Pkwy S, Newmarket, ON L3Y 7B3 | (905) 898-6262', 'ontario-obituaries' ); ?>
+            <?php esc_html_e( '1190 Twinney Dr. Unit #8, Newmarket, ON | (905) 392-0778', 'ontario-obituaries' ); ?>
         </p>
         <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
             <a href="https://monacomonuments.ca/contact/" style="display: inline-block; padding: 12px 28px; background: #2c3e50; color: #fff; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;">
@@ -136,7 +136,7 @@ if ( ! defined( 'ABSPATH' ) ) {
             <a href="https://monacomonuments.ca/catalog/" style="color: #2c3e50; text-decoration: none; font-weight: 500; font-size: 14px;">
                 <?php esc_html_e( 'View Our Catalog', 'ontario-obituaries' ); ?> &rarr;
             </a>
-            <a href="tel:+19058986262" style="color: #2c3e50; text-decoration: none; font-weight: 500; font-size: 14px;">
+            <a href="tel:+19053920778" style="color: #2c3e50; text-decoration: none; font-weight: 500; font-size: 14px;">
                 <?php esc_html_e( 'Call Us', 'ontario-obituaries' ); ?>
             </a>
         </div>

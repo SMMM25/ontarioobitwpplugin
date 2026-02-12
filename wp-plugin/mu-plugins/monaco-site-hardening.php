@@ -33,7 +33,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // 1. SECURITY HEADERS
 // ─────────────────────────────────────────────
 function monaco_send_security_headers() {
-    if ( headers_sent() || is_admin() ) {
+    if ( headers_sent() ) {
         return;
     }
     header( 'X-Content-Type-Options: nosniff' );
@@ -53,22 +53,10 @@ add_action( 'send_headers', 'monaco_send_security_headers' );
 remove_action( 'wp_head', 'wp_generator' );
 add_filter( 'the_generator', '__return_empty_string' );
 
-// Also strip version from RSS feeds
-add_filter( 'the_generator', function() { return ''; } );
-
-// Remove version query strings from scripts/styles (optional — helps with caching)
-function monaco_remove_version_qs( $src ) {
-    if ( strpos( $src, 'ver=' ) ) {
-        $src = remove_query_arg( 'ver', $src );
-    }
-    return $src;
-}
-add_filter( 'style_loader_src', 'monaco_remove_version_qs', 999 );
-add_filter( 'script_loader_src', 'monaco_remove_version_qs', 999 );
-
 // ─────────────────────────────────────────────
 // 3. DISABLE XML-RPC
 // ─────────────────────────────────────────────
+// NOTE: If you ever need the WordPress mobile app or Jetpack, comment out this line.
 add_filter( 'xmlrpc_enabled', '__return_false' );
 
 // Remove the XML-RPC link from <head>
@@ -90,7 +78,7 @@ add_filter( 'rest_endpoints', 'monaco_restrict_rest_users' );
 // Block ?author=N enumeration too
 function monaco_block_author_enum() {
     if ( ! is_admin() && isset( $_GET['author'] ) && ! current_user_can( 'manage_options' ) ) {
-        wp_safe_redirect( home_url(), 301 );
+        wp_safe_redirect( home_url(), 302 );
         exit;
     }
 }
@@ -185,6 +173,10 @@ function monaco_output_opengraph_tags() {
     if ( get_query_var( 'ontario_obituaries_hub' ) ) {
         return;
     }
+    // Skip 404 pages (no meaningful URL or content to share)
+    if ( is_404() ) {
+        return;
+    }
 
     $site_name   = 'Monaco Monuments';
     $title       = wp_get_document_title();
@@ -248,32 +240,30 @@ function monaco_output_localbusiness_schema() {
         'name'        => 'Monaco Monuments',
         'description' => 'Custom headstones, monuments, and memorials crafted with compassion for Ontario families.',
         'url'         => home_url( '/' ),
-        'telephone'   => '', // Add your phone number here, e.g. '+1-905-555-1234'
+        'telephone'   => '+1-905-392-0778',
         'address'     => array(
             '@type'           => 'PostalAddress',
+            'streetAddress'   => '1190 Twinney Dr. Unit #8',
+            'addressLocality' => 'Newmarket',
             'addressRegion'   => 'ON',
             'addressCountry'  => 'CA',
-            // Uncomment and fill in when ready:
-            // 'streetAddress'   => '123 Main Street',
-            // 'addressLocality' => 'Newmarket',
-            // 'postalCode'      => 'L3Y 1A1',
+            // 'postalCode'   => 'L3Y 9E3', // Uncomment when confirmed
         ),
-        'geo'         => array(
+        'geo' => array(
             '@type'     => 'GeoCoordinates',
-            // Uncomment and fill in your coordinates:
-            // 'latitude'  => '44.0592',
-            // 'longitude' => '-79.4613',
+            'latitude'  => '44.063462',
+            'longitude' => '-79.427102',
         ),
         'areaServed'  => array(
             '@type' => 'State',
             'name'  => 'Ontario',
         ),
         'priceRange'  => '$$',
-        'sameAs'      => array(
-            // Add your social media URLs here:
-            // 'https://www.facebook.com/monacomonuments',
-            // 'https://www.instagram.com/monacomonuments',
-        ),
+        // Uncomment and add your social media URLs:
+        // 'sameAs' => array(
+        //     'https://www.facebook.com/monacomonuments',
+        //     'https://www.instagram.com/monacomonuments',
+        // ),
     );
 
     // Try to get logo

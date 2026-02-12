@@ -303,6 +303,14 @@ class Ontario_Obituaries_SEO {
             )
         );
 
+        // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix at display time
+        if ( $recent ) {
+            foreach ( $recent as $row ) {
+                $row->name = preg_replace( '/\s+Obituary$/i', '', $row->name );
+                $row->name = preg_replace( '/\s+Obit\.?$/i', '', $row->name );
+            }
+        }
+
         // v3.10.2 PR #24b: Store data in query vars for wrapper template.
         set_query_var( 'ontario_obituaries_seo_mode', 'hub-ontario' );
         set_query_var( 'ontario_obituaries_seo_data', array(
@@ -336,6 +344,14 @@ class Ontario_Obituaries_SEO {
             $per_page,
             $offset
         ) );
+
+        // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix at display time
+        if ( $obituaries ) {
+            foreach ( $obituaries as $row ) {
+                $row->name = preg_replace( '/\s+Obituary$/i', '', $row->name );
+                $row->name = preg_replace( '/\s+Obit\.?$/i', '', $row->name );
+            }
+        }
 
         $total = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(*) FROM `{$table}`
@@ -371,6 +387,12 @@ class Ontario_Obituaries_SEO {
             "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
+
+        // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix at display time
+        if ( $obituary ) {
+            $obituary->name = preg_replace( '/\s+Obituary$/i', '', $obituary->name );
+            $obituary->name = preg_replace( '/\s+Obit\.?$/i', '', $obituary->name );
+        }
 
         if ( ! $obituary ) {
             status_header( 404 );
@@ -744,19 +766,19 @@ class Ontario_Obituaries_SEO {
             'name'        => 'Monaco Monuments',
             'description' => 'Custom monuments and memorials serving families in Newmarket, York Region, and across Southern Ontario.',
             'url'         => 'https://monacomonuments.ca',
-            'telephone'   => '+1-905-898-6262',
+            'telephone'   => '+1-905-392-0778',
             'address'     => array(
                 '@type'           => 'PostalAddress',
-                'streetAddress'   => '109 Harry Walker Pkwy S',
+                'streetAddress'   => '1190 Twinney Dr. Unit #8',
                 'addressLocality' => 'Newmarket',
                 'addressRegion'   => 'ON',
-                'postalCode'      => 'L3Y 7B3',
+                'postalCode'      => 'L3Y 9E3',
                 'addressCountry'  => 'CA',
             ),
             'geo'         => array(
                 '@type'     => 'GeoCoordinates',
-                'latitude'  => 44.0440,
-                'longitude' => -79.4613,
+                'latitude'  => 44.063462,
+                'longitude' => -79.427102,
             ),
             'areaServed'  => array(
                 array( '@type' => 'City', 'name' => 'Newmarket, Ontario' ),
