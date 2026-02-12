@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.17.0
+ * Version: 3.17.1
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.17.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '3.17.1' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -554,6 +554,25 @@ function ontario_obituaries_cleanup_duplicates() {
         ontario_obituaries_log( sprintf( 'Backfilled city_normalized for %d records', $backfill_result ), 'info' );
     }
 
+    // v3.17.1: Strip trailing 'Obituary' / 'Obit' suffix from names in the DB.
+    // Uses simple LIKE + TRIM instead of REGEXP_REPLACE for MySQL 5.7 / MariaDB compat.
+    $name_cleaned = 0;
+    $obit_rows = $wpdb->get_results(
+        "SELECT id, name FROM `{$table}` WHERE (name LIKE '% Obituary' OR name LIKE '% Obit' OR name LIKE '% Obit.') AND suppressed_at IS NULL"
+    );
+    if ( ! empty( $obit_rows ) ) {
+        foreach ( $obit_rows as $orow ) {
+            $clean = preg_replace( '/\s+(Obituary|Obit\.?)$/i', '', $orow->name );
+            if ( $clean !== $orow->name ) {
+                $wpdb->update( $table, array( 'name' => $clean ), array( 'id' => $orow->id ) );
+                $name_cleaned++;
+            }
+        }
+        if ( $name_cleaned > 0 ) {
+            ontario_obituaries_log( sprintf( 'Stripped Obituary suffix from %d record names', $name_cleaned ), 'info' );
+        }
+    }
+
     // ── Pass 1: Exact duplicates (same name + date_of_death) ──────────
     $duplicates = $wpdb->get_results(
         "SELECT name, date_of_death, COUNT(*) as cnt
@@ -590,6 +609,38 @@ function ontario_obituaries_cleanup_duplicates() {
             // Re-run merge on all IDs in this fuzzy group
             $ids = wp_list_pluck( $group, 'id' );
             $removed += ontario_obituaries_merge_duplicate_ids( $table, $ids );
+        }
+    }
+
+    // ── Pass 3: Name-only duplicates (v3.17.1) ──────────────────────
+    // Catches duplicates scraped with different death dates or from
+    // sources that report slightly different dates for the same person.
+    // Groups by normalized name only; keeps the record with the longest
+    // description and most recent death date.
+    $all_rows_p3 = $wpdb->get_results(
+        "SELECT id, name, date_of_death FROM `{$table}` WHERE suppressed_at IS NULL ORDER BY id"
+    );
+
+    if ( ! empty( $all_rows_p3 ) ) {
+        $name_only_groups = array();
+        foreach ( $all_rows_p3 as $row ) {
+            $norm_name = ontario_obituaries_normalize_name( $row->name );
+            if ( strlen( $norm_name ) < 6 ) {
+                continue; // Skip very short names to avoid false positives
+            }
+            $name_only_groups[ $norm_name ][] = $row;
+        }
+
+        foreach ( $name_only_groups as $group ) {
+            if ( count( $group ) <= 1 ) {
+                continue;
+            }
+            $ids = wp_list_pluck( $group, 'id' );
+            $removed += ontario_obituaries_merge_duplicate_ids( $table, $ids );
+        }
+
+        if ( $removed > 0 ) {
+            ontario_obituaries_log( sprintf( 'Pass 3 (name-only): merged %d duplicate records', $removed ), 'info' );
         }
     }
 
