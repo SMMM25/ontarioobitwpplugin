@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.2.4
+ * Version: 4.2.5
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.2.4' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.2.5' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -2749,7 +2749,7 @@ function ontario_obituaries_on_plugin_update() {
             $text_death_date = '';
             foreach ( $death_phrases as $pattern ) {
                 if ( preg_match( $pattern, $row->description, $dm ) ) {
-                    $raw_date = trim( $dm[1] );
+                    $raw_date = preg_replace( '/\s+/', ' ', trim( $dm[1] ) );
                     $ts = strtotime( $raw_date );
                     if ( $ts ) {
                         $text_death_date = date( 'Y-m-d', $ts );
@@ -2825,6 +2825,105 @@ function ontario_obituaries_on_plugin_update() {
         );
 
         ontario_obituaries_log( 'v4.2.4: Death date cross-validation repair complete.', 'info' );
+    }
+
+    // ── v4.2.5: Re-run death date repair with whitespace fix ──
+    // v4.2.4 migration failed silently because PHP's strtotime("May 7,\n\n2024")
+    // ignores the year after newlines and returns the CURRENT year (2026).
+    // Fix: collapse \s+ to single space before strtotime(). This block is
+    // identical to v4.2.4 but with the preg_replace whitespace normalization.
+    if ( version_compare( $stored_version, '4.2.5', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $date_repairs = 0;
+
+        $rows = $wpdb->get_results(
+            "SELECT id, name, date_of_death, description FROM {$table} WHERE date_of_death != '' AND description != '' AND description IS NOT NULL"
+        );
+
+        $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+        $death_phrases = array(
+            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,8}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/isu',
+            '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/isu',
+            '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/isu',
+            '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/isu',
+            '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/isu',
+            '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/isu',
+            '/[Oo]n\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/isu',
+        );
+
+        $today = date( 'Y-m-d' );
+        foreach ( $rows as $row ) {
+            $text_death_date = '';
+            foreach ( $death_phrases as $pattern ) {
+                if ( preg_match( $pattern, $row->description, $dm ) ) {
+                    // v4.2.5 FIX: collapse newlines/whitespace before strtotime
+                    $raw_date = preg_replace( '/\s+/', ' ', trim( $dm[1] ) );
+                    $ts = strtotime( $raw_date );
+                    if ( $ts ) {
+                        $text_death_date = date( 'Y-m-d', $ts );
+                    }
+                    break;
+                }
+            }
+
+            if ( empty( $text_death_date ) ) {
+                continue;
+            }
+
+            $db_year   = intval( substr( $row->date_of_death, 0, 4 ) );
+            $text_year = intval( substr( $text_death_date, 0, 4 ) );
+
+            if ( $db_year !== $text_year && $text_death_date <= $today && $text_year >= 2018 ) {
+                $wpdb->update(
+                    $table,
+                    array( 'date_of_death' => $text_death_date ),
+                    array( 'id' => $row->id ),
+                    array( '%s' ),
+                    array( '%d' )
+                );
+                ontario_obituaries_log(
+                    sprintf(
+                        'v4.2.5: Fixed death date for "%s" (ID %d): %s → %s (whitespace-normalized text override).',
+                        $row->name, $row->id, $row->date_of_death, $text_death_date
+                    ),
+                    'info'
+                );
+                $date_repairs++;
+            }
+
+            if ( $db_year === $text_year && $row->date_of_death > $today ) {
+                if ( $text_death_date <= $today ) {
+                    $wpdb->update(
+                        $table,
+                        array( 'date_of_death' => $text_death_date ),
+                        array( 'id' => $row->id ),
+                        array( '%s' ),
+                        array( '%d' )
+                    );
+                    ontario_obituaries_log(
+                        sprintf(
+                            'v4.2.5: Fixed future death date for "%s" (ID %d): %s → %s.',
+                            $row->name, $row->id, $row->date_of_death, $text_death_date
+                        ),
+                        'info'
+                    );
+                    $date_repairs++;
+                }
+            }
+        }
+
+        if ( $date_repairs > 0 ) {
+            ontario_obituaries_log(
+                sprintf( 'v4.2.5: Repaired death dates for %d obituary records (whitespace-in-date fix).', $date_repairs ),
+                'info'
+            );
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        } else {
+            ontario_obituaries_log( 'v4.2.5: Death date re-check complete — no additional repairs needed.', 'info' );
+        }
+
+        ontario_obituaries_log( 'v4.2.5: Whitespace-normalized death date repair complete.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );

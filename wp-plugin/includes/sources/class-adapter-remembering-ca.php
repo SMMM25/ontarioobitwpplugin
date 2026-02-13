@@ -531,32 +531,34 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $month_p = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
 
             // Death date extraction — expanded patterns for v3.15.2
+            // v4.2.5: Added 's' (DOTALL) flag to all patterns so \s matches \n
+            // Source descriptions contain newlines mid-date ("May 7,\n\n2024")
             $death_patterns = array(
                 // "passed away/peacefully/suddenly [words] Month Day, Year"
-                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,5}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,5}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "peaceful passing of...on/at...Month Day, Year" (Betty Cudmore pattern)
-                '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "left us peacefully on Month Day, Year"
-                '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "entered into rest [on] Month Day, Year"
-                '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "died [peacefully] [at/in/on words] Month Day, Year" — up to 8 words
-                '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "went to be with the Lord on Month Day, Year" / "called home on ..."
-                '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/iu',
+                '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "on Friday, Month Day, Year, in his/her Nth year"
-                '/on\s+\w+,?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her)/iu',
+                '/on\s+\w+,?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her)/isu',
                 // v3.15.2: "On Month Day, Year [Name] passed away" (date before phrase)
-                // Example: "On January 2, 2026 Phil passed away surrounded by love"
-                '/[Oo]n\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/iu',
+                '/[Oo]n\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/isu',
                 // Date range in parens: (Month Day, Year - Month Day, Year)
-                '/\(' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})\)/u',
+                '/\(' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})\)/us',
                 // Date range without parens: "Month Day, Year - Month Day, Year"
-                '/' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})/u',
+                '/' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})/us',
             );
             foreach ( $death_patterns as $dp ) {
                 if ( preg_match( $dp, $desc_text, $dm ) ) {
-                    $detail['detail_death_date'] = trim( $dm[1] );
+                    // v4.2.5: collapse whitespace (newlines inside dates break strtotime)
+                    $detail['detail_death_date'] = preg_replace( '/\s+/', ' ', trim( $dm[1] ) );
                     break;
                 }
             }

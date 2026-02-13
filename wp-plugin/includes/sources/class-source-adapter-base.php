@@ -250,6 +250,11 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
 
         $date_string = trim( $date_string );
 
+        // v4.2.5 FIX: Collapse internal whitespace (newlines, double-spaces) BEFORE
+        // any parsing. Source descriptions often contain line-breaks mid-date like
+        // "May 7,\n\n2024" which causes strtotime() to ignore the year portion.
+        $date_string = preg_replace( '/\s+/', ' ', $date_string );
+
         // Already Y-m-d
         if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_string ) ) {
             return $date_string;
