@@ -256,13 +256,117 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #23 | **CLOSED** | — | Rejected: combined adapter + SEO + version bump (rule breach) |
 | #24 | Merged | `3590e1f` | fix(adapter): remove Jan-1 date fabrication, add death-date extraction |
 | #25 | Merged | `699c718` | fix(seo): template_include wrapper for correct header/footer |
+| #26-#45 | Merged | various | UI redesign, data enrichment, cron reliability, security hardening |
+| #46 | Merged | `b7266c8` | feat(v3.17.0): fix duplicates, wrong address, broken shortcode, security |
+| #47 | Merged | `9deb32e` | feat(v3.17.0): dedupe + shortcode alias + business schema |
+| #48 | Merged | `7971189` | fix(v3.17.1): aggressive dedup — name-only pass + DB name cleanup |
+| #49 | Merged | `a668581` | fix(urgent): remove [obituaries] shortcode alias — breaks Elementor page |
+| #50 | Merged | `f031ffa` | fix(urgent): reverse redirect direction + remove broken shortcode alias |
+| #51 | Merged | `d8c7d52` | fix(v3.17.2): performance optimization + location data cleanup |
 
 ---
 
-## PENDING WORK (priority order)
+## CURRENT STATE (as of 2026-02-13)
 
-1. **Cache purge + permalinks flush** — WP Admin, no code change
-2. **Version bump to v3.10.2** — Separate PR, plugin header + constant only
+### Plugin Version: **4.0.0** (sandbox — pending PR approval)
+### Live Site Version: **3.17.2** (monacomonuments.ca)
+
+### What's Working (Live)
+- Source collector pipeline with remembering_ca adapter (yorkregion.com — 1 active source)
+- 124 obituaries in database, displaying correctly on /ontario-obituaries/
+- Cron runs every 12h (last: 2026-02-13 03:10:38)
+- MU-plugin v2.1.0 (monaco-site-hardening.php) — performance + security
+- WooCommerce asset dequeue (3 scripts/CSS removed)
+- SEO pages, schema, sitemaps functional
+- LiteSpeed cache with tag-based purge
+- Suppression/removal system
+
+### What v4.0.0 Changes (Sandbox — Awaiting Approval)
+- **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
+- Version bump: 3.17.2 → 4.0.0 (header + constant)
+- Migration block in on_plugin_update() re-seeds registry + schedules background scrape
+- Total active sources: 1 → 7 (~175 obituaries per scrape cycle)
+- **Zero adapter code changes** — all 7 sites use identical HTML structure
+
+### Deployment Method
+- **WP Pusher** auto-deploys from `main` branch on merge
+- MU-plugin deployed manually via cPanel File Manager to wp-content/mu-plugins/
+
+### Source Registry Status (after v4.0.0 merge)
+- **Active (7):** obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com, obituaries.thespec.com, obituaries.simcoe.com, obituaries.niagarafallsreview.ca, obituaries.stcatharinesstandard.ca
+- **Disabled (22):** Legacy.com (403), Dignity Memorial (403), FrontRunner sites (JS-rendered), Arbor Memorial (JS shell)
+
+### Dedup Audit Results (2026-02-13)
+- Cross-source overlap: 25 obituaries appear on both niagarafallsreview.ca AND stcatharinesstandard.ca
+- Dedup catches them via normalize_name_for_dedup() + same date_of_death → enriches, doesn't duplicate
+- 3-pass dedup cleanup runs after every scrape: exact match → fuzzy match → name-only match
+- Unique key (name(100), date_of_death, funeral_home(100)) provides DB-level backup
+- **Verdict: NO doubles or triples will be created**
+
+---
+
+## ACTIVE ROADMAP: AI Memorial System (v4.x)
+
+### Phase 1: Expand Sources (v4.0.0)
+> Add 6 new Postmedia/Remembering.ca sources → ~175 obituaries per scrape
+
+| ID | Task | Status |
+|----|------|--------|
+| P1-1 | Add 6 new Postmedia sources to seed_defaults | **DONE** |
+| P1-2 | Test each source card extraction (all 7 return 25 cards) | **DONE** |
+| P1-3 | Rate limiting verified (2s/req, 5 pages max — pre-existing) | **DONE** |
+| P1-4 | Version bump to v4.0.0, migration block added | **DONE** |
+| P1-5 | Dedup audit: 6 checks passed, no doubles/triples possible | **DONE** |
+| P1-6 | PHP syntax check (29/29 pass), final code review | **DONE** |
+| P1-7 | Present PR for owner approval | **In Progress** |
+
+### Phase 2: AI Rewrite Engine (v4.1.0)
+> Free LLM rewrites every obituary into unique professional prose
+
+| ID | Task | Status |
+|----|------|--------|
+| P2-1 | Select free LLM API (Groq/Llama 3.1) | Pending |
+| P2-2 | Build class-ai-rewriter.php module | Pending |
+| P2-3 | Create fact-preserving prompt template | Pending |
+| P2-4 | Add validation layer (reject hallucinated facts) | Pending |
+| P2-5 | Integrate into scraper pipeline | Pending |
+| P2-6 | Store original + AI description in DB | Pending |
+
+### Phase 3: Memorial Pages (v4.2.0)
+> Auto-generated SEO memorial pages per obituary
+
+| ID | Task | Status |
+|----|------|--------|
+| P3-1 | Create 'memorial' custom post type | Pending |
+| P3-2 | Build memorial page template | Pending |
+| P3-3 | AI Tribute Writer (2-3 sentence tribute) | Pending |
+| P3-4 | Auto-create memorial post per obituary | Pending |
+| P3-5 | JSON-LD schema (Person + BurialEvent) | Pending |
+| P3-6 | IndexNow integration (instant Google/Bing) | Pending |
+| P3-7 | QR code generator per memorial page | Pending |
+| P3-8 | Soft CTA lead capture | Pending |
+
+### Phase 4: Security & Hardening (v4.3.0)
+| ID | Task | Status |
+|----|------|--------|
+| P4-1 | Block direct PHP file access in plugin dir | Pending |
+| P4-2 | Verify GitHub repo is private | Pending |
+| P4-3 | Domain lock (plugin only runs on monacomonuments.ca) | Pending |
+
+### Phase 5: Testing & Deployment
+| ID | Task | Status |
+|----|------|--------|
+| P5-1 | Full end-to-end test | Pending |
+| P5-2 | Build plugin ZIP (v4.x) | Pending |
+| P5-3 | Deploy to live site | Pending |
+| P5-4 | Create PR with full documentation | Pending |
+
+---
+
+## PENDING WORK (legacy — from pre-v3.17.0)
+
+1. ~~Cache purge + permalinks flush~~ — DONE
+2. ~~Version bump to v3.10.2~~ — Superseded by v3.17.2
 3. **Data repair** — Clean existing fabricated `YYYY-01-01` rows in DB
 4. **Schema/dedupe redesign** — Add `birth_year`/`death_year` columns, new unique key
 5. **Max-age audit** — Prevent pagination drift into old archive pages

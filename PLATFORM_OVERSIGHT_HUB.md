@@ -150,6 +150,37 @@ AI developers (GenSpark, Copilot, etc.) are held to the same standards:
 
 ---
 
+## RULE 12: Sandbox-First Development
+
+All new feature development MUST be built and tested in the sandbox environment
+before merging to the live site. The live site (monacomonuments.ca) is customer-facing
+and cannot tolerate downtime or regressions.
+
+1. **Build in sandbox** — All code changes happen in `/home/user/webapp/wp-plugin/`.
+2. **Test locally** — PHP syntax check all files, validate logic.
+3. **Present for approval** — Show the owner what the change does BEFORE committing.
+4. **Owner merges** — Only the repo owner clicks "Merge" on the PR.
+5. **Post-merge verify** — Check the live site after WP Pusher deploys.
+
+---
+
+## RULE 13: Mandatory Oversight Update on Every Commit
+
+After EVERY commit/merge, the developer MUST:
+
+1. **Update `DEVELOPER_LOG.md`** with:
+   - PR number and commit hash
+   - What changed (plain English)
+   - Current roadmap task status update
+2. **Update the roadmap status** in the ACTIVE ROADMAP section.
+3. **Post an explainer in chat** summarizing what was done.
+4. **Wait for owner approval** before pushing/creating PR.
+
+This ensures continuity across sessions — AI developers have limited memory and
+MUST rely on these documents to understand project state.
+
+---
+
 ## Architecture Quick Reference
 
 ```

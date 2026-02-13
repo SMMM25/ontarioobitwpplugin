@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 3.17.1
+ * Version: 4.0.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '3.17.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.0.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -2224,6 +2224,46 @@ function ontario_obituaries_on_plugin_update() {
                 'ontario_obituaries_collection_event'
             );
             ontario_obituaries_log( 'v3.16.1: Re-scheduled recurring collection cron.', 'info' );
+        }
+    }
+
+    // v4.0.0: Expand source coverage — 6 new Postmedia/Remembering.ca sources.
+    //
+    // New sources (all use existing remembering_ca adapter — zero code changes):
+    //   - obituaries.thestar.com (Toronto Star)
+    //   - obituaries.therecord.com (Kitchener-Waterloo Record)
+    //   - obituaries.thespec.com (Hamilton Spectator)
+    //   - obituaries.simcoe.com (Barrie / Simcoe County)
+    //   - obituaries.niagarafallsreview.ca (Niagara Falls Review)
+    //   - obituaries.stcatharinesstandard.ca (St. Catharines Standard)
+    //
+    // All confirmed reachable (HTTP 200) and parseable on 2026-02-13.
+    // Same Postmedia HTML structure as obituaries.yorkregion.com.
+    //
+    // Upgrade action: Re-seed source registry to add new sources.
+    // upsert_source() is idempotent — existing sources updated, new sources inserted.
+    // New sources default to enabled=1 (no explicit 'enabled' => 0 in seed data).
+    if ( version_compare( $stored_version, '4.0.0', '<' ) ) {
+        if ( class_exists( 'Ontario_Obituaries_Source_Registry' ) ) {
+            Ontario_Obituaries_Source_Registry::seed_defaults();
+
+            $stats = Ontario_Obituaries_Source_Registry::get_stats();
+            ontario_obituaries_log(
+                sprintf(
+                    'v4.0.0: Source registry re-seeded with 6 new Postmedia sources. '
+                    . 'Registry state: %d total, %d active, %d disabled.',
+                    intval( $stats['total'] ),
+                    intval( $stats['enabled'] ),
+                    intval( $stats['disabled'] )
+                ),
+                'info'
+            );
+        }
+
+        // Schedule a background scrape so new sources are collected promptly.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
+            wp_schedule_single_event( time() + 60, 'ontario_obituaries_initial_collection' );
+            ontario_obituaries_log( 'v4.0.0: Scheduled initial collection for new sources (60s delay).', 'info' );
         }
     }
 
