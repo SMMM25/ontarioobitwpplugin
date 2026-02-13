@@ -14,6 +14,117 @@ to prevent further breakage.
 
 ---
 
+## Section 0 — FULL PROJECT STATE SNAPSHOT (for AI memory)
+
+> **WHY THIS EXISTS**: AI developers have limited memory across sessions. This section
+> is the single source of truth for the current project state. It MUST be updated
+> after every deployment or significant change. Read this FIRST before doing any work.
+
+### Project Identity
+- **Plugin**: Ontario Obituaries (`ontario-obituaries.php`)
+- **Business**: Monaco Monuments (`monacomonuments.ca`) — headstone/monument company
+- **Goal**: Scrape Ontario obituaries, display them, generate memorial SEO pages
+  to drive organic traffic → headstone/monument sales
+- **Repo**: `github.com/SMMM25/ontarioobitwpplugin` (PRIVATE)
+- **WordPress theme**: Litho + Elementor page builder
+- **Cache**: LiteSpeed Cache (sole cache layer — W3 Total Cache MUST stay disabled)
+- **Hosting**: Shared hosting with cPanel, no SSH access, no WP-CLI
+- **Deployment**: Manual upload via cPanel File Manager (WP Pusher can't do private repos)
+
+### Current Versions (as of 2026-02-13)
+| Environment | Version | Notes |
+|-------------|---------|-------|
+| **Live site** | 4.0.0 | monacomonuments.ca — deployment pending |
+| **Main branch** | 4.2.1 | PR #52 merged |
+| **Sandbox / PR** | 4.2.2 | PR #53 open — city data repair |
+
+### Live Site Stats
+- **627 obituaries** displayed across 32 pagination pages
+- **7 active sources** (all Postmedia/Remembering.ca network):
+  - obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com,
+    obituaries.thespec.com, obituaries.simcoe.com, obituaries.niagarafallsreview.ca,
+    obituaries.stcatharinesstandard.ca
+- **22 disabled sources** (Legacy.com 403, Dignity Memorial 403, FrontRunner JS-only, etc.)
+- **Cron**: every 12h via `ontario_obituaries_collection_event`
+- **505 URLs** in sitemap (`/obituaries-sitemap.xml`)
+- **Pages**: `/ontario-obituaries/` (shortcode listing), `/obituaries/ontario/` (SEO hub),
+  `/obituaries/ontario/{city}/` (city hubs), `/obituaries/ontario/{city}/{name}-{id}/` (memorial pages)
+
+### What's Built But NOT Yet Live
+These features exist in code (PR #52 merged to main, PR #53 pending) but the live
+site is still on v4.0.0. They become active after cPanel deployment:
+
+| Feature | Version | Status |
+|---------|---------|--------|
+| Logo filter (rejects images < 15 KB) | v4.0.1 | In main, not deployed |
+| AI rewrite engine (Groq/Llama) | v4.1.0 | In main, needs API key |
+| BurialEvent JSON-LD schema | v4.2.0 | In main, not deployed |
+| IndexNow search engine notification | v4.2.0 | In main, not deployed |
+| QR code on memorial pages | v4.2.0 | In main, not deployed |
+| Lead capture form | v4.2.0 | In main, not deployed |
+| Domain lock | v4.2.0 | In main, not deployed |
+| QR API fix (Google → QR Server) | v4.2.1 | In main, not deployed |
+| Lead form AJAX handler | v4.2.1 | In main, not deployed |
+| City data quality repair | v4.2.2 | PR #53 open |
+| Sitemap ai_description fix | v4.2.2 | PR #53 open |
+| Hardened normalize_city() | v4.2.2 | PR #53 open |
+
+### AI Rewriter Status
+- **Code**: Complete (`class-ai-rewriter.php`)
+- **Activation**: REQUIRES Groq API key in `wp_options` → `ontario_obituaries_groq_api_key`
+- **Get key**: Free at https://console.groq.com (no credit card needed)
+- **Also required**: Set `ai_rewrite_enabled` to `true` in plugin settings
+- **What it does**: Rewrites scraped obituary text into original prose using Llama 3.3 70B
+- **Rate**: 25 per batch, 1 request per 6 seconds, auto-reschedules until caught up
+- **Copyright protection**: Until this is active, site displays original scraped text
+
+### Known Data Quality Issues (pre-existing, not caused by recent PRs)
+1. **Truncated/garbled city names** in `city_normalized` → fixed by v4.2.2 migration
+2. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
+3. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
+4. **Schema redesign needed** for records without death date → future work
+
+### Key Files to Know
+| File | What it does |
+|------|-------------|
+| `ontario-obituaries.php` | Main plugin file — activation, cron, dedup, migrations, version |
+| `includes/class-ontario-obituaries-seo.php` | SEO pages, sitemap, schema, virtual page routing |
+| `includes/class-ontario-obituaries-display.php` | Shortcode listing page rendering |
+| `includes/class-ai-rewriter.php` | AI rewrite engine (Groq API) |
+| `includes/class-indexnow.php` | IndexNow search engine notification |
+| `includes/class-ontario-obituaries-ajax.php` | AJAX handlers (lead capture, removal, etc.) |
+| `includes/sources/class-source-adapter-base.php` | Shared adapter logic (normalize_city, HTTP, dates) |
+| `includes/sources/class-adapter-remembering-ca.php` | Main adapter for all 7 active sources |
+| `includes/sources/class-source-collector.php` | Scrape pipeline orchestrator |
+| `templates/seo/individual.php` | Memorial page template (QR, lead form, CTA) |
+| `templates/obituaries.php` | Shortcode listing template |
+| `PLATFORM_OVERSIGHT_HUB.md` | THIS FILE — rules + project state |
+| `DEVELOPER_LOG.md` | Full version history + PR log + roadmap |
+
+### Database
+- **Table**: `{prefix}ontario_obituaries`
+- **Key columns**: id, name, date_of_birth, date_of_death, age, funeral_home,
+  location, image_url, description, **ai_description** (v4.1.0), source_url,
+  source_domain, source_type, city_normalized, provenance_hash, suppressed_at, created_at
+- **Unique key**: `(name(100), date_of_death, funeral_home(100))`
+- **Known limitation**: Records without `date_of_death` cannot be ingested
+
+### PR History (recent)
+| PR | Status | Version | What |
+|----|--------|---------|------|
+| #51 | Merged | v4.0.0 | 6 new Postmedia sources (1→7) |
+| #52 | Merged | v4.2.1 | AI Memorial System phases 1-4 + QA audit fixes |
+| #53 | Open | v4.2.2 | City data quality repair + sitemap fix |
+
+### Remaining Work (priority order)
+1. **Deploy v4.2.2** to live site (owner — cPanel upload)
+2. **Set Groq API key** to enable AI rewrites (owner — wp_options)
+3. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
+4. **Schema redesign**: Handle records without death date (developer — future PR)
+5. **Out-of-province filtering** (developer — low priority)
+
+---
+
 ## RULE 1: Read Before You Code
 
 Before making ANY change, you MUST:
@@ -457,3 +568,42 @@ to authorized domains only.
 - All AJAX form submissions MUST have a JavaScript handler — never submit
   directly to `admin-ajax.php` via `<form action>`.
 - Test all external API endpoints before deployment (curl -sI).
+
+---
+
+## Section 19 — City Data Quality Repair (v4.2.2)
+
+**Problem identified 2026-02-13**: The `city_normalized` column contained corrupted
+data from multiple sources:
+
+1. **Truncated names**: `Hamilt` (Hamilton), `Burlingt` (Burlington), `Sutt` (Sutton), etc.
+2. **Full street addresses**: `King Street East, Hamilton` stored as city name.
+3. **Garbled/encoded strings**: `q2l0eq`, `mself-__next_f-push1arkham`.
+4. **Biographical text**: `Jan was born in Toronto`, `Fred settled in Markham`.
+5. **Facility names**: `Sunrise of Unionville`, `St. Josephs Health Centre in Guelph`.
+6. **Typos**: `Kitchner` (Kitchener), `Stoiuffville` (Stouffville).
+7. **Out-of-province cities**: Calgary, Vancouver, San Diego (valid obituaries, just not Ontario).
+
+**Impact**: Bad city slugs in sitemap URLs (`/ontario/hamilt/`, `/ontario/q2l0eq/`),
+broken city hub pages, and poor SEO signals.
+
+**Fix (two-part)**:
+
+1. **Migration** (`v4.2.2` block in `on_plugin_update`): Multi-pass repair of
+   existing records — direct replacements, address extraction, garbled data clearing,
+   facility name removal, and general address cleanup.
+
+2. **Root-cause prevention** (`normalize_city()` in `class-source-adapter-base.php`):
+   Strengthened the normalization function to reject street addresses, garbled strings,
+   biographical text, and values > 40 chars. Includes a truncation-fix map for known
+   short forms. Future scrapes will store clean city names.
+
+**Sitemap fix**: The sitemap query now includes obituaries with `ai_description` > 100
+characters (previously only checked `description`), increasing Google indexation.
+
+**Rules for future city data**:
+- Always validate city_normalized before INSERT — it must be a real city name.
+- Never store street addresses, postal codes, or biographical text in city_normalized.
+- The `normalize_city()` function is the single source of truth for city cleanup.
+- If a city cannot be reliably extracted, store empty string (better than bad data).
+- Monitor the sitemap periodically: `curl -s https://monacomonuments.ca/obituaries-sitemap.xml | grep -oP '/ontario/[^/]+/' | sort -u`
