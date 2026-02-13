@@ -375,6 +375,9 @@ class Ontario_Obituaries_Scraper {
         $obituary['source_url']    = isset( $obituary['source_url'] ) ? esc_url_raw( $obituary['source_url'] ) : '';
         $obituary['description']   = isset( $obituary['description'] ) ? wp_kses_post( $obituary['description'] ) : '';
 
+        // v3.17.2 FIX: Sanitize location field — reject garbage data
+        $obituary['location'] = $this->sanitize_location( $obituary['location'] );
+
         // Normalize dates to Y-m-d
         $obituary['date_of_death'] = $this->validate_and_normalize_date( $obituary['date_of_death'] );
         $obituary['date_of_birth'] = $this->validate_and_normalize_date( $obituary['date_of_birth'] );
@@ -385,6 +388,84 @@ class Ontario_Obituaries_Scraper {
         }
 
         return $obituary;
+    }
+
+    /**
+     * Sanitize a location string — reject garbage data from broken scrapers.
+     *
+     * Catches:
+     *  - Base64-encoded strings (e.g. Q2l0eQ==)
+     *  - JSON/JS fragments (e.g. M"]self.__next_f.push)
+     *  - Full sentences parsed as city names (e.g. "Jan was born in Toronto")
+     *  - Street addresses mistakenly used as city (e.g. "123 Park Road North Brantford")
+     *  - Strings with special characters that aren't valid city names
+     *
+     * @param string $location Raw location string.
+     * @return string Cleaned city name or empty string.
+     */
+    private function sanitize_location( $location ) {
+        if ( empty( $location ) ) {
+            return '';
+        }
+
+        $location = trim( $location );
+
+        // Reject base64-encoded strings (all alphanumeric ending with = or ==)
+        if ( preg_match( '/^[A-Za-z0-9+\/]+=+$/', $location ) ) {
+            return '';
+        }
+
+        // Reject JSON/JS code fragments
+        if ( preg_match( '/[{}\[\]\(\);=<>]/', $location ) ) {
+            return '';
+        }
+
+        // Reject strings containing double quotes or HTML entities (JS/HTML fragments)
+        // NOTE: Single quotes (apostrophes) are allowed — valid in city names like St. John's
+        if ( preg_match( '/"|&quot;|&#039;/', $location ) ) {
+            return '';
+        }
+
+        // Reject full sentences — a city name is max ~4 words (e.g. "East Gwillimbury")
+        $word_count = str_word_count( $location );
+        if ( $word_count > 5 ) {
+            return '';
+        }
+
+        // Reject if it starts with a digit (street address like "123 Park Road North")
+        if ( preg_match( '/^\d/', $location ) ) {
+            return '';
+        }
+
+        // Reject if it contains common sentence words that aren't part of city names
+        // NOTE: ' of ' is intentionally excluded — valid places like "Sunrise of Unionville",
+        // "Bay of Quinte" contain it.
+        $sentence_markers = array( ' was ', ' is ', ' born ', ' died ', ' lived ', ' settled ', ' the ' );
+        $lower = strtolower( $location );
+        foreach ( $sentence_markers as $marker ) {
+            if ( false !== strpos( $lower, $marker ) ) {
+                return '';
+            }
+        }
+
+        // Reject known garbage single-word values that aren't cities
+        // (these come from scraper parsing errors — column names, form fields, etc.)
+        $garbage_words = array( 'executor', 'family', 'funeral_home', 'other', 'unknown', 'none', 'n/a', 'null', 'undefined' );
+        if ( in_array( $lower, $garbage_words, true ) ) {
+            return '';
+        }
+
+        // Reject values containing underscores (column names like funeral_home)
+        if ( false !== strpos( $location, '_' ) ) {
+            return '';
+        }
+
+        // Reject anything over 50 characters — no Ontario city is that long
+        if ( strlen( $location ) > 50 ) {
+            return '';
+        }
+
+        return $location;
     }
 
     /**

@@ -650,6 +650,69 @@ class Ontario_Obituaries_Source_Registry {
                 'region'       => 'Windsor',
                 'enabled'      => 0,
             ),
+
+            // ══════════════════════════════════════════════════════════════
+            // PRIORITY 4 — Postmedia / Remembering.ca Network (v4.0.0)
+            // Same HTML structure as obituaries.yorkregion.com. Uses the
+            // existing remembering_ca adapter with zero code changes.
+            // Confirmed reachable (HTTP 200) and parseable 2026-02-13.
+            // ══════════════════════════════════════════════════════════════
+
+            // Toronto Star — GTA's largest newspaper obituary section.
+            // ~26 obituaries per page, covers all of Greater Toronto.
+            array(
+                'domain'       => 'obituaries.thestar.com',
+                'name'         => 'Toronto Star Obituaries',
+                'base_url'     => 'https://obituaries.thestar.com/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'Greater Toronto Area',
+            ),
+            // Kitchener-Waterloo Record — Tri-cities region.
+            array(
+                'domain'       => 'obituaries.therecord.com',
+                'name'         => 'Waterloo Region Record Obituaries',
+                'base_url'     => 'https://obituaries.therecord.com/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'Kitchener-Waterloo',
+            ),
+            // Hamilton Spectator — Hamilton / Burlington / Dundas area.
+            array(
+                'domain'       => 'obituaries.thespec.com',
+                'name'         => 'Hamilton Spectator Obituaries',
+                'base_url'     => 'https://obituaries.thespec.com/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'Hamilton',
+            ),
+            // Simcoe.com — Barrie / Orillia / Simcoe County region.
+            array(
+                'domain'       => 'obituaries.simcoe.com',
+                'name'         => 'Simcoe County Obituaries',
+                'base_url'     => 'https://obituaries.simcoe.com/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'Barrie',
+            ),
+            // Niagara Falls Review — Niagara Region.
+            array(
+                'domain'       => 'obituaries.niagarafallsreview.ca',
+                'name'         => 'Niagara Falls Review Obituaries',
+                'base_url'     => 'https://obituaries.niagarafallsreview.ca/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'Niagara',
+            ),
+            // St. Catharines Standard — St. Catharines / Niagara region.
+            array(
+                'domain'       => 'obituaries.stcatharinesstandard.ca',
+                'name'         => 'St. Catharines Standard Obituaries',
+                'base_url'     => 'https://obituaries.stcatharinesstandard.ca/obituaries/obituaries/search',
+                'adapter_type' => 'remembering_ca',
+                'city'         => '',
+                'region'       => 'St. Catharines',
+            ),
         );
 
         foreach ( $sources as $source ) {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Monaco Monuments — Site Hardening & SEO
  * Description: Security headers, SEO meta, schema markup, and WordPress hardening for monacomonuments.ca
- * Version: 1.0.0
+ * Version: 2.1.0
  * Author: Monaco Monuments
  *
  * INSTALLATION:
@@ -18,8 +18,17 @@
  *   6. Adds meta descriptions to key pages
  *   7. Adds OpenGraph + Twitter Card tags for social sharing
  *   8. Adds LocalBusiness schema markup (JSON-LD)
- *   9. Redirects /ontario-obituaries/ to /obituaries/ (duplicate content fix)
+ *   9. Redirects /obituaries/ to /ontario-obituaries/ (duplicate content fix)
  *  10. Drafts theme demo content on first run
+ *  11. Excludes demo/internal pages from sitemap
+ *  12. Disables author archives
+ *  13. Dequeues unused CSS/JS (WooCommerce, 4 unused icon fonts, per-page plugin assets)
+ *  14. Defers non-critical JS (stops render-blocking)
+ *  15. Preconnect/DNS-prefetch for Google Fonts
+ *  16. Removes wp_head bloat (shortlink, oEmbed, RSS, REST link)
+ *  17. Disables WP embeds script
+ *  18. Optimizes LiteSpeed cache hints
+ *  19. Lazy-loads background videos
  *
  * @package MonacoMonuments
  * @since   1.0.0
@@ -462,3 +471,323 @@ function monaco_remove_users_from_sitemap( $provider, $name ) {
     return $provider;
 }
 add_filter( 'wp_sitemaps_add_provider', 'monaco_remove_users_from_sitemap', 10, 2 );
+
+// ─────────────────────────────────────────────
+// 13. PERFORMANCE OPTIMIZATION — DEQUEUE UNUSED ASSETS
+// ─────────────────────────────────────────────
+// The site loads 44 CSS + 44 JS files (~3.5 MB) on every page.
+// Many of these are from plugins not needed on the frontend or only
+// needed on specific pages. This section surgically removes them.
+
+function monaco_dequeue_unused_assets() {
+    // Bail on admin pages — only optimize the frontend
+    if ( is_admin() ) {
+        return;
+    }
+
+    // ── WooCommerce (confirmed not used — site is a business card) ──
+    // CSS
+    wp_dequeue_style( 'woocommerce-layout' );
+    wp_dequeue_style( 'woocommerce-smallscreen' );
+    wp_dequeue_style( 'woocommerce-general' );
+    wp_dequeue_style( 'wc-blocks-style' );
+    wp_dequeue_style( 'wc-blocks-vendors-style' );
+    wp_dequeue_style( 'woocommerce-inline' );
+    wp_deregister_style( 'woocommerce-layout' );
+    wp_deregister_style( 'woocommerce-smallscreen' );
+    wp_deregister_style( 'woocommerce-general' );
+    wp_deregister_style( 'wc-blocks-style' );
+
+    // JS
+    wp_dequeue_script( 'woocommerce' );
+    wp_dequeue_script( 'wc-add-to-cart' );
+    wp_dequeue_script( 'wc-cart-fragments' );
+    wp_dequeue_script( 'wc-add-to-cart-variation' );
+    wp_dequeue_script( 'wc-single-product' );
+    wp_dequeue_script( 'sourcebuster-js' );           // WC order-attribution tracker
+    wp_dequeue_script( 'wc-order-attribution' );      // WC order-attribution tracker
+    wp_deregister_script( 'sourcebuster-js' );
+    wp_deregister_script( 'wc-order-attribution' );
+
+    // ── Unused icon font libraries ──
+    // Audit found zero glyphs from these libraries on any page:
+    //   - Simple Line Icons: 0 glyphs used
+    //   - ET Line Icons: 0 glyphs used
+    //   - Iconsmind Line: 0 glyphs used
+    //   - Iconsmind Solid: 0 glyphs used
+    // KEEP: Feather (phone, mail, map-pin, etc.), Font Awesome (social), Themify (services page)
+    wp_dequeue_style( 'simple-line-icons' );
+    wp_dequeue_style( 'et-line-icons' );
+    wp_dequeue_style( 'iconsmind-line-icons' );
+    wp_dequeue_style( 'iconsmind-solid-icons' );
+    wp_deregister_style( 'simple-line-icons' );
+    wp_deregister_style( 'et-line-icons' );
+    wp_deregister_style( 'iconsmind-line-icons' );
+    wp_deregister_style( 'iconsmind-solid-icons' );
+
+    // ── Formidable Forms — only needed on contact page ──
+    if ( ! is_page( array( 'contact', 'contact-us' ) ) ) {
+        wp_dequeue_style( 'formidable' );
+        wp_dequeue_script( 'formidable' );
+    }
+
+    // ── Contact Form 7 — only needed on contact page ──
+    if ( ! is_page( array( 'contact', 'contact-us' ) ) ) {
+        wp_dequeue_style( 'contact-form-7' );
+        wp_dequeue_script( 'contact-form-7' );
+        wp_dequeue_script( 'swv' );  // CF7 validation
+    }
+
+    // ── AYS Popup Box — keep on homepage, remove elsewhere ──
+    if ( ! is_front_page() ) {
+        wp_dequeue_style( 'ays-pb-min' );
+        wp_dequeue_style( 'pb_animate' );
+        wp_dequeue_script( 'ays-pb-public' );
+    }
+
+    // ── WP Emoji — rarely needed, saves an HTTP request ──
+    remove_action( 'wp_head', 'print_emoji_detection_script', 7 );
+    remove_action( 'wp_print_styles', 'print_emoji_styles' );
+
+    // NOTE: Do NOT deregister jquery-migrate — Litho theme and Revolution
+    // Slider use deprecated jQuery APIs that require it.
+}
+add_action( 'wp_enqueue_scripts', 'monaco_dequeue_unused_assets', 999 );
+
+// ── Also remove WooCommerce body classes and overhead ──
+function monaco_remove_woocommerce_overhead() {
+    // Remove WooCommerce generator meta tag
+    remove_action( 'wp_head', array( 'WC_Template_Loader', 'product_structured_data' ), 10 );
+    remove_action( 'wp_head', array( 'WooCommerce', 'add_generator_tag' ), 99 );
+}
+add_action( 'init', 'monaco_remove_woocommerce_overhead' );
+
+// Remove WooCommerce body classes on frontend
+function monaco_remove_wc_body_classes( $classes ) {
+    if ( is_admin() ) {
+        return $classes;
+    }
+    $remove = array( 'woocommerce-no-js', 'woocommerce-active', 'woocommerce' );
+    return array_diff( $classes, $remove );
+}
+add_filter( 'body_class', 'monaco_remove_wc_body_classes' );
+
+// ─────────────────────────────────────────────
+// 14. PERFORMANCE — DEFER NON-CRITICAL JS
+// ─────────────────────────────────────────────
+// 20+ JS files load in <head> without async/defer, blocking rendering.
+// This adds 'defer' to non-critical scripts so the page paints faster.
+
+function monaco_add_defer_to_scripts( $tag, $handle, $src ) {
+    // Don't touch admin scripts
+    if ( is_admin() ) {
+        return $tag;
+    }
+    // Don't defer if already async or deferred
+    if ( strpos( $tag, 'defer' ) !== false || strpos( $tag, 'async' ) !== false ) {
+        return $tag;
+    }
+
+    // CONSERVATIVE approach: only defer scripts we've verified are safe.
+    // The Litho theme, Revolution Slider, Elementor, and Bootstrap all
+    // depend on jQuery and each other in strict order — deferring them
+    // causes "jQuery is not defined" errors and breaks the UI.
+    //
+    // Only defer standalone scripts that don't participate in the
+    // jQuery dependency chain:
+    $safe_to_defer = array(
+        'wp-embed',
+        'comment-reply',
+    );
+
+    if ( ! in_array( $handle, $safe_to_defer, true ) ) {
+        return $tag;
+    }
+
+    return str_replace( ' src=', ' defer src=', $tag );
+}
+add_filter( 'script_loader_tag', 'monaco_add_defer_to_scripts', 10, 3 );
+
+// ─────────────────────────────────────────────
+// 15. PERFORMANCE — PRECONNECT & DNS PREFETCH
+// ─────────────────────────────────────────────
+// Tell the browser to start DNS/TLS connections early for known hosts.
+
+function monaco_add_resource_hints( $urls, $relation_type ) {
+    if ( 'dns-prefetch' === $relation_type ) {
+        $urls[] = '//fonts.googleapis.com';
+        $urls[] = '//fonts.gstatic.com';
+    }
+    if ( 'preconnect' === $relation_type ) {
+        $urls[] = array(
+            'href'        => 'https://fonts.googleapis.com',
+            'crossorigin' => 'anonymous',
+        );
+        $urls[] = array(
+            'href'        => 'https://fonts.gstatic.com',
+            'crossorigin' => 'anonymous',
+        );
+    }
+    return $urls;
+}
+add_filter( 'wp_resource_hints', 'monaco_add_resource_hints', 10, 2 );
+
+// ─────────────────────────────────────────────
+// 16. PERFORMANCE — REMOVE WP HEAD BLOAT
+// ─────────────────────────────────────────────
+// WordPress adds several meta tags to <head> that are not needed.
+
+remove_action( 'wp_head', 'wp_shortlink_wp_head' );          // Shortlink
+remove_action( 'wp_head', 'rest_output_link_wp_head' );      // REST API link
+remove_action( 'wp_head', 'wp_oembed_add_discovery_links' ); // oEmbed discovery
+remove_action( 'wp_head', 'feed_links', 2 );                 // RSS feed links
+remove_action( 'wp_head', 'feed_links_extra', 3 );           // Extra RSS feeds
+
+// ─────────────────────────────────────────────
+// 17. PERFORMANCE — DISABLE WP EMBEDS
+// ─────────────────────────────────────────────
+// WP Embeds loads an extra JS file for embedding WP posts in other sites.
+// Not needed for a business-card site.
+
+function monaco_disable_embeds() {
+    if ( is_admin() ) {
+        return;
+    }
+    wp_dequeue_script( 'wp-embed' );
+    wp_deregister_script( 'wp-embed' );
+}
+add_action( 'wp_footer', 'monaco_disable_embeds' );
+
+// ─────────────────────────────────────────────
+// 18. PERFORMANCE — OPTIMIZE LITESPEED CACHE HINTS
+// ─────────────────────────────────────────────
+// Add browser caching hints for static assets via the mu-plugin,
+// complementing whatever LiteSpeed cache is already doing.
+
+function monaco_add_performance_headers() {
+    if ( headers_sent() || is_admin() ) {
+        return;
+    }
+
+    // Tell LiteSpeed to vary cache by WebP support for image optimization
+    if ( ! defined( 'DOING_CRON' ) ) {
+        header( 'Accept-CH: DPR, Width, Viewport-Width', false );
+    }
+}
+add_action( 'send_headers', 'monaco_add_performance_headers', 20 );
+
+// ─────────────────────────────────────────────
+// 19. PERFORMANCE — LAZY LOAD VIDEOS
+// ─────────────────────────────────────────────
+// The 32 MB background video on About/Catalog/Contact loads immediately.
+// Add preload="none" to self-hosted videos so they only load when visible.
+// (Elementor background videos autoplay muted, so we use preload="metadata"
+// to let the browser fetch just the first frame quickly.)
+
+function monaco_optimize_video_tags( $content ) {
+    if ( is_admin() ) {
+        return $content;
+    }
+
+    // Add preload="metadata" to video tags that don't already have a preload attribute
+    $content = preg_replace(
+        '/<video(?![^>]*preload)([^>]*)>/i',
+        '<video preload="metadata"$1>',
+        $content
+    );
+
+    return $content;
+}
+add_filter( 'the_content', 'monaco_optimize_video_tags', 999 );
+
+// ─────────────────────────────────────────────
+// 20. ONE-TIME DATABASE CLEANUP — FIX DIRTY LOCATION DATA
+// ─────────────────────────────────────────────
+// The scraper previously allowed bad data into the location field:
+//   - Base64 encoded strings (Q2l0eQ==)
+//   - JSON/JS fragments (M"]self.__next_f.push)
+//   - Full sentences ("Jan was born in Toronto")
+//   - Street addresses ("Park Road North Brantford")
+// This runs once to clean existing data.
+
+function monaco_cleanup_dirty_locations() {
+    if ( get_option( 'monaco_location_cleanup_v1_done' ) ) {
+        return;
+    }
+    if ( ! is_admin() ) {
+        return;
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ontario_obituaries';
+
+    // Check table exists
+    if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+        return;
+    }
+
+    $cleaned = 0;
+
+    // 1. Clear base64-encoded values (all alphanumeric + padding =)
+    $cleaned += (int) $wpdb->query(
+        "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE location REGEXP '^[A-Za-z0-9+/]+=+$'"
+    );
+
+    // 2. Clear values containing JSON/JS special characters
+    $cleaned += (int) $wpdb->query(
+        "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE location REGEXP '[{}\\[\\]();=<>]'"
+    );
+
+    // 3. Clear values containing double quotes or HTML entities (JS/HTML fragments)
+    // NOTE: Single quotes (apostrophes) are allowed — valid in city names like St. John's
+    $cleaned += (int) $wpdb->query(
+        "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE location LIKE '%\"%' OR location LIKE '%&quot;%'"
+    );
+
+    // 4. Clear values that are sentences (contain 'was', 'born', 'settled', etc.)
+    // NOTE: ' of ' is intentionally excluded — valid places like "Sunrise of Unionville" contain it.
+    $sentence_patterns = array( '% was %', '% born %', '% died %', '% lived %', '% settled %', '% the %' );
+    foreach ( $sentence_patterns as $pattern ) {
+        $cleaned += (int) $wpdb->query(
+            $wpdb->prepare( "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE LOWER(location) LIKE %s", $pattern )
+        );
+    }
+
+    // 5. Clear values starting with digits (street addresses)
+    $cleaned += (int) $wpdb->query(
+        "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE location REGEXP '^[0-9]'"
+    );
+
+    // 6. Clear values longer than 50 characters
+    $cleaned += (int) $wpdb->query(
+        "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE CHAR_LENGTH(location) > 50"
+    );
+
+    // 7. Clear known garbage single-word values (column names, form fields, etc.)
+    $garbage_words = array( 'executor', 'family', 'funeral_home', 'other', 'unknown', 'none', 'n/a', 'null', 'undefined' );
+    foreach ( $garbage_words as $word ) {
+        $cleaned += (int) $wpdb->query(
+            $wpdb->prepare( "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE LOWER(location) = %s", $word )
+        );
+    }
+
+    // 8. Clear values containing underscores (column names like funeral_home)
+    $cleaned += (int) $wpdb->query(
+        "UPDATE `{$table}` SET location = '', city_normalized = '' WHERE location LIKE '%\\_%'"
+    );
+
+    // 9. Rebuild city_normalized for remaining valid locations
+    $wpdb->query(
+        "UPDATE `{$table}` SET city_normalized = location WHERE location != '' AND (city_normalized = '' OR city_normalized IS NULL)"
+    );
+
+    // Clear the locations dropdown cache so the filter shows clean data
+    delete_transient( 'ontario_obituaries_locations_cache' );
+
+    update_option( 'monaco_location_cleanup_v1_done', true );
+
+    if ( $cleaned > 0 ) {
+        error_log( sprintf( '[Monaco Hardening] Cleaned %d dirty location records.', $cleaned ) );
+    }
+}
+add_action( 'admin_init', 'monaco_cleanup_dirty_locations' );
