@@ -427,11 +427,14 @@ SYSTEM;
              WHERE ai_description IS NOT NULL AND ai_description != '' AND suppressed_at IS NULL"
         );
 
+        $pct = $total > 0 ? round( ( $rewritten / $total ) * 100, 1 ) : 0;
+
         return array(
-            'total'     => $total,
-            'rewritten' => $rewritten,
-            'pending'   => $total - $rewritten,
-            'pct'       => $total > 0 ? round( ( $rewritten / $total ) * 100, 1 ) : 0,
+            'total'            => $total,
+            'rewritten'        => $rewritten,
+            'pending'          => $total - $rewritten,
+            'pct'              => $pct,
+            'percent_complete' => $pct,
         );
     }
 }
