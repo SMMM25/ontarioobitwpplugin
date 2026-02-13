@@ -1,10 +1,10 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-13 (after v4.2.3 live deploy + PR #55 open)
-> **Plugin version:** `4.2.4` (sandbox, PR #55 pending)
-> **Live site version:** `4.2.3` (monacomonuments.ca — deployed 2026-02-13)
-> **Main branch HEAD:** PR #54 merged
-> **Next deployment:** v4.2.4 via cPanel manual upload (death date fix + AI Rewriter trigger fix)
+> **Last updated:** 2026-02-13 evening (after v4.5.0 live deploy + PR #58 merged)
+> **Plugin version:** `4.5.0` (live + main branch + sandbox — all in sync)
+> **Live site version:** `4.5.0` (monacomonuments.ca — deployed 2026-02-13 via WP Upload)
+> **Main branch HEAD:** PR #58 merged
+> **Next deployment:** None pending — all features deployed
 
 ---
 
@@ -266,15 +266,18 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #52 | Merged | `a50904c` | feat(v4.2.1): Complete AI Memorial System — Phases 1-4 + QA audit fixes |
 | #53 | Merged | `b71f4b1` | fix(v4.2.2): city data quality repair + sitemap ai_description fix |
 | #54 | Merged | pending | feat(v4.2.3): admin UI for AI Rewriter + Groq key + additional city slug fixes |
-| #55 | **OPEN** | pending | fix(v4.2.4): death date cross-validation + AI Rewriter activation fix |
+| #55 | Merged | various | fix(v4.2.4): death date cross-validation + AI Rewriter activation fix |
+| #56 | Merged | various | feat(v4.3.0): GoFundMe Auto-Linker + AI Authenticity Checker |
+| #57 | Merged | various | (merge commit for v4.3.0) |
+| #58 | Merged | `98f57f9` | feat(v4.5.0): AI Customer Chatbot + Google Ads Optimizer + Enhanced SEO Schema |
 
 ---
 
-## CURRENT STATE (as of 2026-02-13)
+## CURRENT STATE (as of 2026-02-13 evening)
 
-### Plugin Version: **4.2.4** (sandbox — PR #55 pending)
-### Main Branch Version: **4.2.3** (PR #54 merged 2026-02-13)
-### Live Site Version: **4.2.3** (monacomonuments.ca — deployed 2026-02-13)
+### Plugin Version: **4.5.0** (all environments in sync)
+### Main Branch Version: **4.5.0** (PR #58 merged 2026-02-13)
+### Live Site Version: **4.5.0** (monacomonuments.ca — deployed 2026-02-13 via WP Upload)
 
 ### What's Working (Live — v4.2.2)
 - Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
@@ -291,11 +294,19 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - LiteSpeed cache with tag-based purge
 - Suppression/removal system
 
+### What's NEW in v4.5.0 (all live)
+- **AI Customer Chatbot** — Groq-powered, greets visitors, answers questions, directs to intake form, emails to info@monacomonuments.ca. ENABLED and working on frontend.
+- **Google Ads Campaign Optimizer** — Google Ads API integration with AI analysis. DISABLED (owner's off-season — toggle-ready for spring).
+- **Enhanced SEO Schema** — Schema.org DonateAction for GoFundMe links on memorial pages.
+- **GoFundMe Auto-Linker** — 3-point verification (name + date + location). 2 matched, 360 pending.
+- **AI Authenticity Checker** — 24/7 audits, 725 records queued for processing.
+- **AI Rewriter** — 393/725 rewritten (54%), auto-processing continues.
+- **All v4.2.4 fixes deployed** — death dates fixed, future dates rejected, q2l0eq cleaned, AI batch triggers on save.
+
 ### What's NOT yet active on live site
-- **AI Rewriter batch not yet firing** — Groq key set + enabled, but batch only triggers after collection event (12h cron). v4.2.4 fixes this to trigger immediately on settings save.
-- **8 death dates are wrong** — source metadata year differs from obituary text (e.g., header says 2026, text says 2025). v4.2.4 migration repairs these.
-- **1 future death date** (Michael McCarty: May 7, 2026) — impossible, should be May 7, 2024.
-- **q2l0eq garbled slug** still in sitemap — v4.2.4 migration cleans it.
+- **Google Ads Optimizer** — Disabled by owner choice (off-season). Toggle on in spring via Settings page.
+- **AI Rewriter** — 332 obituaries still pending rewrite (auto-processing, no action needed).
+- **AI Authenticity Checker** — 725 records never audited (processing started, auto-runs every 4h).
 
 ### What v4.2.2 Changes (SANDBOX — Pending PR)
 **v4.0.1 — Logo Filter:**
@@ -341,13 +352,26 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - Version bump: 4.2.2 → 4.2.3
 
 **v4.2.4 — Death Date Cross-Validation + AI Rewriter Fix:**
-- **BUG FIX**: Death dates from Remembering.ca structured metadata can have WRONG year (source updates year range to current year when republishing older obituaries). Fixed date priority: phrase-based extraction ("passed away on...") now overrides structured date ranges.
-- **BUG FIX**: Future death dates (after today) are now rejected and replaced with text-based date or cleared.
-- **BUG FIX**: AI Rewriter batch was only scheduled after collection events (every 12h). Now also schedules immediately (30s delay) when settings are saved with AI enabled.
-- **DATA REPAIR**: Migration cross-validates all death dates against obituary text, fixes ~8 year mismatches.
-- **DATA REPAIR**: Cleans remaining `q2l0eq` garbled city slug.
-- **SECURITY AUDIT**: SQL injection, AJAX nonce, template XSS — all passed.
+- **BUG FIX**: Death dates from Remembering.ca structured metadata can have WRONG year. Fixed date priority: phrase-based extraction now overrides structured date ranges.
+- **BUG FIX**: Future death dates (after today) are now rejected.
+- **BUG FIX**: AI Rewriter batch now schedules immediately (30s delay) when settings are saved.
+- **DATA REPAIR**: Migration cross-validates all death dates, fixes ~8 year mismatches + q2l0eq slug.
 - Version bump: 4.2.3 → 4.2.4
+
+**v4.3.0 — GoFundMe Auto-Linker + AI Authenticity Checker:**
+- **GoFundMe Auto-Linker**: Searches GoFundMe for matching memorial campaigns. 3-point verification (name + death date + location). 20 per batch, 1 search/3s. Adds "Support the Family" button.
+- **AI Authenticity Checker**: 24/7 random audits via Groq AI. 10 per cycle (8 new + 2 re-checks). Flags issues, auto-corrects high-confidence errors.
+- **DB migration**: Added `gofundme_url`, `gofundme_checked_at`, `last_audit_at`, `audit_status`, `audit_flags` columns + indexes.
+- Version bump: 4.2.4 → 4.3.0
+
+**v4.5.0 — AI Customer Chatbot + Google Ads Optimizer + Enhanced SEO Schema:**
+- **AI Customer Chatbot** (`class-ai-chatbot.php`, 32 KB): Groq-powered conversational AI with rule-based fallback. Greets visitors, answers service questions, directs to intake form (no-cost, priority queue), forwards inquiries to `info@monacomonuments.ca`. Quick-action buttons (Get Started, Pricing, Catalog, Contact). Rate-limited (1 msg/2s/IP), nonce-verified, XSS-protected. Zero cost (Groq free tier).
+- **Google Ads Campaign Optimizer** (`class-google-ads-optimizer.php`, 43 KB): Connects to Google Ads API (account 903-524-8478). AI-driven campaign analysis, keyword optimization, bid/budget recommendations. Dashboard with spend, clicks, CTR, CPC, conversions, optimization score. Currently DISABLED (owner's off-season).
+- **Enhanced SEO Schema**: Schema.org `DonateAction` added to individual memorial pages for GoFundMe links.
+- **Frontend assets**: `ontario-chatbot.css` (11 KB), `ontario-chatbot.js` (13 KB).
+- **Settings UI**: Added chatbot toggle + stats, Google Ads toggle + credential fields + dashboard.
+- **QA audit**: PHP syntax (5 files), JS syntax, brace balance, nonce flow, XSS escaping — all passed.
+- Version bump: 4.3.0 → 4.5.0
 
 ### What v4.0.0 Changed (DEPLOYED 2026-02-13)
 - **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
@@ -450,7 +474,12 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | P5-12 | Death date cross-validation fix (v4.2.4) | **DONE** (PR #55 — OPEN) |
 | P5-13 | AI Rewriter trigger fix (v4.2.4) | **DONE** (PR #55 — OPEN) |
 | P5-14 | Security audit (SQL/AJAX/XSS) | **DONE** — all passed |
-| P5-15 | Deploy v4.2.4 to live site | **PENDING — owner action** |
+| P5-15 | Deploy v4.2.4 to live site | **DONE** (2026-02-13) |
+| P5-16 | Deploy v4.3.0 (GoFundMe + Authenticity) | **DONE** (2026-02-13, PR #56) |
+| P5-17 | Deploy v4.5.0 (Chatbot + Google Ads + SEO Schema) | **DONE** (2026-02-13, PR #58) |
+| P5-18 | Enable AI Chatbot on live site | **DONE** (2026-02-13 — verified working) |
+| P5-19 | Full site backup before v4.5.0 deploy | **DONE** (UpdraftPlus, Feb 13, 21:45) |
+| P5-20 | Google Ads Optimizer — enable when ready | **PENDING — owner action (spring)** |
 
 ---
 
