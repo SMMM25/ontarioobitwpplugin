@@ -111,9 +111,13 @@ if ( $birth_display && $death_display ) {
         <meta itemprop="deathDate" content="<?php echo esc_attr( $obituary->date_of_death ); ?>">
 
         <!-- Obituary content -->
-        <?php if ( ! empty( $obituary->description ) ) : ?>
+        <?php
+        // v4.1.0: Prefer AI-rewritten description when available.
+        $seo_desc = ! empty( $obituary->ai_description ) ? $obituary->ai_description : $obituary->description;
+        ?>
+        <?php if ( ! empty( $seo_desc ) ) : ?>
         <div class="ontario-obituary-body">
-            <?php echo wpautop( esc_html( $obituary->description ) ); ?>
+            <?php echo wpautop( esc_html( $seo_desc ) ); ?>
         </div>
         <?php else : ?>
         <div class="ontario-obituary-body ontario-obituary-body-minimal">
@@ -156,6 +160,29 @@ if ( $birth_display && $death_display ) {
         </footer>
     </article>
 
+    <!-- v4.2.0: QR Code for sharing this memorial page -->
+    <?php
+    $memorial_url = home_url( sprintf( '/obituaries/ontario/%s/%s-%d/',
+        sanitize_title( $city_name ? $city_name : 'ontario' ),
+        sanitize_title( $obituary->name ),
+        $obituary->id
+    ) );
+    // Lightweight QR code via QR Server API (no JS dependency).
+    // Note: Google Charts QR API was deprecated and returns 404.
+    $qr_url = sprintf(
+        'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=%s&format=png',
+        rawurlencode( $memorial_url )
+    );
+    ?>
+    <div class="ontario-obituary-qr-section">
+        <div class="ontario-obituary-qr-inner">
+            <img src="<?php echo esc_url( $qr_url ); ?>"
+                 alt="<?php echo esc_attr( sprintf( __( 'QR code for %s memorial page', 'ontario-obituaries' ), $obituary->name ) ); ?>"
+                 width="150" height="150" loading="lazy">
+            <p class="ontario-qr-label"><?php esc_html_e( 'Scan to share this memorial page', 'ontario-obituaries' ); ?></p>
+        </div>
+    </div>
+
     <!-- Monument Services CTA -->
     <aside class="ontario-obituaries-cta-block">
         <div class="ontario-obituaries-cta-inner">
@@ -175,6 +202,66 @@ if ( $birth_display && $death_display ) {
             </div>
         </div>
     </aside>
+
+    <!-- v4.2.0: Soft lead capture — condolence/notification signup -->
+    <div class="ontario-obituary-lead-capture">
+        <div class="ontario-obituary-lead-inner">
+            <h4><?php esc_html_e( 'Stay Connected', 'ontario-obituaries' ); ?></h4>
+            <p><?php esc_html_e( 'Receive updates about memorial services and monument dedications in your area.', 'ontario-obituaries' ); ?></p>
+            <form class="ontario-lead-form" id="ontario-lead-form" method="post">
+                <?php wp_nonce_field( 'ontario_obituaries_lead', 'ontario_lead_nonce' ); ?>
+                <input type="hidden" name="action" value="ontario_obituaries_lead_capture">
+                <input type="hidden" name="obituary_id" value="<?php echo intval( $obituary->id ); ?>">
+                <input type="hidden" name="city" value="<?php echo esc_attr( $city_name ); ?>">
+                <div class="ontario-lead-fields">
+                    <input type="email" name="lead_email" id="ontario-lead-email" placeholder="<?php esc_attr_e( 'Your email address', 'ontario-obituaries' ); ?>" required>
+                    <button type="submit" class="ontario-lead-submit"><?php esc_html_e( 'Subscribe', 'ontario-obituaries' ); ?></button>
+                </div>
+                <p class="ontario-lead-privacy"><?php esc_html_e( 'We respect your privacy. Unsubscribe at any time.', 'ontario-obituaries' ); ?></p>
+                <p class="ontario-lead-message" id="ontario-lead-message" style="display:none;"></p>
+            </form>
+            <script>
+            (function(){
+                var form = document.getElementById('ontario-lead-form');
+                if (!form) return;
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    var btn = form.querySelector('.ontario-lead-submit');
+                    var msg = document.getElementById('ontario-lead-message');
+                    var data = new FormData(form);
+                    btn.disabled = true;
+                    btn.textContent = '<?php echo esc_js( __( 'Sending...', 'ontario-obituaries' ) ); ?>';
+                    fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+                        method: 'POST',
+                        body: data,
+                        credentials: 'same-origin'
+                    })
+                    .then(function(r){ return r.json(); })
+                    .then(function(resp){
+                        msg.style.display = 'block';
+                        if (resp.success) {
+                            msg.className = 'ontario-lead-message ontario-lead-success';
+                            msg.textContent = resp.data.message;
+                            form.querySelector('#ontario-lead-email').value = '';
+                        } else {
+                            msg.className = 'ontario-lead-message ontario-lead-error';
+                            msg.textContent = (resp.data && resp.data.message) ? resp.data.message : '<?php echo esc_js( __( 'Something went wrong. Please try again.', 'ontario-obituaries' ) ); ?>';
+                        }
+                        btn.disabled = false;
+                        btn.textContent = '<?php echo esc_js( __( 'Subscribe', 'ontario-obituaries' ) ); ?>';
+                    })
+                    .catch(function(){
+                        msg.style.display = 'block';
+                        msg.className = 'ontario-lead-message ontario-lead-error';
+                        msg.textContent = '<?php echo esc_js( __( 'Something went wrong. Please try again.', 'ontario-obituaries' ) ); ?>';
+                        btn.disabled = false;
+                        btn.textContent = '<?php echo esc_js( __( 'Subscribe', 'ontario-obituaries' ) ); ?>';
+                    });
+                });
+            })();
+            </script>
+        </div>
+    </div>
 
     <!-- Removal notice -->
     <div class="ontario-obituary-removal-notice">

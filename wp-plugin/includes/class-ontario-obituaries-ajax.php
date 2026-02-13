@@ -37,6 +37,55 @@ class Ontario_Obituaries_Ajax {
             add_action( 'wp_ajax_obituary_assistant_get_ontario', array( $this, 'get_obituaries_for_assistant' ) );
             // Removed nopriv – assistant endpoint is admin-only now
         }
+
+        // v4.2.0: Soft lead capture (logged-in + logged-out)
+        add_action( 'wp_ajax_ontario_obituaries_lead_capture',        array( $this, 'handle_lead_capture' ) );
+        add_action( 'wp_ajax_nopriv_ontario_obituaries_lead_capture', array( $this, 'handle_lead_capture' ) );
+    }
+
+    /**
+     * v4.2.0: Handle lead capture form submissions.
+     *
+     * Stores email + context in wp_options (simple approach — no extra table).
+     * Data: email, city, obituary_id, timestamp, IP (hashed).
+     */
+    public function handle_lead_capture() {
+        check_ajax_referer( 'ontario_obituaries_lead', 'ontario_lead_nonce' );
+
+        $email       = isset( $_POST['lead_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_email'] ) ) : '';
+        $obituary_id = isset( $_POST['obituary_id'] ) ? intval( $_POST['obituary_id'] ) : 0;
+        $city        = isset( $_POST['city'] ) ? sanitize_text_field( wp_unslash( $_POST['city'] ) ) : '';
+
+        if ( empty( $email ) || ! is_email( $email ) ) {
+            wp_send_json_error( array( 'message' => __( 'Please enter a valid email address.', 'ontario-obituaries' ) ) );
+        }
+
+        // Store leads in a simple option (array of leads).
+        $leads = get_option( 'ontario_obituaries_leads', array() );
+
+        // Prevent duplicate submissions.
+        foreach ( $leads as $lead ) {
+            if ( $lead['email'] === $email ) {
+                wp_send_json_success( array( 'message' => __( 'You are already subscribed. Thank you!', 'ontario-obituaries' ) ) );
+            }
+        }
+
+        $leads[] = array(
+            'email'       => $email,
+            'city'        => $city,
+            'obituary_id' => $obituary_id,
+            'timestamp'   => current_time( 'mysql' ),
+            'ip_hash'     => wp_hash( isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '' ),
+        );
+
+        update_option( 'ontario_obituaries_leads', $leads );
+
+        ontario_obituaries_log(
+            sprintf( 'Lead captured: %s (city: %s, obituary: %d).', $email, $city, $obituary_id ),
+            'info'
+        );
+
+        wp_send_json_success( array( 'message' => __( 'Thank you for subscribing!', 'ontario-obituaries' ) ) );
     }
 
     /**

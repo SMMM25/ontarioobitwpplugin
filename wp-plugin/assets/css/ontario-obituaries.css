@@ -1319,3 +1319,123 @@
         box-shadow: none;
     }
 }
+
+/* ──────────────────────────────────────────────────────
+   v4.2.0: QR Code Section
+   ────────────────────────────────────────────────────── */
+
+.ontario-obituary-qr-section {
+    text-align: center;
+    padding: 1.5rem 0;
+    margin-bottom: 1.5rem;
+    border-top: 1px solid #e0e0e0;
+}
+
+.ontario-obituary-qr-inner {
+    display: inline-block;
+}
+
+.ontario-obituary-qr-inner img {
+    border: 4px solid #f7f7f7;
+    border-radius: 8px;
+}
+
+.ontario-qr-label {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: #888;
+    font-style: italic;
+}
+
+/* ──────────────────────────────────────────────────────
+   v4.2.0: Soft Lead Capture Form
+   ────────────────────────────────────────────────────── */
+
+.ontario-obituary-lead-capture {
+    margin: 2rem 0;
+    padding: 2rem;
+    background: linear-gradient(135deg, #f7f7f7 0%, #fff 100%);
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.ontario-obituary-lead-inner h4 {
+    font-family: "Cardo", serif;
+    font-size: 1.3rem;
+    color: #2c3e50;
+    margin: 0 0 0.5rem;
+}
+
+.ontario-obituary-lead-inner > p {
+    color: #555;
+    font-size: 0.95rem;
+    margin-bottom: 1.2rem;
+}
+
+.ontario-lead-fields {
+    display: flex;
+    gap: 0.75rem;
+    max-width: 480px;
+    margin: 0 auto;
+}
+
+.ontario-lead-fields input[type="email"] {
+    flex: 1;
+    padding: 0.7rem 1rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-family: "Inter", sans-serif;
+}
+
+.ontario-lead-fields input[type="email"]:focus {
+    border-color: #c9a84c;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.15);
+}
+
+.ontario-lead-submit {
+    padding: 0.7rem 1.5rem;
+    background: #c9a84c;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.ontario-lead-submit:hover {
+    background: #b8963d;
+}
+
+.ontario-lead-privacy {
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: #999;
+}
+
+.ontario-lead-message {
+    margin-top: 0.75rem;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+.ontario-lead-success {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #a5d6a7;
+}
+.ontario-lead-error {
+    background: #fbe9e7;
+    color: #c62828;
+    border: 1px solid #ef9a9a;
+}
+
+@media (max-width: 480px) {
+    .ontario-lead-fields {
+        flex-direction: column;
+    }
+}

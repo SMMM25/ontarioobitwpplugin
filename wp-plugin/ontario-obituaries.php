@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.0.0
+ * Version: 4.2.1
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,10 +15,32 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.0.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.2.1' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
+
+/**
+ * v4.2.0: Domain lock — plugin only operates on authorized domains.
+ *
+ * Prevents unauthorized use if the codebase is copied to another site.
+ * The scraper, AI rewriter, and cron hooks are disabled on non-authorized domains.
+ * Admin pages still load so the owner can see the lock message.
+ *
+ * Authorized domains: monacomonuments.ca (production), localhost (development).
+ */
+define( 'ONTARIO_OBITUARIES_AUTHORIZED_DOMAINS', 'monacomonuments.ca,localhost,127.0.0.1' );
+
+function ontario_obituaries_is_authorized_domain() {
+    $host = wp_parse_url( home_url(), PHP_URL_HOST );
+    $authorized = array_map( 'trim', explode( ',', ONTARIO_OBITUARIES_AUTHORIZED_DOMAINS ) );
+    foreach ( $authorized as $domain ) {
+        if ( $host === $domain || false !== strpos( $host, $domain ) ) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /**
  * Load plugin textdomain for translations (ARCH-05 FIX)
@@ -60,6 +82,7 @@ function ontario_obituaries_get_defaults() {
         'adaptive_mode'  => true,
         'debug_logging'  => false,
         'fuzzy_dedupe'   => false,
+        'ai_rewrite_enabled' => false,
     );
 }
 
@@ -166,6 +189,12 @@ function ontario_obituaries_includes() {
 
     // Pipelines — suppression is needed on frontend for SEO/noindex
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/pipelines/class-suppression-manager.php';
+
+    // v4.1.0: AI Rewriter — always loaded so stats/display work on frontend
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+
+    // v4.2.0: IndexNow — instant search engine notification on new obituaries
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-indexnow.php';
 
     // SEO — needed on frontend for rewrite rules
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
@@ -932,6 +961,12 @@ register_deactivation_hook( __FILE__, 'ontario_obituaries_deactivate' );
  * v3.0.0: Uses Source Collector (adapter-based) as primary, falls back to legacy scraper.
  */
 function ontario_obituaries_scheduled_collection() {
+    // v4.2.0: Domain lock — don't scrape on unauthorized domains.
+    if ( ! ontario_obituaries_is_authorized_domain() ) {
+        ontario_obituaries_log( 'Domain lock: Scheduled collection blocked — unauthorized domain.', 'warning' );
+        return;
+    }
+
     // v3.0.0: Use the new Source Collector
     if ( class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
         $collector = new Ontario_Obituaries_Source_Collector();
@@ -978,8 +1013,83 @@ function ontario_obituaries_scheduled_collection() {
 
     // v3.3.0: Run dedup after every scrape to catch cross-source duplicates immediately
     ontario_obituaries_cleanup_duplicates();
+
+    // v4.2.0: Submit new obituary URLs to IndexNow for instant search engine indexing.
+    if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
+        $added_count = isset( $results['obituaries_added'] ) ? intval( $results['obituaries_added'] ) : 0;
+        if ( $added_count > 0 ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            // Get IDs of obituaries created in the last 2 hours (covers this scrape cycle).
+            $recent_ids = $wpdb->get_col( $wpdb->prepare(
+                "SELECT id FROM `{$table}` WHERE created_at >= %s AND suppressed_at IS NULL ORDER BY id DESC LIMIT 500",
+                gmdate( 'Y-m-d H:i:s', strtotime( '-2 hours' ) )
+            ) );
+            if ( ! empty( $recent_ids ) ) {
+                $indexnow = new Ontario_Obituaries_IndexNow();
+                $indexnow->submit_urls( $recent_ids );
+            }
+        }
+    }
+
+    // v4.1.0: After collection, schedule AI rewrite batch if enabled.
+    $settings_for_rewrite = ontario_obituaries_get_settings();
+    if ( ! empty( $settings_for_rewrite['ai_rewrite_enabled'] ) ) {
+        if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+            wp_schedule_single_event( time() + 120, 'ontario_obituaries_ai_rewrite_batch' );
+            ontario_obituaries_log( 'v4.1.0: Scheduled AI rewrite batch (120s after collection).', 'info' );
+        }
+    }
 }
 add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection' );
+
+/**
+ * v4.1.0: AI Rewrite batch cron handler.
+ *
+ * Processes up to 25 unrewritten obituaries per run.
+ * Self-reschedules if more remain.
+ */
+function ontario_obituaries_ai_rewrite_batch() {
+    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+    }
+
+    $rewriter = new Ontario_Obituaries_AI_Rewriter();
+
+    if ( ! $rewriter->is_configured() ) {
+        ontario_obituaries_log( 'AI Rewriter: Skipping batch — Groq API key not configured.', 'info' );
+        return;
+    }
+
+    $result = $rewriter->process_batch();
+
+    // Log results.
+    ontario_obituaries_log(
+        sprintf(
+            'AI Rewriter batch: %d processed, %d succeeded, %d failed.',
+            $result['processed'],
+            $result['succeeded'],
+            $result['failed']
+        ),
+        'info'
+    );
+
+    // If there are more pending, schedule another batch in 5 minutes.
+    $pending = $rewriter->get_pending_count();
+    if ( $pending > 0 && ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+        wp_schedule_single_event( time() + 300, 'ontario_obituaries_ai_rewrite_batch' );
+        ontario_obituaries_log(
+            sprintf( 'AI Rewriter: %d obituaries pending — scheduling next batch in 5 min.', $pending ),
+            'info'
+        );
+    }
+
+    // Purge cache if any rewrites were saved.
+    if ( $result['succeeded'] > 0 ) {
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+    }
+}
+add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrite_batch' );
 
 /**
  * P0-1 FIX: One-time initial collection (runs via WP-Cron after activation).
@@ -1025,6 +1135,12 @@ add_action( 'admin_notices', 'ontario_obituaries_admin_notices' );
 function ontario_obituaries_init() {
     ontario_obituaries_includes();
     new Ontario_Obituaries();
+
+    // v4.2.0: Serve IndexNow verification key file.
+    if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
+        $indexnow = new Ontario_Obituaries_IndexNow();
+        add_action( 'template_redirect', array( $indexnow, 'serve_verification_file' ), 0 );
+    }
 }
 add_action( 'plugins_loaded', 'ontario_obituaries_init' );
 
@@ -2267,6 +2383,80 @@ function ontario_obituaries_on_plugin_update() {
         }
     }
 
+    // v4.0.1: Clean funeral home logos from existing obituary image_url fields.
+    //
+    // Problem: The adapter was scraping funeral home logos (Ogden, Ridley, etc.)
+    // as obituary photos. These are copyrighted business logos, not portraits.
+    // Logos on the Cloudfront CDN are typically < 15 KB; real portraits are 20 KB+.
+    //
+    // Fix: Clear image_url for any existing records where the image is under 15 KB.
+    // Future scrapes use the new is_likely_portrait() filter in the adapter.
+    if ( version_compare( $stored_version, '4.0.1', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        // Find all cloudfront CDN images and check their sizes.
+        $rows = $wpdb->get_results(
+            "SELECT id, image_url FROM {$table} WHERE image_url LIKE '%cloudfront.net/Obituaries%' AND image_url != ''",
+            ARRAY_A
+        );
+
+        $cleaned = 0;
+        if ( $rows ) {
+            foreach ( $rows as $row ) {
+                $head = wp_remote_head( $row['image_url'], array(
+                    'timeout'    => 5,
+                    'user-agent' => 'Mozilla/5.0 (compatible; OntarioObituaries/4.0)',
+                ) );
+
+                if ( is_wp_error( $head ) ) {
+                    continue;
+                }
+
+                $content_length = wp_remote_retrieve_header( $head, 'content-length' );
+                if ( ! empty( $content_length ) && intval( $content_length ) < 15360 ) {
+                    $wpdb->update(
+                        $table,
+                        array( 'image_url' => '' ),
+                        array( 'id' => intval( $row['id'] ) ),
+                        array( '%s' ),
+                        array( '%d' )
+                    );
+                    $cleaned++;
+                }
+            }
+        }
+
+        if ( $cleaned > 0 ) {
+            ontario_obituaries_log(
+                sprintf( 'v4.0.1: Cleared %d funeral home logo images from obituary records.', $cleaned ),
+                'info'
+            );
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        }
+
+        ontario_obituaries_log( 'v4.0.1: Logo image filter deployed — future scrapes will skip images < 15 KB.', 'info' );
+    }
+
+    // v4.1.0: Add ai_description column for AI-rewritten obituary text.
+    if ( version_compare( $stored_version, '4.1.0', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        // Check if column already exists before adding.
+        $existing_cols = $wpdb->get_col( $wpdb->prepare(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table
+        ) );
+
+        if ( ! in_array( 'ai_description', $existing_cols, true ) ) {
+            $wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
+            ontario_obituaries_log( 'v4.1.0: Added ai_description column to obituaries table.', 'info' );
+        }
+
+        ontario_obituaries_log( 'v4.1.0: AI Rewriter infrastructure deployed. Set Groq API key to activate.', 'info' );
+    }
+
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
 }
 add_action( 'init', 'ontario_obituaries_on_plugin_update', 1 );
@@ -2420,6 +2610,15 @@ function ontario_obituaries_register_cron_rest_route() {
             return current_user_can( 'manage_options' );
         },
     ) );
+
+    // v4.1.0: AI Rewriter status endpoint (admin-only).
+    register_rest_route( 'ontario-obituaries/v1', '/ai-rewriter', array(
+        'methods'             => 'GET',
+        'callback'            => 'ontario_obituaries_handle_ai_rewriter_rest',
+        'permission_callback' => function() {
+            return current_user_can( 'manage_options' );
+        },
+    ) );
 }
 add_action( 'rest_api_init', 'ontario_obituaries_register_cron_rest_route' );
 
@@ -2547,7 +2746,51 @@ function ontario_obituaries_handle_status_rest() {
     // Collector class availability
     $status['collector_loaded'] = class_exists( 'Ontario_Obituaries_Source_Collector' );
 
+    // v4.1.0: AI Rewriter stats
+    if ( class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        $rewriter = new Ontario_Obituaries_AI_Rewriter();
+        $status['ai_rewriter'] = array(
+            'configured' => $rewriter->is_configured(),
+            'stats'      => $rewriter->get_stats(),
+        );
+    }
+
     return rest_ensure_response( $status );
+}
+
+/**
+ * v4.1.0: AI Rewriter REST endpoint.
+ *
+ * GET: Returns rewriter status and stats.
+ * Supports ?action=trigger to manually start a rewrite batch.
+ *
+ * @return WP_REST_Response
+ */
+function ontario_obituaries_handle_ai_rewriter_rest( $request ) {
+    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+    }
+
+    $rewriter = new Ontario_Obituaries_AI_Rewriter();
+
+    $result = array(
+        'configured' => $rewriter->is_configured(),
+        'stats'      => $rewriter->get_stats(),
+    );
+
+    // Allow manual trigger via ?action=trigger
+    $action = $request->get_param( 'action' );
+    if ( 'trigger' === $action ) {
+        if ( ! $rewriter->is_configured() ) {
+            $result['error'] = 'Groq API key not configured. Set ontario_obituaries_groq_api_key in wp_options.';
+        } else {
+            $batch_result = $rewriter->process_batch();
+            $result['batch_result'] = $batch_result;
+            $result['stats']        = $rewriter->get_stats(); // Refresh stats after batch.
+        }
+    }
+
+    return rest_ensure_response( $result );
 }
 
 /**

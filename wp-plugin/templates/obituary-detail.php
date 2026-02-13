@@ -87,7 +87,11 @@ if ( $birth_display && $death_display ) {
         <?php endif; ?>
 
         <div class="ontario-obituary-detail-description">
-            <?php echo wpautop( wp_kses_post( $obituary->description ) ); ?>
+            <?php
+            // v4.1.0: Prefer AI-rewritten description when available.
+            $detail_desc = ! empty( $obituary->ai_description ) ? $obituary->ai_description : $obituary->description;
+            echo wpautop( wp_kses_post( $detail_desc ) );
+            ?>
         </div>
     </div>
 </div>
