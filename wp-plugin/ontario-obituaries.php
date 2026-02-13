@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.2.2
+ * Version: 4.2.3
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.2.2' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.2.3' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -2472,7 +2472,7 @@ function ontario_obituaries_on_plugin_update() {
     //   5) Clears biographical text stored as city (e.g. "Jan was born in Toronto")
     //   6) Clears facility/institution names stored as city
     //   7) Flags out-of-province records but keeps them (they are valid obituaries)
-    if ( version_compare( $stored_version, '4.2.2', '<' ) ) {
+    if ( version_compare( $stored_version, '4.2.3', '<' ) ) {
         global $wpdb;
         $table   = $wpdb->prefix . 'ontario_obituaries';
         $repaired = 0;
@@ -2573,6 +2573,24 @@ function ontario_obituaries_on_plugin_update() {
             '%Wellington%Hamilt'   => 'Hamilton',
             '%Fennell%Hamilt'      => 'Hamilton',
             '%Rymal%Hamilt'        => 'Hamilton',
+            // v4.2.3: Additional patterns found after first deploy
+            '%Botanical%Burlingt%' => 'Burlington',
+            '%Brant St%Burlingt%'  => 'Burlington',
+            '%Brant-St%Burlingt%'  => 'Burlington',
+            'Brant-St-Burlington'  => 'Burlington',
+            'Botanical-Drive-Burlington' => 'Burlington',
+            '%Clarence%Port Colborne'    => 'Port Colborne',
+            '%Clarence%Port-Colborne'    => 'Port Colborne',
+            '%Dalton Road%Sutton'  => 'Sutton',
+            'Dalton-Road-Sutton'   => 'Sutton',
+            '%East Street%Sutton'  => 'Sutton',
+            'East-Street-Sutton'   => 'Sutton',
+            '%Mostar%Stouffville'  => 'Stouffville',
+            'Mostar-Street-Stouffville' => 'Stouffville',
+            '%Russell%Leamington'  => 'Leamington',
+            'Russell-Street-Leamington' => 'Leamington',
+            '%Simcoe Rd%Bradford'  => 'Bradford',
+            'Simcoe-Rd-Bradford'   => 'Bradford',
         );
 
         foreach ( $address_to_city as $pattern => $city ) {
@@ -2626,8 +2644,10 @@ function ontario_obituaries_on_plugin_update() {
         // ── Pass 4: Clear facility / institution names stored as city ──
         $facility_patterns = array(
             'Sunrise of %',
+            'Sunrise Of %',
             'St. Joseph%Health%',
             'St Joseph%Health%',
+            'St Josephs Health%',
             'The Villages',
             'China Grove',
         );
@@ -2686,13 +2706,13 @@ function ontario_obituaries_on_plugin_update() {
 
         if ( $repaired > 0 ) {
             ontario_obituaries_log(
-                sprintf( 'v4.2.2: Repaired city_normalized for %d obituary records (truncated names, addresses, garbled data).', $repaired ),
+                sprintf( 'v4.2.3: Repaired city_normalized for %d obituary records (truncated names, addresses, garbled data).', $repaired ),
                 'info'
             );
             ontario_obituaries_purge_litespeed( 'ontario_obits' );
         }
 
-        ontario_obituaries_log( 'v4.2.2: City data quality repair migration complete.', 'info' );
+        ontario_obituaries_log( 'v4.2.3: City data quality repair migration complete.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
