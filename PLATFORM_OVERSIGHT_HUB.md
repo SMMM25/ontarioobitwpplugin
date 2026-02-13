@@ -199,7 +199,7 @@ wp-plugin/
       class-source-adapter-base.php      — Shared HTTP, date, city normalization
       class-source-registry.php          — Source database + adapter registry
       class-source-collector.php         — Orchestrates scrape pipeline
-      class-adapter-remembering-ca.php   — Remembering.ca / yorkregion.com
+      class-adapter-remembering-ca.php   — Remembering.ca / Postmedia network (7 sources)
       class-adapter-frontrunner.php      — FrontRunner funeral home sites
       class-adapter-dignity-memorial.php — Dignity Memorial
       class-adapter-legacy-com.php       — Legacy.com
@@ -296,3 +296,164 @@ hostname. Sources sharing a host but serving different cities (e.g.,
 segments to create unique slugs. The obituary record's `source_domain` is derived
 separately from `extract_domain(base_url)` (actual hostname). **Never compare
 `domain` to `source_domain`.**
+
+### 11.6 — Image filtering: funeral home logo rejection (v4.0.1)
+
+**Problem discovered 2026-02-13**: The Remembering.ca adapter scraped funeral home
+logos (Ogden Funeral Homes, Arthur B Ridley Funeral Home, etc.) as obituary portrait
+images. These logos are copyrighted business branding and must NOT be displayed as
+obituary photos on monacomonuments.ca.
+
+**Root cause**: The CDN (`d1q40j6jx1d8h6.cloudfront.net/Obituaries/{id}/Image_N.jpg`)
+stores both real portraits and funeral home logos at the same URL pattern. The adapter
+had no way to distinguish them.
+
+**Fix**: `is_likely_portrait()` method in `class-adapter-remembering-ca.php` performs
+a lightweight HTTP HEAD request to check `Content-Length`. Images under 15 KB are
+rejected as likely logos (observed: logos 5-12 KB, portraits 20-500+ KB).
+
+**Migration**: v4.0.1 upgrade block in `ontario-obituaries.php` scans existing
+records with Cloudfront image URLs and clears `image_url` for any under 15 KB.
+
+**Rules for future image handling**:
+- NEVER display an image without verifying it is a portrait, not a business logo.
+- The 15 KB threshold is conservative. If false positives arise (tiny portraits
+  rejected), raise only after manual verification.
+- If a funeral home provides high-resolution logos (> 15 KB), add the obituary ID
+  or CDN path to a blocklist in the adapter.
+
+---
+
+## Section 12 — Deployment: WP Pusher Status
+
+**Status as of 2026-02-13**: WP Pusher is installed but CANNOT auto-deploy because
+the GitHub repo (`SMMM25/ontarioobitwpplugin`) is **private** and WP Pusher requires
+a paid license for private repos.
+
+**Current deployment method**: Manual upload via cPanel File Manager.
+
+**Deployment steps**:
+1. Merge PR on GitHub.
+2. Download updated plugin files (or ZIP from sandbox).
+3. Upload to `public_html/wp-content/plugins/ontario-obituaries/` via cPanel.
+4. Extract/overwrite files.
+5. Visit any site page to trigger the `init` migration hook.
+6. Purge LiteSpeed Cache.
+7. Verify via `/wp-json/ontario-obituaries/v1/cron`.
+
+**Future fix options**:
+- Purchase WP Pusher license for private repos (~$49/year).
+- Make the repo public (not recommended — contains business logic).
+- Set up a GitHub Actions workflow that deploys via SSH/SFTP on merge.
+
+---
+
+## Section 13 — AI Rewriter (v4.1.0)
+
+### Architecture
+- **Module**: `includes/class-ai-rewriter.php`
+- **API**: Groq (OpenAI-compatible) — free tier, no credit card
+- **Models**: Primary `llama-3.3-70b-versatile`, fallback `llama-3.1-8b-instant`
+- **Storage**: `ai_description` column added to `wp_ontario_obituaries` table
+- **Display**: Templates prefer `ai_description` over raw `description`
+
+### API Key Management
+- Stored in: `wp_options` → `ontario_obituaries_groq_api_key`
+- Set via WP Admin: Options → `ontario_obituaries_groq_api_key`
+- Or via WP-CLI: `wp option update ontario_obituaries_groq_api_key "gsk_xxx"`
+- Enable rewrites: Set `ai_rewrite_enabled` to true in plugin settings
+
+### Rate Limits (Groq Free Tier)
+- Llama 3.3 70B: 1,000 requests/day, 12,000 tokens/minute
+- Llama 3.1 8B: 14,400 requests/day, 6,000 tokens/minute
+- Plugin rate: 1 request per 6 seconds (10/min), 25 per batch
+- At ~175 new obituaries per scrape, all can be rewritten within 1 day
+
+### Validation Rules
+- Rewrite must mention the deceased's last name (or first name)
+- Length: 50–5,000 characters
+- No LLM artifacts ("as an AI", "certainly!", "here is", etc.)
+- Failed validations are logged but do not prevent future retries
+
+### Cron Integration
+- After each collection (`ontario_obituaries_collection_event`), a rewrite batch
+  is scheduled 120 seconds later
+- Batch processes 25 obituaries, then self-reschedules if more remain
+- Each batch runs on the `ontario_obituaries_ai_rewrite_batch` hook
+
+### REST Endpoints
+- `GET /wp-json/ontario-obituaries/v1/ai-rewriter` — Status and stats (admin-only)
+- `GET /wp-json/ontario-obituaries/v1/ai-rewriter?action=trigger` — Manual batch trigger
+
+### Rules for AI Rewriter
+- NEVER modify the original `description` field — it's the source of truth.
+- The `ai_description` field is disposable — can be regenerated at any time.
+- If Groq changes their API or rate limits, update the constants in class-ai-rewriter.php.
+- Monitor the error log for rate limiting or validation failures.
+
+---
+
+## Section 14 — IndexNow Integration (v4.2.0)
+
+- **Module**: `includes/class-indexnow.php`
+- **Purpose**: Submit new obituary URLs to Bing/Yandex/Naver for instant indexing
+- **API Key**: Auto-generated, stored in `ontario_obituaries_indexnow_key` option
+- **Verification**: Key served dynamically at `/{key}.txt` via `template_redirect` hook
+- **Trigger**: Runs automatically after each collection cycle for newly added obituaries
+- **Batch limit**: Up to 10,000 URLs per submission (API maximum)
+
+---
+
+## Section 15 — Domain Lock (v4.2.0)
+
+The plugin includes a domain lock that restricts scraping and cron operations
+to authorized domains only.
+
+- **Authorized domains**: `monacomonuments.ca`, `localhost`, `127.0.0.1`
+- **Constant**: `ONTARIO_OBITUARIES_AUTHORIZED_DOMAINS` in `ontario-obituaries.php`
+- **What's blocked**: Scheduled collection, AI rewrites on unauthorized domains
+- **What's NOT blocked**: Admin pages, display, so the owner can see the lock message
+- **To add a domain**: Edit the constant in the main plugin file
+
+---
+
+## Section 16 — Lead Capture (v4.2.0)
+
+- **Form**: Displayed on individual obituary SEO pages (soft, non-intrusive)
+- **Storage**: `ontario_obituaries_leads` option in wp_options (array of leads)
+- **Fields captured**: email, city, obituary_id, timestamp, hashed IP
+- **Dedup**: Same email won't be stored twice
+- **AJAX handler**: `ontario_obituaries_lead_capture` in `class-ontario-obituaries-ajax.php`
+- **Privacy**: No external services. Data stays in WordPress database.
+
+---
+
+## Section 17 — QR Codes (v4.2.0, fixed v4.2.1)
+
+- Individual obituary pages display a QR code linking to the memorial page URL
+- **v4.2.1 fix**: Google Charts QR API was deprecated (returns 404). Replaced with
+  QR Server API (`https://api.qrserver.com/v1/create-qr-code/`), which is free,
+  no-auth, and returns PNG images directly.
+- 150×150 pixels, lazy-loaded
+- Useful for funeral programs, printed materials
+
+---
+
+## Section 18 — Audit Fixes (v4.2.1)
+
+**QA audit performed 2026-02-13** caught 2 bugs and 1 improvement:
+
+1. **BUG: QR codes broken** — Google Charts QR API returns 404 (deprecated).
+   Fix: Switched to `api.qrserver.com` (free, no auth required).
+2. **BUG: Lead capture form had no JS handler** — Submitting the email form
+   navigated the browser to `admin-ajax.php`, showing raw JSON.
+   Fix: Added inline `fetch()` AJAX handler with success/error messages.
+3. **IMPROVEMENT: `should_index` now considers `ai_description`** — Previously
+   only checked `description` length. Obituaries with AI rewrites (but short
+   originals) were incorrectly marked `noindex`.
+
+**Rules for future QR/lead changes**:
+- Never use deprecated APIs without checking their status first.
+- All AJAX form submissions MUST have a JavaScript handler — never submit
+  directly to `admin-ajax.php` via `<form action>`.
+- Test all external API endpoints before deployment (curl -sI).

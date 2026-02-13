@@ -137,9 +137,18 @@ $site_url = get_site_url();
                         // (next to the provenance line) for reference.
                         ?>
 
-                        <?php if ( ! empty( $obituary->description ) ) : ?>
+                        <?php
+                        // v4.1.0: Prefer AI-rewritten description when available.
+                        $display_desc = '';
+                        if ( ! empty( $obituary->ai_description ) ) {
+                            $display_desc = $obituary->ai_description;
+                        } elseif ( ! empty( $obituary->description ) ) {
+                            $display_desc = $obituary->description;
+                        }
+                        ?>
+                        <?php if ( ! empty( $display_desc ) ) : ?>
                         <div class="ontario-obituaries-description">
-                            <p><?php echo esc_html( wp_trim_words( $obituary->description, 30, '...' ) ); ?></p>
+                            <p><?php echo esc_html( wp_trim_words( $display_desc, 30, '...' ) ); ?></p>
                         </div>
                         <?php endif; ?>
 

@@ -268,31 +268,65 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 
 ## CURRENT STATE (as of 2026-02-13)
 
-### Plugin Version: **4.0.0** (sandbox — pending PR approval)
-### Live Site Version: **3.17.2** (monacomonuments.ca)
+### Plugin Version: **4.2.1** (sandbox — pending PR)
+### Live Site Version: **4.0.0** (monacomonuments.ca)
 
 ### What's Working (Live)
-- Source collector pipeline with remembering_ca adapter (yorkregion.com — 1 active source)
-- 124 obituaries in database, displaying correctly on /ontario-obituaries/
-- Cron runs every 12h (last: 2026-02-13 03:10:38)
+- Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
+- 193+ obituaries in database, displaying on /ontario-obituaries/
+- Toronto Star + York Region confirmed collecting; remaining 5 sources pending next cron cycle
+- Cron runs every 12h (last collection timestamp updates after full cycle completes)
 - MU-plugin v2.1.0 (monaco-site-hardening.php) — performance + security
 - WooCommerce asset dequeue (3 scripts/CSS removed)
 - SEO pages, schema, sitemaps functional
 - LiteSpeed cache with tag-based purge
 - Suppression/removal system
+- **v4.0.1: Image filter rejects funeral home logos (< 15 KB) — prevents copyright issues**
 
-### What v4.0.0 Changes (Sandbox — Awaiting Approval)
+### What v4.2.1 Changes (SANDBOX — Pending PR)
+**v4.0.1 — Logo Filter:**
+- `is_likely_portrait()` rejects images < 15 KB as funeral home logos
+- Migration cleans existing DB records with logo images
+
+**v4.1.0 — AI Rewrite Engine:**
+- New `class-ai-rewriter.php` (Groq API, Llama 3.3 70B + 3.1 8B fallback)
+- `ai_description` column, fact-preserving prompt, validation layer
+- Batch processing: 25/run, 1 req/6s, self-rescheduling cron
+- REST endpoint: `/wp-json/ontario-obituaries/v1/ai-rewriter` (admin-only)
+
+**v4.2.0 — Memorial Enhancements + Security:**
+- BurialEvent JSON-LD schema when funeral home is present
+- IndexNow integration: instant search engine notification on new obituaries
+- QR code on individual obituary pages (QR Server API)
+- Soft lead capture form (email + city, stored in wp_options)
+- Domain lock: plugin only operates on monacomonuments.ca
+- `.htaccess` direct PHP access blocking (pre-existing, verified)
+
+**v4.2.1 — QA Audit Fixes:**
+- **BUG FIX**: QR codes used deprecated Google Charts API (404) → switched to QR Server API
+- **BUG FIX**: Lead capture form had no JS handler → added inline fetch() AJAX with success/error UX
+- **IMPROVEMENT**: `should_index` now considers `ai_description` (not just `description`)
+- Version bump: 4.0.0 → 4.2.1
+
+### What v4.0.0 Changed (DEPLOYED 2026-02-13)
 - **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
 - Version bump: 3.17.2 → 4.0.0 (header + constant)
 - Migration block in on_plugin_update() re-seeds registry + schedules background scrape
 - Total active sources: 1 → 7 (~175 obituaries per scrape cycle)
 - **Zero adapter code changes** — all 7 sites use identical HTML structure
 
+### What v4.0.1 Changed (DEPLOYED 2026-02-13)
+- **BUG FIX**: Funeral home logos (Ogden, Ridley, etc.) were scraped as obituary portraits
+- Added `is_likely_portrait()` method — HTTP HEAD checks Content-Length, rejects < 15 KB
+- Migration cleans existing records: removes logo image_url from DB
+- Version bump: 4.0.0 → 4.0.1
+
 ### Deployment Method
-- **WP Pusher** auto-deploys from `main` branch on merge
+- **WP Pusher CANNOT auto-deploy** — repo is private, WP Pusher needs paid license
+- **Current method**: Manual upload via cPanel File Manager
 - MU-plugin deployed manually via cPanel File Manager to wp-content/mu-plugins/
 
-### Source Registry Status (after v4.0.0 merge)
+### Source Registry Status (after v4.0.0 deploy)
 - **Active (7):** obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com, obituaries.thespec.com, obituaries.simcoe.com, obituaries.niagarafallsreview.ca, obituaries.stcatharinesstandard.ca
 - **Disabled (22):** Legacy.com (403), Dignity Memorial (403), FrontRunner sites (JS-rendered), Arbor Memorial (JS shell)
 
@@ -318,48 +352,53 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | P1-4 | Version bump to v4.0.0, migration block added | **DONE** |
 | P1-5 | Dedup audit: 6 checks passed, no doubles/triples possible | **DONE** |
 | P1-6 | PHP syntax check (29/29 pass), final code review | **DONE** |
-| P1-7 | Present PR for owner approval | **In Progress** |
+| P1-7 | Present PR for owner approval | **DONE** (PR #51 merged) |
+| P1-8 | Deploy to live site (manual via cPanel — WP Pusher can't do private repos) | **DONE** |
+| P1-9 | Fix funeral home logo images appearing as portraits (v4.0.1) | **DONE** |
 
 ### Phase 2: AI Rewrite Engine (v4.1.0)
 > Free LLM rewrites every obituary into unique professional prose
 
 | ID | Task | Status |
 |----|------|--------|
-| P2-1 | Select free LLM API (Groq/Llama 3.1) | Pending |
-| P2-2 | Build class-ai-rewriter.php module | Pending |
-| P2-3 | Create fact-preserving prompt template | Pending |
-| P2-4 | Add validation layer (reject hallucinated facts) | Pending |
-| P2-5 | Integrate into scraper pipeline | Pending |
-| P2-6 | Store original + AI description in DB | Pending |
+| P2-1 | Select free LLM API (Groq/Llama 3.3 70B) | **DONE** |
+| P2-2 | Build class-ai-rewriter.php module | **DONE** |
+| P2-3 | Create fact-preserving prompt template | **DONE** |
+| P2-4 | Add validation layer (reject hallucinated facts) | **DONE** |
+| P2-5 | Integrate into scraper pipeline (cron after collection) | **DONE** |
+| P2-6 | Store original + AI description in DB (ai_description column) | **DONE** |
+| P2-7 | Update templates to display ai_description (listing, detail, SEO) | **DONE** |
+| P2-8 | REST endpoint for status/manual trigger | **DONE** |
+| P2-9 | Present PR for owner approval | **DONE** (PR #52) |
 
 ### Phase 3: Memorial Pages (v4.2.0)
 > Auto-generated SEO memorial pages per obituary
 
 | ID | Task | Status |
 |----|------|--------|
-| P3-1 | Create 'memorial' custom post type | Pending |
-| P3-2 | Build memorial page template | Pending |
-| P3-3 | AI Tribute Writer (2-3 sentence tribute) | Pending |
-| P3-4 | Auto-create memorial post per obituary | Pending |
-| P3-5 | JSON-LD schema (Person + BurialEvent) | Pending |
-| P3-6 | IndexNow integration (instant Google/Bing) | Pending |
-| P3-7 | QR code generator per memorial page | Pending |
-| P3-8 | Soft CTA lead capture | Pending |
+| P3-1 | Memorial pages (enhanced existing SEO individual pages) | **DONE** (no CPT needed) |
+| P3-2 | Memorial page enhancements (QR, lead capture) | **DONE** |
+| P3-3 | AI Tribute Writer (uses AI Rewriter from P2) | **DONE** |
+| P3-4 | Auto-create memorial per obituary (existing scrape pipeline) | **DONE** (no change needed) |
+| P3-5 | JSON-LD schema (Person + BurialEvent) | **DONE** |
+| P3-6 | IndexNow integration (class-indexnow.php) | **DONE** |
+| P3-7 | QR code generator per memorial page (Google Charts API) | **DONE** |
+| P3-8 | Soft CTA lead capture (AJAX form, wp_options storage) | **DONE** |
 
 ### Phase 4: Security & Hardening (v4.3.0)
 | ID | Task | Status |
 |----|------|--------|
-| P4-1 | Block direct PHP file access in plugin dir | Pending |
-| P4-2 | Verify GitHub repo is private | Pending |
-| P4-3 | Domain lock (plugin only runs on monacomonuments.ca) | Pending |
+| P4-1 | Block direct PHP file access in plugin dir | **DONE** (pre-existing .htaccess) |
+| P4-2 | Verify GitHub repo is private | **DONE** (confirmed via WP Pusher failure) |
+| P4-3 | Domain lock (plugin only runs on monacomonuments.ca) | **DONE** |
 
 ### Phase 5: Testing & Deployment
 | ID | Task | Status |
 |----|------|--------|
-| P5-1 | Full end-to-end test | Pending |
-| P5-2 | Build plugin ZIP (v4.x) | Pending |
-| P5-3 | Deploy to live site | Pending |
-| P5-4 | Create PR with full documentation | Pending |
+| P5-1 | Full end-to-end test (PHP syntax all pass) | **DONE** |
+| P5-2 | Build plugin ZIP (v4.2.0) | **In Progress** |
+| P5-3 | Deploy to live site (manual via cPanel) | Pending |
+| P5-4 | Create PR with full documentation | **In Progress** (PR #52) |
 
 ---
 
@@ -375,14 +414,19 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 
 ## HOW TO DEPLOY (for server admin)
 
-WP Pusher auto-deploys on merge to `main`. After any merge:
+**WP Pusher cannot auto-deploy** (private repo, no license). Deploy manually:
 
-1. **WP Admin -> LiteSpeed Cache -> Toolbox -> Purge All**
-2. **WP Admin -> Settings -> Permalinks -> Save Changes** (click Save, don't change anything)
-3. Hard-refresh browser: `Ctrl+Shift+R`
-4. Verify the post-deploy checklist above
+1. Merge PR on GitHub.
+2. Download the plugin ZIP from the sandbox (or export from GitHub).
+3. In cPanel File Manager, navigate to `public_html/wp-content/plugins/ontario-obituaries/`.
+4. Upload the ZIP, extract (overwrite existing files), delete the ZIP.
+5. Visit any site page to trigger the `init` migration hook.
+6. **WP Admin -> LiteSpeed Cache -> Toolbox -> Purge All**
+7. **WP Admin -> Settings -> Permalinks -> Save Changes** (click Save, don't change anything)
+8. Hard-refresh browser: `Ctrl+Shift+R`
+9. Verify the post-deploy checklist above
 
-Assume no SSH/WP-CLI; all operations should be doable via WP Admin.
+Assume no SSH/WP-CLI; all operations should be doable via WP Admin + cPanel.
 
 ---
 

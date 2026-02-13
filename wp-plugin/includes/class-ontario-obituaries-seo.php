@@ -403,7 +403,9 @@ class Ontario_Obituaries_SEO {
         }
 
         // noindex by default (can be overridden via enrichment flag)
-        $should_index = ! empty( $obituary->description ) && strlen( $obituary->description ) > 100;
+        // v4.2.1: Also consider ai_description for indexing decision.
+        $best_desc_for_index = ! empty( $obituary->ai_description ) ? $obituary->ai_description : $obituary->description;
+        $should_index = ! empty( $best_desc_for_index ) && strlen( $best_desc_for_index ) > 100;
 
         // v3.10.2 PR #24b: Noindex controlled deterministically via query var.
         // The output_noindex_tag() method reads this during wp_head().
@@ -482,11 +484,45 @@ class Ontario_Obituaries_SEO {
                 ),
             );
         }
-        if ( ! empty( $obit->description ) ) {
-            $schema['description'] = wp_trim_words( $obit->description, 50, '...' );
+        // v4.1.0: Prefer AI-rewritten description for schema.
+        $schema_desc = ! empty( $obit->ai_description ) ? $obit->ai_description : ( ! empty( $obit->description ) ? $obit->description : '' );
+        if ( ! empty( $schema_desc ) ) {
+            $schema['description'] = wp_trim_words( $schema_desc, 50, '...' );
         }
 
         echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+
+        // v4.2.0: BurialEvent schema when funeral home is present.
+        if ( ! empty( $obit->funeral_home ) ) {
+            $burial_schema = array(
+                '@context' => 'https://schema.org',
+                '@type'    => 'Event',
+                'name'     => sprintf( 'Memorial Service for %s', $obit->name ),
+                'about'    => array(
+                    '@type' => 'Person',
+                    'name'  => $obit->name,
+                ),
+                'organizer' => array(
+                    '@type' => 'FuneralHome',
+                    'name'  => $obit->funeral_home,
+                ),
+            );
+
+            if ( ! empty( $obit->location ) ) {
+                $burial_schema['location'] = array(
+                    '@type'   => 'Place',
+                    'name'    => $obit->funeral_home,
+                    'address' => array(
+                        '@type'           => 'PostalAddress',
+                        'addressLocality' => $obit->location,
+                        'addressRegion'   => 'ON',
+                        'addressCountry'  => 'CA',
+                    ),
+                );
+            }
+
+            echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $burial_schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+        }
     }
 
     /**
@@ -596,12 +632,14 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
-                "SELECT name, description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d",
+                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d",
                 intval( $id )
             ) );
             if ( $obit ) {
                 $city_name = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
-                $snippet   = ! empty( $obit->description ) ? wp_trim_words( $obit->description, 25, '...' ) : '';
+                // v4.1.0: Prefer AI-rewritten description for SEO meta.
+                $best_desc = ! empty( $obit->ai_description ) ? $obit->ai_description : $obit->description;
+                $snippet   = ! empty( $best_desc ) ? wp_trim_words( $best_desc, 25, '...' ) : '';
                 $desc = sprintf(
                     'Obituary for %s of %s, Ontario (%s). %s Monaco Monuments — Newmarket, serving York Region.',
                     $obit->name,
@@ -819,15 +857,17 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
-                "SELECT name, description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d",
+                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d",
                 intval( $id )
             ) );
             if ( $obit ) {
                 $city_name       = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
                 $og['og:type']   = 'article';
                 $og['og:title']  = sprintf( '%s — %s, Ontario | Monaco Monuments', $obit->name, $city_name );
-                $og['og:description'] = ! empty( $obit->description )
-                    ? wp_trim_words( $obit->description, 30, '...' )
+                // v4.1.0: Prefer AI-rewritten description for OG meta.
+                $og_desc_source = ! empty( $obit->ai_description ) ? $obit->ai_description : $obit->description;
+                $og['og:description'] = ! empty( $og_desc_source )
+                    ? wp_trim_words( $og_desc_source, 30, '...' )
                     : sprintf( 'Obituary for %s of %s, Ontario.', $obit->name, $city_name );
                 if ( ! empty( $obit->image_url ) ) {
                     $og['og:image'] = $obit->image_url;

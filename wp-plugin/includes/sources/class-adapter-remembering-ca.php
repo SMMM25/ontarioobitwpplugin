@@ -5,6 +5,12 @@
  * Handles obituaries from the Remembering.ca platform, which powers
  * obituary sections for Postmedia newspapers across Canada:
  *   - obituaries.yorkregion.com
+ *   - obituaries.thestar.com
+ *   - obituaries.thespec.com
+ *   - obituaries.therecord.com
+ *   - obituaries.simcoe.com
+ *   - obituaries.niagarafallsreview.ca
+ *   - obituaries.stcatharinesstandard.ca
  *   - nationalpost.remembering.ca
  *   - lfpress.remembering.ca
  *   etc.
@@ -774,12 +780,80 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         if ( ! empty( $card['image_url'] ) ) {
             $is_cdn_image = (bool) preg_match( '/prfct\.cc|tributetech|cdn-otf|cloudfront\.net\/Obituaries/i', $card['image_url'] );
             if ( $is_cdn_image || $image_allowlisted ) {
-                $record['image_url'] = esc_url_raw( $card['image_url'] );
+                // v4.0.1: Filter out funeral home logos masquerading as obituary images.
+                // Logos are typically under 15 KB; real portraits are 20 KB+.
+                // A lightweight HEAD request checks Content-Length without downloading
+                // the full image. This prevents copyright issues from displaying
+                // funeral home branding (e.g., Ogden, Ridley logos) as obituary photos.
+                if ( $this->is_likely_portrait( $card['image_url'] ) ) {
+                    $record['image_url'] = esc_url_raw( $card['image_url'] );
+                }
             }
         }
 
         $record['provenance_hash'] = $this->generate_provenance_hash( $record );
         return $record;
+    }
+
+    /**
+     * v4.0.1: Check if an image URL is likely a real portrait (not a funeral home logo).
+     *
+     * Funeral home logos on Remembering.ca CDN are typically small files (< 15 KB),
+     * while real obituary portraits are 20 KB+. This method does a lightweight HTTP
+     * HEAD request to check Content-Length without downloading the image body.
+     *
+     * Returns false (skip image) if:
+     *   - The image is smaller than 15 KB (likely a logo/graphic)
+     *   - The HEAD request fails (conservative: skip rather than risk a logo)
+     *
+     * Performance: HEAD requests are ~50ms each and only fire for CDN images.
+     * With ~175 obituaries per cycle, this adds ~9s total — acceptable.
+     *
+     * @param string $url The image URL to check.
+     * @return bool True if the image is likely a portrait, false if likely a logo.
+     */
+    private function is_likely_portrait( $url ) {
+        // Minimum file size for a real portrait photo (in bytes).
+        // Observed: logos 5-12 KB, portraits 20 KB - 500+ KB.
+        $min_portrait_bytes = 15360; // 15 KB
+
+        $response = wp_remote_head( $url, array(
+            'timeout'    => 5,
+            'user-agent' => 'Mozilla/5.0 (compatible; OntarioObituaries/4.0)',
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            // Network error — skip image to be safe.
+            ontario_obituaries_log(
+                sprintf( 'v4.0.1: HEAD request failed for image %s — skipping (may be logo).', $url ),
+                'debug'
+            );
+            return false;
+        }
+
+        $content_length = wp_remote_retrieve_header( $response, 'content-length' );
+
+        if ( empty( $content_length ) ) {
+            // No Content-Length header — allow the image (can't determine size).
+            return true;
+        }
+
+        $size = intval( $content_length );
+
+        if ( $size < $min_portrait_bytes ) {
+            ontario_obituaries_log(
+                sprintf(
+                    'v4.0.1: Rejected image as likely logo — %s (%s bytes, threshold %s).',
+                    $url,
+                    number_format( $size ),
+                    number_format( $min_portrait_bytes )
+                ),
+                'debug'
+            );
+            return false;
+        }
+
+        return true;
     }
 
     private function parse_date_range( $text ) {
