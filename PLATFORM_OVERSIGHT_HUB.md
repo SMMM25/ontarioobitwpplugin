@@ -31,12 +31,12 @@ to prevent further breakage.
 - **Hosting**: Shared hosting with cPanel, no SSH access, no WP-CLI
 - **Deployment**: Manual upload via cPanel File Manager (WP Pusher can't do private repos)
 
-### Current Versions (as of 2026-02-13)
+### Current Versions (as of 2026-02-13, evening)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 4.2.3 | monacomonuments.ca — deployed via cPanel |
-| **Main branch** | 4.2.3 | PR #54 merged |
-| **Sandbox / PR** | 4.2.4 | PR #55 pending — death date fix + AI Rewriter activation fix |
+| **Live site** | 4.5.0 | monacomonuments.ca — deployed via WordPress Upload Plugin |
+| **Main branch** | 4.5.0 | PR #58 merged |
+| **Sandbox** | 4.5.0 | All caught up — no pending PRs |
 
 ### Live Site Stats (verified 2026-02-13 post-deploy)
 - **725 obituaries** displayed across 37 pagination pages
@@ -57,6 +57,11 @@ to prevent further breakage.
 
 | Feature | Version | Status |
 |---------|---------|--------|
+| AI Customer Service Chatbot (Groq-powered) | v4.5.0 | ✅ LIVE — enabled, working on frontend |
+| Google Ads Campaign Optimizer | v4.5.0 | ✅ DEPLOYED — disabled (owner's off-season, toggle-ready) |
+| Enhanced SEO Schema (DonateAction for GoFundMe) | v4.5.0 | ✅ LIVE |
+| GoFundMe Auto-Linker | v4.3.0 | ✅ LIVE (2 matched, 360 pending) |
+| AI Authenticity Checker (24/7 audits) | v4.3.0 | ✅ LIVE (725 never audited — processing) |
 | Logo filter (rejects images < 15 KB) | v4.0.1 | ✅ LIVE |
 | AI rewrite engine (Groq/Llama) | v4.1.0 | ✅ LIVE (code deployed, **needs Groq API key to activate**) |
 | BurialEvent JSON-LD schema | v4.2.0 | ✅ LIVE |
@@ -73,30 +78,48 @@ to prevent further breakage.
 | Admin UI for Groq API key input | v4.2.3 | ✅ LIVE |
 | AI Rewrite stats on settings page | v4.2.3 | ✅ LIVE |
 | City slug fix round 2 (14 address patterns) | v4.2.3 | ✅ LIVE |
-| Death date cross-validation fix | v4.2.4 | 🔶 PR #55 pending |
-| AI Rewriter immediate batch on save | v4.2.4 | 🔶 PR #55 pending |
-| Future death date rejection | v4.2.4 | 🔶 PR #55 pending |
-| q2l0eq garbled slug cleanup | v4.2.4 | 🔶 PR #55 pending |
+| Death date cross-validation fix | v4.2.4 | ✅ LIVE |
+| AI Rewriter immediate batch on save | v4.2.4 | ✅ LIVE |
+| Future death date rejection | v4.2.4 | ✅ LIVE |
+| q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
 
 ### AI Rewriter Status
 - **Code**: Complete (`class-ai-rewriter.php`)
-- **Admin UI**: v4.2.3 adds a settings page section (checkbox toggle + API key input + live stats)
-- **Activation (current v4.2.2)**: Set Groq API key via `wp_options` → `ontario_obituaries_groq_api_key`
-- **Activation (after v4.2.3)**: Go to WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
+- **Admin UI**: Settings page section (checkbox toggle + API key input + live stats)
+- **Activation**: WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
 - **Get key**: Free at https://console.groq.com (no credit card needed)
 - **What it does**: Rewrites scraped obituary text into original prose using Llama 3.3 70B
 - **Rate**: 25 per batch, 1 request per 6 seconds, auto-reschedules until caught up
-- **Copyright protection**: Until this is active, site displays original scraped text
 - **Groq API key set** (2026-02-13) — AI rewrites enabled via admin settings
-- **⚠️ v4.2.4 FIX NEEDED**: AI batch only fired after cron collection, not after settings save — fixed in PR #55
-- **⚠️ CRITICAL**: Until AI rewrites complete, all 725 obituaries display original copyrighted text
+- **Progress**: 393 of 725 rewritten (54%), 332 pending — auto-processing continues
+- **v4.2.4 FIX DEPLOYED**: AI batch now triggers immediately on settings save (30s delay)
+
+### AI Chatbot Status (v4.5.0 — NEW)
+- **Code**: `includes/class-ai-chatbot.php` (32 KB)
+- **Frontend**: `assets/css/ontario-chatbot.css` (11 KB) + `assets/js/ontario-chatbot.js` (13 KB)
+- **Enabled**: ✅ Live on all public pages (floating bottom-right chat bubble)
+- **AI Engine**: Groq LLM (same API key as rewriter) with smart rule-based fallback
+- **Email**: Sends customer inquiries to `info@monacomonuments.ca`
+- **Intake Form**: Directs customers to https://monacomonuments.ca/contact/ — explains no-cost, priority queue
+- **Features**: Auto-greeting, quick-action buttons (Get Started, Pricing, Catalog, Contact), conversation history, email forwarding
+- **Security**: Rate-limiting (1 msg/2s/IP), nonce verification, XSS protection (25+ esc_ calls)
+- **Cost**: Zero — uses Groq free tier, no external SaaS
+- **Admin toggle**: Ontario Obituaries → Settings → AI Customer Chatbot → Enable checkbox
+
+### Google Ads Optimizer Status (v4.5.0 — NEW)
+- **Code**: `includes/class-google-ads-optimizer.php` (43 KB)
+- **Enabled**: ❌ Disabled (owner's off-season decision — toggle-ready for spring)
+- **Google Ads Customer ID**: 903-524-8478 (pre-configured)
+- **Features**: Campaign metrics, keyword analysis, AI bid/budget recommendations, daily analysis
+- **Admin toggle**: Ontario Obituaries → Settings → Google Ads Campaign Optimizer → Enable checkbox + enter API credentials
+- **Credentials needed to activate**: Developer Token, OAuth2 Client ID, Client Secret, Refresh Token
 
 ### Known Data Quality Issues
 1. ~~**Truncated/garbled city names**~~ → ✅ Fixed by v4.2.2 + v4.2.3 migrations
 2. ~~**14 address-pattern city slugs**~~ → ✅ Fixed by v4.2.3 migration
-3. **Wrong death years on ~8 obituaries** → v4.2.4 migration pending (source metadata says 2026 but text says 2024/2025)
-4. **1 future death date** (Michael McCarty: 2026-05-07) → v4.2.4 migration pending
-5. **q2l0eq garbled slug** still in sitemap → v4.2.4 migration pending
+3. ~~**Wrong death years on ~8 obituaries**~~ → ✅ Fixed by v4.2.4 migration
+4. ~~**1 future death date** (Michael McCarty)~~ → ✅ Fixed by v4.2.4 migration
+5. ~~**q2l0eq garbled slug**~~ → ✅ Fixed by v4.2.4 migration
 6. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
 7. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
 8. **Schema redesign needed** for records without death date → future work
@@ -115,6 +138,12 @@ to prevent further breakage.
 | `includes/sources/class-source-collector.php` | Scrape pipeline orchestrator |
 | `templates/seo/individual.php` | Memorial page template (QR, lead form, CTA) |
 | `templates/obituaries.php` | Shortcode listing template |
+| `includes/class-ai-chatbot.php` | AI chatbot (Groq, email, intake form) |
+| `includes/class-google-ads-optimizer.php` | Google Ads API optimizer |
+| `includes/class-gofundme-linker.php` | GoFundMe campaign auto-linker |
+| `includes/class-ai-authenticity-checker.php` | AI data quality auditor |
+| `assets/css/ontario-chatbot.css` | Chatbot frontend styles |
+| `assets/js/ontario-chatbot.js` | Chatbot frontend JavaScript |
 | `PLATFORM_OVERSIGHT_HUB.md` | THIS FILE — rules + project state |
 | `DEVELOPER_LOG.md` | Full version history + PR log + roadmap |
 
@@ -133,18 +162,26 @@ to prevent further breakage.
 | #52 | Merged | v4.2.1 | AI Memorial System phases 1-4 + QA audit fixes |
 | #53 | Merged | v4.2.2 | City data quality repair + sitemap fix |
 | #54 | Merged | v4.2.3 | Admin UI for AI Rewriter + Groq key + additional city slug fixes |
-| #55 | Open | v4.2.4 | Death date cross-validation fix + AI Rewriter activation fix |
+| #55 | Merged | v4.2.4 | Death date cross-validation fix + AI Rewriter activation fix |
+| #56 | Merged | v4.3.0 | GoFundMe Auto-Linker + AI Authenticity Checker |
+| #57 | Merged | v4.3.0 | (merge commit) |
+| #58 | Merged | v4.5.0 | AI Customer Chatbot + Google Ads Optimizer + Enhanced SEO Schema |
 
 ### Remaining Work (priority order)
 1. ~~**Deploy v4.2.2** to live site~~ → ✅ Done 2026-02-13
 2. ~~**Merge PR #54 (v4.2.3)** and deploy~~ → ✅ Done 2026-02-13
 3. ~~**Enable AI Rewriter** via admin settings page~~ → ✅ Done 2026-02-13 (Groq key set)
-4. **Merge PR #55 (v4.2.4)** and deploy — fixes death dates + AI Rewriter batch trigger
-5. **Verify AI rewrites are running** after v4.2.4 deploy (check settings page stats)
-6. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
-7. **Schema redesign**: Handle records without death date (developer — future PR)
-8. **Out-of-province filtering** (developer — low priority)
-9. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
+4. ~~**Merge PR #55 (v4.2.4)** and deploy~~ → ✅ Done 2026-02-13
+5. ~~**Merge PR #56 (v4.3.0)** and deploy~~ → ✅ Done 2026-02-13 (GoFundMe + Authenticity)
+6. ~~**Merge PR #58 (v4.5.0)** and deploy~~ → ✅ Done 2026-02-13 (Chatbot + Google Ads + SEO Schema)
+7. ~~**Enable AI Chatbot**~~ → ✅ Done 2026-02-13 (live on frontend, verified working)
+8. ~~**Full site backup before v4.5.0 deploy**~~ → ✅ Done via UpdraftPlus (Feb 13, 21:45)
+9. **Monitor AI Rewriter progress** — 393/725 done (54%), auto-processing continues
+10. **Enable Google Ads Optimizer** when busy season starts (spring) — toggle + enter credentials
+11. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
+12. **Schema redesign**: Handle records without death date (developer — future PR)
+13. **Out-of-province filtering** (developer — low priority)
+14. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
 
 ---
 
@@ -321,13 +358,20 @@ MUST rely on these documents to understand project state.
 wp-plugin/
   ontario-obituaries.php          — Main plugin file, activation, cron, dedup, version
   includes/
-    class-ontario-obituaries.php         — Core WP integration (shortcode, assets, REST)
+    class-ontario-obituaries.php         — Core WP integration (shortcode, assets, REST, settings UI)
     class-ontario-obituaries-display.php — Shortcode rendering + data queries
     class-ontario-obituaries-scraper.php — Legacy scraper (v2.x, fallback)
     class-ontario-obituaries-seo.php     — SEO hub pages, sitemap, schema, OG tags
     class-ontario-obituaries-admin.php   — Admin settings page
     class-ontario-obituaries-ajax.php    — AJAX handlers (quick view, removal)
     class-ontario-obituaries-debug.php   — Debug/diagnostics page
+    class-ai-rewriter.php                — AI rewrite engine (Groq/Llama) [v4.1.0]
+    class-ai-chatbot.php                 — AI customer chatbot (Groq + rule-based) [v4.5.0]
+    class-ai-authenticity-checker.php    — AI data quality auditor [v4.3.0]
+    class-gofundme-linker.php            — GoFundMe campaign auto-linker [v4.3.0]
+    class-google-ads-optimizer.php       — Google Ads API optimizer [v4.5.0]
+    class-indexnow.php                   — IndexNow search engine notification [v4.2.0]
+    class-ontario-obituaries-reset-rescan.php — Reset & rescan tool [v3.11.0]
     sources/
       interface-source-adapter.php       — Adapter contract
       class-source-adapter-base.php      — Shared HTTP, date, city normalization
@@ -346,12 +390,17 @@ wp-plugin/
     obituaries.php        — Shortcode template (main listing page)
     obituary-detail.php   — Modal detail view
     seo/
+      wrapper.php         — Full HTML5 shell (Elementor header/footer)
       hub-ontario.php     — /obituaries/ontario/ template
       hub-city.php        — /obituaries/ontario/{city}/ template
       individual.php      — /obituaries/ontario/{city}/{slug}/ template
   assets/
     css/ontario-obituaries.css
+    css/ontario-chatbot.css              — Chatbot frontend styles [v4.5.0]
     js/ontario-obituaries.js, ontario-obituaries-admin.js
+    js/ontario-chatbot.js                — Chatbot frontend JavaScript [v4.5.0]
+  mu-plugins/
+    monaco-site-hardening.php            — Performance + security MU-plugin
 ```
 
 ## Data Flow
@@ -637,3 +686,173 @@ characters (previously only checked `description`), increasing Google indexation
 - The `normalize_city()` function is the single source of truth for city cleanup.
 - If a city cannot be reliably extracted, store empty string (better than bad data).
 - Monitor the sitemap periodically: `curl -s https://monacomonuments.ca/obituaries-sitemap.xml | grep -oP '/ontario/[^/]+/' | sort -u`
+
+---
+
+## Section 20 — AI Customer Chatbot (v4.5.0)
+
+**Deployed 2026-02-13** — A sophisticated AI-powered customer service chatbot for Monaco Monuments.
+
+### What It Does
+- **Auto-greets** every visitor with a warm, professional welcome message
+- **Answers questions** about monuments, headstones, pricing, materials, process
+- **Directs to intake form** at https://monacomonuments.ca/contact/ — emphasizes no cost, priority queue position
+- **Email forwarding** — sends customer inquiries directly to `info@monacomonuments.ca`
+- **Quick-action buttons**: Get Started, Pricing, Catalog, Contact
+- **Works with or without Groq API key** — falls back to smart rule-based responses if no key
+
+### Architecture
+- **PHP**: `includes/class-ai-chatbot.php` (32 KB) — Groq API integration, AJAX handlers, REST endpoints, conversation logging, email forwarding
+- **CSS**: `assets/css/ontario-chatbot.css` (11 KB) — Monaco-branded dark theme (#2c3e50), mobile-responsive, floating widget
+- **JS**: `assets/js/ontario-chatbot.js` (13 KB) — Chat UI, message history, typing indicators, quick actions, form validation
+- **Hooks**: `wp_footer` (renders widget), `wp_enqueue_scripts` (loads assets), `rest_api_init` + `wp_ajax_*` (message handlers)
+- **Option keys**: `ontario_obituaries_chatbot_settings` (config), `ontario_obituaries_chatbot_conversations` (logs)
+
+### REST / AJAX Endpoints
+- `POST /wp-json/ontario-obituaries/v1/chatbot/message` — Send message, get AI response
+- `POST /wp-json/ontario-obituaries/v1/chatbot/email` — Forward conversation to business email
+- `wp_ajax_ontario_chatbot_message` / `wp_ajax_nopriv_ontario_chatbot_message` — AJAX fallback
+- `wp_ajax_ontario_chatbot_send_email` / `wp_ajax_nopriv_ontario_chatbot_send_email` — Email AJAX fallback
+
+### Security
+- **Rate limiting**: 1 message per 2 seconds per IP (prevents spam/abuse)
+- **Nonce verification**: `check_ajax_referer('ontario_chatbot_nonce', 'nonce')` on all handlers
+- **XSS protection**: 25+ `esc_html()` / `esc_attr()` calls, all output escaped
+- **Input sanitization**: `sanitize_textarea_field()` on all user messages
+- **No sensitive data exposure**: Groq API key never sent to frontend
+
+### Business Configuration (hardcoded defaults, changeable via options)
+- **Email**: `info@monacomonuments.ca`
+- **Phone**: `(905) 392-0778`
+- **Address**: `1190 Twinney Dr. Unit #8, Newmarket, ON L3Y 1C8`
+- **Contact page**: `https://monacomonuments.ca/contact/`
+- **Catalog page**: `https://monacomonuments.ca/catalog/`
+- **Intake form messaging**: "Filling it out does not hold you to any financial cost — it simply puts you at the top of the list for customers to get serviced first."
+
+### Rules for Future Chatbot Changes
+- NEVER remove the intake form messaging — it's a core business requirement
+- NEVER change the email from `info@monacomonuments.ca` without owner approval
+- The chatbot MUST work without a Groq key (rule-based fallback is mandatory)
+- Rate limiting MUST remain enabled — the free Groq tier has strict limits
+- Test in incognito mode after any CSS/JS change (LiteSpeed caches aggressively)
+
+---
+
+## Section 21 — Google Ads Campaign Optimizer (v4.5.0)
+
+**Deployed 2026-02-13** — Currently DISABLED (owner's off-season). Toggle-ready for spring.
+
+### What It Does
+- Connects to Google Ads API (account 903-524-8478)
+- Fetches campaign metrics, keyword performance, search terms daily
+- AI-powered analysis generates bid, budget, keyword, and ad copy recommendations
+- Dashboard cards: 30-day spend, clicks, CTR, avg CPC, conversions
+- Optimization score (0-100) with quick wins and warnings
+
+### Architecture
+- **PHP**: `includes/class-google-ads-optimizer.php` (43 KB)
+- **API**: Google Ads REST API + Groq AI for analysis
+- **Cron**: `ontario_obituaries_google_ads_analysis` — runs every 180s after settings save (when enabled)
+- **Storage**: `ontario_obituaries_google_ads_credentials` (encrypted option), campaign data cached in transients
+
+### How to Enable (for future reference)
+1. WP Admin → Ontario Obituaries → Settings
+2. Check "Enable Google Ads Optimizer"
+3. Enter: Developer Token, OAuth2 Client ID, Client Secret, Refresh Token
+4. Customer ID `903-524-8478` is pre-filled
+5. Save Settings — first analysis runs in ~3 minutes
+
+### Rules for Google Ads Changes
+- NEVER store API credentials in code — they go in wp_options only
+- NEVER auto-enable this feature — it requires explicit owner opt-in
+- The Customer ID `903-524-8478` is Monaco Monuments' real ad account
+- Respect Google Ads API rate limits and Terms of Service
+
+---
+
+## Section 22 — GoFundMe Auto-Linker (v4.3.0)
+
+**Deployed 2026-02-13** — Active, auto-processing.
+
+### What It Does
+- Searches GoFundMe for memorial/funeral campaigns matching obituary records
+- Uses strict 3-point verification: name + death date + location
+- Adds "Support the Family" button on matched memorial pages
+- Schema.org `DonateAction` added for GoFundMe links (v4.5.0 SEO enhancement)
+
+### Stats (as of deploy)
+- 725 total | 2 matched | 365 checked | 360 pending
+- Batch: 20 obituaries per run, 1 search every 3 seconds
+
+### Architecture
+- **PHP**: `includes/class-gofundme-linker.php`
+- **DB columns**: `gofundme_url`, `gofundme_checked_at` (added v4.3.0 migration)
+- **Cron**: `ontario_obituaries_gofundme_batch` — 60s after settings save
+
+---
+
+## Section 23 — AI Authenticity Checker (v4.3.0)
+
+**Deployed 2026-02-13** — Active, processing 725 never-audited records.
+
+### What It Does
+- Runs 24/7 random audits using AI to verify dates, names, locations, consistency
+- 10 obituaries per cycle (8 never-audited + 2 re-checks)
+- Flags issues for admin review, auto-corrects high-confidence errors
+- Uses same Groq API key as AI Rewriter
+
+### Architecture
+- **PHP**: `includes/class-ai-authenticity-checker.php`
+- **DB columns**: `last_audit_at`, `audit_status`, `audit_flags` (added v4.3.0 migration)
+- **Cron**: `ontario_obituaries_authenticity_audit` — every 4 hours (120s after settings save)
+
+---
+
+## Section 24 — v4.5.0 Deployment Session Log (2026-02-13)
+
+> This section documents the complete deployment session for v4.5.0 to help
+> future developers understand what was done, why, and the current state.
+
+### What Was Accomplished (in order)
+1. **Built AI Customer Chatbot** (`class-ai-chatbot.php`, `ontario-chatbot.css`, `ontario-chatbot.js`)
+   - Groq-powered with rule-based fallback
+   - Email forwarding to `info@monacomonuments.ca`
+   - Intake form guidance with no-cost/priority-queue messaging
+   - Quick-action buttons, mobile-responsive, Monaco-branded
+2. **Comprehensive QA audit** of all v4.5.0 code:
+   - PHP syntax checks: all 5 key files passed
+   - JavaScript syntax: `ontario-chatbot.js` passed
+   - Brace balance: verified on all PHP files
+   - Nonce flow: validated end-to-end (PHP create → JS send → PHP verify)
+   - XSS: 25+ escape calls verified
+   - Rate limiting: 1 msg/2s/IP confirmed
+   - No duplicate hooks
+3. **Committed and pushed** to `genspark_ai_developer` branch
+4. **Updated PR #58** with full description and setup steps
+5. **Built deployment ZIP** (`ontario-obituaries-v4.5.0.zip`, 237 KB)
+6. **Owner merged PR #58** on GitHub
+7. **Owner created full site backup** via UpdraftPlus (Feb 13, 21:45 — Database + Plugins + Themes + Uploads + Others)
+8. **Owner uploaded v4.5.0 ZIP** via WordPress Admin → Plugins → Add New → Upload Plugin → Replace current
+9. **Owner enabled AI Chatbot** via Ontario Obituaries → Settings → Enable AI Chatbot → Save
+10. **Owner disabled Google Ads** (off-season decision — toggle-ready for spring)
+11. **Verified chatbot live on frontend** — chat bubble visible, greeting works, intake form link works, phone number displayed
+
+### Deployment Method Used
+- **NOT cPanel** this time — used WordPress Admin → Plugins → Upload Plugin → "Replace current with uploaded"
+- This is equivalent to the cPanel method but simpler for the owner
+- Full UpdraftPlus backup was created BEFORE the upload as a safety net
+
+### Files Added in v4.5.0
+| File | Size | Purpose |
+|------|------|---------|
+| `includes/class-ai-chatbot.php` | 32 KB | AI chatbot backend |
+| `assets/css/ontario-chatbot.css` | 11 KB | Chatbot styles |
+| `assets/js/ontario-chatbot.js` | 13 KB | Chatbot frontend |
+| `includes/class-google-ads-optimizer.php` | 43 KB | Google Ads optimizer |
+
+### Files Modified in v4.5.0
+| File | What changed |
+|------|-------------|
+| `ontario-obituaries.php` | Version bump to 4.5.0, chatbot class loader, v4.5.0 migration block |
+| `includes/class-ontario-obituaries.php` | Chatbot settings UI section, Google Ads settings UI, `chatbot_enabled` in sanitizer |
+| `templates/seo/individual.php` | Schema.org DonateAction for GoFundMe links, version header update |
