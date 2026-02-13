@@ -88,12 +88,14 @@ class Ontario_Obituaries_Authenticity_Checker {
         $never_audited_count = max( 1, intval( $this->batch_size * 0.8 ) );
         $re_check_count      = $this->batch_size - $never_audited_count;
 
+        // v4.6.0: Only audit published records (already rewritten & validated).
         $never_audited = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, name, date_of_birth, date_of_death, age, funeral_home,
                     location, city_normalized, description, ai_description, source_url
              FROM `{$table}`
              WHERE last_audit_at IS NULL
                AND suppressed_at IS NULL
+               AND status = 'published'
                AND description IS NOT NULL AND description != ''
              ORDER BY RAND()
              LIMIT %d",
@@ -106,6 +108,7 @@ class Ontario_Obituaries_Authenticity_Checker {
              FROM `{$table}`
              WHERE last_audit_at IS NOT NULL
                AND suppressed_at IS NULL
+               AND status = 'published'
                AND description IS NOT NULL AND description != ''
              ORDER BY RAND()
              LIMIT %d",
@@ -448,20 +451,21 @@ SYSTEM;
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
+        // v4.6.0: Only count published records.
         $total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL AND description IS NOT NULL AND description != ''"
+            "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL AND status = 'published' AND description IS NOT NULL AND description != ''"
         );
 
         $audited = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE last_audit_at IS NOT NULL AND suppressed_at IS NULL"
+            "SELECT COUNT(*) FROM `{$table}` WHERE last_audit_at IS NOT NULL AND suppressed_at IS NULL AND status = 'published'"
         );
 
         $flagged = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'flagged' AND suppressed_at IS NULL"
+            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'flagged' AND suppressed_at IS NULL AND status = 'published'"
         );
 
         $passed = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'pass' AND suppressed_at IS NULL"
+            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'pass' AND suppressed_at IS NULL AND status = 'published'"
         );
 
         return array(

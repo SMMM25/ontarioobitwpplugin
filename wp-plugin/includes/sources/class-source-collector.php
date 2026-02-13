@@ -389,12 +389,14 @@ class Ontario_Obituaries_Source_Collector {
         }
 
         // ── Standard INSERT IGNORE (catches exact dupes from same source) ──
+        // v4.6.0: All new records start as 'pending'. They become 'published'
+        // only after AI rewrite + validation passes.
         $sql = $wpdb->prepare(
             "INSERT IGNORE INTO `{$table_name}`
                 (name, date_of_birth, date_of_death, age, funeral_home, location,
                  image_url, description, source_url, source_domain, source_type,
-                 city_normalized, provenance_hash)
-             VALUES (%s, %s, %s, %d, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                 city_normalized, provenance_hash, status)
+             VALUES (%s, %s, %s, %d, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')",
             $record['name'],
             $record['date_of_birth'],
             $record['date_of_death'],

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.5.0
+ * Version: 4.6.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.5.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.6.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -299,6 +299,7 @@ function ontario_obituaries_activate() {
         source_type varchar(50) NOT NULL DEFAULT '',
         city_normalized varchar(100) NOT NULL DEFAULT '',
         provenance_hash varchar(40) NOT NULL DEFAULT '',
+        status varchar(20) NOT NULL DEFAULT 'pending',
         suppressed_at datetime DEFAULT NULL,
         suppressed_reason varchar(100) DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
@@ -313,6 +314,7 @@ function ontario_obituaries_activate() {
         KEY idx_city_normalized (city_normalized),
         KEY idx_provenance_hash (provenance_hash),
         KEY idx_suppressed_at (suppressed_at),
+        KEY idx_status (status),
         UNIQUE KEY idx_unique_obituary (name(100), date_of_death, funeral_home(100))
     ) $charset_collate;";
 
@@ -424,6 +426,32 @@ function ontario_obituaries_activate() {
     // v3.0.0: Seed default sources on fresh install
     if ( version_compare( $current_db_version, '3.0.0', '<' ) ) {
         Ontario_Obituaries_Source_Registry::seed_defaults();
+    }
+
+    // v4.6.0 migration: Add status column + fresh start (scrape → rewrite → publish pipeline)
+    if ( version_compare( $current_db_version, '4.6.0', '<' ) ) {
+        $existing_cols_460 = $wpdb->get_col( $wpdb->prepare(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table_name
+        ) );
+
+        // Add 'status' column if it doesn't exist.
+        if ( ! in_array( 'status', $existing_cols_460, true ) ) {
+            $wpdb->query( "ALTER TABLE `{$table_name}` ADD COLUMN status varchar(20) NOT NULL DEFAULT 'pending' AFTER provenance_hash" );
+            $wpdb->query( "ALTER TABLE `{$table_name}` ADD KEY idx_status (status)" );
+        }
+
+        // Fresh start: wipe all existing obituaries so the new pipeline
+        // (scrape → AI rewrite → validate → publish) starts clean.
+        // Suppression records are kept so do-not-republish rules survive.
+        $wpdb->query( "TRUNCATE TABLE `{$table_name}`" );
+        ontario_obituaries_log( 'v4.6.0: Fresh start — truncated obituaries table for new scrape→rewrite→publish pipeline.', 'info' );
+
+        // Clear cached data.
+        delete_transient( 'ontario_obituaries_locations_cache' );
+        delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+        delete_option( 'ontario_obituaries_last_collection' );
+        delete_option( 'ontario_obituaries_last_scrape' );
     }
 
     update_option( 'ontario_obituaries_db_version', ONTARIO_OBITUARIES_VERSION );
@@ -1030,23 +1058,9 @@ function ontario_obituaries_scheduled_collection() {
     // v3.3.0: Run dedup after every scrape to catch cross-source duplicates immediately
     ontario_obituaries_cleanup_duplicates();
 
-    // v4.2.0: Submit new obituary URLs to IndexNow for instant search engine indexing.
-    if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
-        $added_count = isset( $results['obituaries_added'] ) ? intval( $results['obituaries_added'] ) : 0;
-        if ( $added_count > 0 ) {
-            global $wpdb;
-            $table = $wpdb->prefix . 'ontario_obituaries';
-            // Get IDs of obituaries created in the last 2 hours (covers this scrape cycle).
-            $recent_ids = $wpdb->get_col( $wpdb->prepare(
-                "SELECT id FROM `{$table}` WHERE created_at >= %s AND suppressed_at IS NULL ORDER BY id DESC LIMIT 500",
-                gmdate( 'Y-m-d H:i:s', strtotime( '-2 hours' ) )
-            ) );
-            if ( ! empty( $recent_ids ) ) {
-                $indexnow = new Ontario_Obituaries_IndexNow();
-                $indexnow->submit_urls( $recent_ids );
-            }
-        }
-    }
+    // v4.6.0: IndexNow is now triggered after AI rewrite publishes records,
+    // not after scraping. Pending records should NOT be submitted to search engines.
+    // See ontario_obituaries_ai_rewrite_batch() for the IndexNow trigger.
 
     // v4.1.0: After collection, schedule AI rewrite batch if enabled.
     $settings_for_rewrite = ontario_obituaries_get_settings();
@@ -1108,9 +1122,25 @@ function ontario_obituaries_ai_rewrite_batch() {
         );
     }
 
-    // Purge cache if any rewrites were saved.
+    // Purge cache and submit newly published records to IndexNow.
     if ( $result['succeeded'] > 0 ) {
         ontario_obituaries_purge_litespeed( 'ontario_obits' );
+
+        // v4.6.0: Submit newly published obituaries to IndexNow.
+        if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'ontario_obituaries';
+            // Get IDs of obituaries published in the last 10 minutes (this batch).
+            $recent_ids = $wpdb->get_col( $wpdb->prepare(
+                "SELECT id FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND ai_description != '' AND created_at >= %s AND suppressed_at IS NULL ORDER BY id DESC LIMIT 100",
+                gmdate( 'Y-m-d H:i:s', strtotime( '-10 minutes' ) )
+            ) );
+            if ( ! empty( $recent_ids ) ) {
+                $indexnow = new Ontario_Obituaries_IndexNow();
+                $indexnow->submit_urls( $recent_ids );
+                ontario_obituaries_log( sprintf( 'v4.6.0: Submitted %d newly published obituaries to IndexNow.', count( $recent_ids ) ), 'info' );
+            }
+        }
     }
 }
 add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrite_batch' );

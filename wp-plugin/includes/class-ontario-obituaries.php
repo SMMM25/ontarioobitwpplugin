@@ -570,12 +570,14 @@ class Ontario_Obituaries {
                                 $rewriter = new Ontario_Obituaries_AI_Rewriter();
                                 $stats    = $rewriter->get_stats();
                                 printf(
-                                    '<strong>%s</strong> total &nbsp;|&nbsp; <strong style="color:green;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong>%s%%</strong> complete',
+                                    '<strong>%s</strong> scraped &nbsp;|&nbsp; <strong style="color:blue;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:green;">%s</strong> published (live) &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong>%s%%</strong> complete',
                                     esc_html( number_format_i18n( $stats['total'] ) ),
                                     esc_html( number_format_i18n( $stats['rewritten'] ) ),
+                                    esc_html( number_format_i18n( isset( $stats['published'] ) ? $stats['published'] : 0 ) ),
                                     esc_html( number_format_i18n( $stats['pending'] ) ),
                                     esc_html( number_format_i18n( $stats['percent_complete'], 1 ) )
                                 );
+                                echo '<br><small style="color:#666;">Pipeline: Scrape &rarr; AI Rewrite &rarr; Validate &rarr; Publish. Obituaries only appear on site after passing all stages.</small>';
                             } else {
                                 esc_html_e( 'AI Rewriter class not loaded.', 'ontario-obituaries' );
                             }

@@ -146,7 +146,8 @@ class Ontario_Obituaries_Display {
         $table = $this->table_name();
 
         // Build WHERE — v3.0.0: exclude suppressed records
-        $where_clauses = array( '1=1', 'suppressed_at IS NULL' );
+        // v4.6.0: Only show 'published' records (passed AI rewrite + validation pipeline)
+        $where_clauses = array( '1=1', 'suppressed_at IS NULL', "status = 'published'" );
         $values        = array();
 
         if ( ! empty( $args['location'] ) ) {
@@ -229,8 +230,9 @@ class Ontario_Obituaries_Display {
         }
 
         // v3.3.0: Exclude suppressed records from single lookups too
+        // v4.6.0: Only show published records
         $row = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL",
+            "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
             $id
         ) );
 
@@ -259,8 +261,9 @@ class Ontario_Obituaries_Display {
             return array();
         }
 
+        // v4.6.0: Only show locations from published records
         $locations = $wpdb->get_col(
-            "SELECT DISTINCT location FROM `{$this->table_name()}` WHERE location != '' AND suppressed_at IS NULL ORDER BY location"
+            "SELECT DISTINCT location FROM `{$this->table_name()}` WHERE location != '' AND suppressed_at IS NULL AND status = 'published' ORDER BY location"
         );
 
         $locations = $locations ? $locations : array();
@@ -285,8 +288,9 @@ class Ontario_Obituaries_Display {
             return array();
         }
 
+        // v4.6.0: Only show funeral homes from published records
         $homes = $wpdb->get_col(
-            "SELECT DISTINCT funeral_home FROM `{$this->table_name()}` WHERE funeral_home != '' AND suppressed_at IS NULL ORDER BY funeral_home"
+            "SELECT DISTINCT funeral_home FROM `{$this->table_name()}` WHERE funeral_home != '' AND suppressed_at IS NULL AND status = 'published' ORDER BY funeral_home"
         );
 
         $homes = $homes ? $homes : array();
@@ -321,7 +325,8 @@ class Ontario_Obituaries_Display {
         $table = $this->table_name();
 
         // v3.0.0: exclude suppressed records
-        $where_clauses = array( '1=1', 'suppressed_at IS NULL' );
+        // v4.6.0: Only count published records
+        $where_clauses = array( '1=1', 'suppressed_at IS NULL', "status = 'published'" );
         $values        = array();
 
         if ( ! empty( $args['location'] ) ) {
