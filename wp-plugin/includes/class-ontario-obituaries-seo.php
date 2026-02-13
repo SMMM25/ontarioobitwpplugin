@@ -757,12 +757,17 @@ class Ontario_Obituaries_SEO {
         }
 
         // 3. Individual obituaries (only indexable ones)
+        // v4.2.2: Also consider ai_description for sitemap inclusion.
+        // An obituary is indexable if either its original description or AI-rewritten
+        // description exceeds 100 characters.
         $obits = $wpdb->get_results(
             "SELECT id, name, city_normalized, location, date_of_death
              FROM `{$table}`
              WHERE suppressed_at IS NULL
-               AND description IS NOT NULL
-               AND CHAR_LENGTH(description) > 100
+               AND (
+                   ( description IS NOT NULL AND CHAR_LENGTH(description) > 100 )
+                   OR ( ai_description IS NOT NULL AND CHAR_LENGTH(ai_description) > 100 )
+               )
              ORDER BY date_of_death DESC
              LIMIT 1000"
         );

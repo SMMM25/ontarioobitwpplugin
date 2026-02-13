@@ -1,10 +1,10 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-09 (after PR #25 merge)
-> **Plugin header/constant still reads `3.10.1`; functional state includes PR #24 and PR #25; next planned bump: `3.10.2`.**
-> **Main branch HEAD (at time of writing):** `1a55154` (GitHub merge commit for PR #25)
-> **PR #25 squashed code commit:** `699c718`
-> **PR #24 squashed code commit:** `3590e1f`
+> **Last updated:** 2026-02-13 (after PR #52 merge + PR #53 open)
+> **Plugin version:** `4.2.2` (sandbox, PR #53 pending) / `4.2.1` (main branch, PR #52 merged)
+> **Live site version:** `4.0.0` (monacomonuments.ca — deployment pending)
+> **Main branch HEAD:** `c340ee0` (GitHub merge commit for PR #52)
+> **Next deployment:** v4.2.2 via cPanel manual upload
 
 ---
 
@@ -26,7 +26,7 @@ A WordPress plugin for **Monaco Monuments** (`monacomonuments.ca`) that:
 - **Generates** Schema.org structured data, sitemaps, OpenGraph tags
 - **Provides** a suppression/removal system for privacy requests
 
-The plugin runs on WordPress with the **Litho theme** and **Elementor** page builder. Caching is via **LiteSpeed Cache**. Deployment is via **WP Pusher** (auto-pulls from GitHub `main` branch on merge).
+The plugin runs on WordPress with the **Litho theme** and **Elementor** page builder. Caching is via **LiteSpeed Cache**. Deployment is **manual via cPanel** (WP Pusher cannot auto-deploy private repos).
 
 ---
 
@@ -262,28 +262,38 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #48 | Merged | `7971189` | fix(v3.17.1): aggressive dedup — name-only pass + DB name cleanup |
 | #49 | Merged | `a668581` | fix(urgent): remove [obituaries] shortcode alias — breaks Elementor page |
 | #50 | Merged | `f031ffa` | fix(urgent): reverse redirect direction + remove broken shortcode alias |
-| #51 | Merged | `d8c7d52` | fix(v3.17.2): performance optimization + location data cleanup |
+| #51 | Merged | `251f447` | feat(v4.0.0): add 6 Postmedia obituary sources — expand coverage 1→7 |
+| #52 | Merged | `a50904c` | feat(v4.2.1): Complete AI Memorial System — Phases 1-4 + QA audit fixes |
+| #53 | **OPEN** | `41c4c88` | fix(v4.2.2): city data quality repair + sitemap ai_description fix |
 
 ---
 
 ## CURRENT STATE (as of 2026-02-13)
 
-### Plugin Version: **4.2.1** (sandbox — pending PR)
-### Live Site Version: **4.0.0** (monacomonuments.ca)
+### Plugin Version: **4.2.2** (sandbox — PR #53 pending)
+### Main Branch Version: **4.2.1** (PR #52 merged 2026-02-13)
+### Live Site Version: **4.0.0** (monacomonuments.ca — deployment pending)
 
-### What's Working (Live)
+### What's Working (Live — v4.0.0)
 - Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
-- 193+ obituaries in database, displaying on /ontario-obituaries/
-- Toronto Star + York Region confirmed collecting; remaining 5 sources pending next cron cycle
-- Cron runs every 12h (last collection timestamp updates after full cycle completes)
+- **627 obituaries** in database (up from 193), displaying on /ontario-obituaries/ with 32 pages
+- All 7 sources collecting successfully every 12h via WP-Cron
 - MU-plugin v2.1.0 (monaco-site-hardening.php) — performance + security
 - WooCommerce asset dequeue (3 scripts/CSS removed)
-- SEO pages, schema, sitemaps functional
+- SEO pages, schema, sitemaps functional (505 URLs in sitemap)
 - LiteSpeed cache with tag-based purge
 - Suppression/removal system
-- **v4.0.1: Image filter rejects funeral home logos (< 15 KB) — prevents copyright issues**
+- Logo filter active — images < 15 KB rejected at scrape time
 
-### What v4.2.1 Changes (SANDBOX — Pending PR)
+### What's NOT yet active on live site (requires v4.2.2 deployment)
+- AI rewrite engine (needs Groq API key + plugin update)
+- Memorial page enhancements (QR codes, lead capture form, BurialEvent schema)
+- IndexNow search engine notification
+- Domain lock security feature
+- City data quality repair migration
+- Sitemap ai_description inclusion
+
+### What v4.2.2 Changes (SANDBOX — Pending PR)
 **v4.0.1 — Logo Filter:**
 - `is_likely_portrait()` rejects images < 15 KB as funeral home logos
 - Migration cleans existing DB records with logo images
@@ -307,6 +317,18 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - **BUG FIX**: Lead capture form had no JS handler → added inline fetch() AJAX with success/error UX
 - **IMPROVEMENT**: `should_index` now considers `ai_description` (not just `description`)
 - Version bump: 4.0.0 → 4.2.1
+
+**v4.2.2 — City Data Quality Repair:**
+- **DATA REPAIR**: Multi-pass migration fixes `city_normalized` column:
+  - Truncated city names (hamilt → Hamilton, burlingt → Burlington, etc.)
+  - Street addresses stored as cities (King Street East Hamilton → Hamilton)
+  - Garbled/encoded values (q2l0eq, mself-__next_f) → cleared
+  - Biographical text (Jan was born in Toronto) → extracts city or clears
+  - Facility names (Sunrise of Unionville) → cleared
+  - Typos (Kitchner → Kitchener, Stoiuffville → Stouffville)
+- **ROOT-CAUSE FIX**: Strengthened `normalize_city()` in adapter base to reject bad data at ingest time
+- **SITEMAP FIX**: Query now includes obituaries where `ai_description` > 100 chars (not just `description`)
+- Version bump: 4.2.1 → 4.2.2
 
 ### What v4.0.0 Changed (DEPLOYED 2026-02-13)
 - **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
@@ -396,9 +418,14 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | ID | Task | Status |
 |----|------|--------|
 | P5-1 | Full end-to-end test (PHP syntax all pass) | **DONE** |
-| P5-2 | Build plugin ZIP (v4.2.0) | **In Progress** |
-| P5-3 | Deploy to live site (manual via cPanel) | Pending |
-| P5-4 | Create PR with full documentation | **In Progress** (PR #52) |
+| P5-2 | Build plugin ZIP (v4.2.1) | **DONE** (PR #52, 182 KB) |
+| P5-3 | QA audit — found & fixed 2 bugs + 1 improvement (v4.2.1) | **DONE** |
+| P5-4 | Create PR with full documentation | **DONE** (PR #52 — MERGED) |
+| P5-5 | City data quality repair (v4.2.2) | **DONE** (PR #53 — OPEN) |
+| P5-6 | Build plugin ZIP (v4.2.2) | **DONE** (186 KB) |
+| P5-7 | Deploy v4.2.2 to live site (manual via cPanel) | **PENDING — owner action** |
+| P5-8 | Set Groq API key to enable AI rewrites | **PENDING — owner action** |
+| P5-9 | Verify live site post-deploy | **PENDING** |
 
 ---
 

@@ -405,10 +405,60 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
 
         $city = trim( $city );
 
+        // v4.2.2: Reject values that are clearly not city names.
+        // Garbled/encoded strings (contain non-printable, base64 artifacts, JS fragments).
+        if ( preg_match( '/[{}\[\]<>]|__next|mself|q2l0|push1/', $city ) ) {
+            return '';
+        }
+
+        // v4.2.2: Reject biographical text stored as city.
+        if ( preg_match( '/\b(was born|settled in|passed away|survived by|predeceased)\b/i', $city ) ) {
+            return '';
+        }
+
+        // v4.2.2: If the value contains a street address indicator, extract only the city.
+        // Pattern: "123 Street Name, City" or "Street Name, City, ON"
+        $street_keywords = array( 'Street', 'Avenue', 'Drive', 'Road', 'Parkway', 'Boulevard', 'Crescent', 'Lane', 'Court', 'Place', 'Way', 'Circle', 'Trail', ' St ', ' Ave ', ' Dr ', ' Rd ', ' Blvd ' );
+        $is_address = false;
+        foreach ( $street_keywords as $kw ) {
+            if ( stripos( $city, $kw ) !== false ) {
+                $is_address = true;
+                break;
+            }
+        }
+
+        if ( $is_address ) {
+            // Try to extract city after the last comma.
+            $parts = explode( ',', $city );
+            if ( count( $parts ) > 1 ) {
+                $candidate = trim( end( $parts ) );
+                // Remove province suffixes from the extracted part.
+                $candidate = preg_replace( '/\s*(ON|Ontario|Canada)\s*$/i', '', $candidate );
+                $candidate = trim( $candidate );
+                if ( strlen( $candidate ) >= 3 && strlen( $candidate ) <= 30 && ! preg_match( '/\d/', $candidate ) ) {
+                    $city = $candidate;
+                } else {
+                    return ''; // Cannot reliably extract city from address.
+                }
+            } else {
+                return ''; // Address with no comma — can't extract city reliably.
+            }
+        }
+
         // Remove province/postal suffixes
         $city = preg_replace( '/,?\s*(ON|Ontario|Canada)\s*$/i', '', $city );
         $city = preg_replace( '/,?\s*[A-Z]\d[A-Z]\s*\d[A-Z]\d\s*$/i', '', $city );
         $city = trim( $city, ', ' );
+
+        // v4.2.2: Reject if still too long (real city names are rarely > 30 chars).
+        if ( strlen( $city ) > 40 ) {
+            return '';
+        }
+
+        // v4.2.2: Reject if the value contains digits (house numbers leaked through).
+        if ( preg_match( '/\d/', $city ) ) {
+            return '';
+        }
 
         // Known mergers / neighborhoods → parent city
         $toronto_areas = array(
@@ -422,6 +472,28 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
             if ( $lower === $area ) {
                 return 'Toronto';
             }
+        }
+
+        // v4.2.2: Known truncation fixes (source data arrives pre-truncated).
+        $truncation_fixes = array(
+            'hamilt'   => 'Hamilton',
+            'burlingt' => 'Burlington',
+            'sutt'     => 'Sutton',
+            'lond'     => 'London',
+            'milt'     => 'Milton',
+            'tivert'   => 'Tiverton',
+            'harrist'  => 'Harriston',
+            'kingst'   => 'Kingston',
+            'leamingt' => 'Leamington',
+            'allist'   => 'Alliston',
+            'kitchner' => 'Kitchener',
+            'stoiuffville' => 'Stouffville',
+            'catharines'   => 'St. Catharines',
+            'beet'     => 'Beeton',
+        );
+
+        if ( isset( $truncation_fixes[ $lower ] ) ) {
+            return $truncation_fixes[ $lower ];
         }
 
         // Title-case the result

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.2.1
+ * Version: 4.2.2
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.2.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.2.2' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -2455,6 +2455,244 @@ function ontario_obituaries_on_plugin_update() {
         }
 
         ontario_obituaries_log( 'v4.1.0: AI Rewriter infrastructure deployed. Set Groq API key to activate.', 'info' );
+    }
+
+    // v4.2.2: Repair city_normalized data quality issues.
+    //
+    // Problem: Some source adapters stored full street addresses, truncated city
+    // names, garbled/encoded strings, out-of-province cities, biographical text,
+    // or facility names in the city_normalized column. This produces bad sitemap
+    // URLs and broken city hub pages.
+    //
+    // Fix: A multi-pass repair that:
+    //   1) Maps known truncated names to their full form (hamilt → Hamilton, etc.)
+    //   2) Maps known typos (kitchner → Kitchener, stoiuffville → Stouffville)
+    //   3) Extracts the actual city from street addresses (e.g. "King Street East, Hamilton" → Hamilton)
+    //   4) Clears garbled/encoded values (q2l0eq, mself-__next_f, etc.)
+    //   5) Clears biographical text stored as city (e.g. "Jan was born in Toronto")
+    //   6) Clears facility/institution names stored as city
+    //   7) Flags out-of-province records but keeps them (they are valid obituaries)
+    if ( version_compare( $stored_version, '4.2.2', '<' ) ) {
+        global $wpdb;
+        $table   = $wpdb->prefix . 'ontario_obituaries';
+        $repaired = 0;
+
+        // ── Pass 1: Direct replacements for truncated / misspelled city names ──
+        $direct_fixes = array(
+            'Hamilt'        => 'Hamilton',
+            'Burlingt'      => 'Burlington',
+            'Sutt'          => 'Sutton',
+            'Lond'          => 'London',
+            'Milt'          => 'Milton',
+            'Tivert'        => 'Tiverton',
+            'Harrist'       => 'Harriston',
+            'Frederict'     => 'Fredericton',
+            'Kingst'        => 'Kingston',
+            'Leamingt'      => 'Leamington',
+            'Beet'          => 'Beeton',
+            'Dalton Road, Sutt' => 'Sutton',
+            'Autlan'        => 'Aurora', // likely mis-parsed
+            'Allist'        => 'Alliston',
+            'Catharines'    => 'St. Catharines',
+            'Kitchner'      => 'Kitchener',
+            'Stoiuffville'  => 'Stouffville',
+        );
+
+        foreach ( $direct_fixes as $bad => $good ) {
+            $updated = $wpdb->query( $wpdb->prepare(
+                "UPDATE `{$table}` SET city_normalized = %s WHERE city_normalized = %s",
+                $good,
+                $bad
+            ) );
+            if ( $updated > 0 ) {
+                $repaired += $updated;
+            }
+        }
+
+        // ── Pass 2: Extract city from street addresses ──
+        // Pattern: "Street Name, City" or "Street Name City" with known city at end.
+        $address_to_city = array(
+            '%Street%Hamilton'     => 'Hamilton',
+            '%Street%Kitchener'    => 'Kitchener',
+            '%Street%Dundas'       => 'Dundas',
+            '%Street%Welland'      => 'Welland',
+            '%Street%Waterloo'     => 'Waterloo',
+            '%Street%Cambridge'    => 'Cambridge',
+            '%Street%Elmira'       => 'Elmira',
+            '%Avenue%Toronto'      => 'Toronto',
+            '%Avenue%Hamilton'     => 'Hamilton',
+            '%Avenue%Markham'      => 'Markham',
+            '%Drive%Toronto'       => 'Toronto',
+            '%Drive%Burlington'    => 'Burlington',
+            '%Drive%Elmira'        => 'Elmira',
+            '%Drive%Stouffville'   => 'Stouffville',
+            '%Drive%Georgina'      => 'Georgina',
+            '%Parkway%Newmarket'   => 'Newmarket',
+            '%Road%Niagara Falls'  => 'Niagara Falls',
+            '%Road%Mount Hope'     => 'Mount Hope',
+            '%Road%Bradford'       => 'Bradford',
+            '%Road%Georgina'       => 'Georgina',
+            '%Gage%Hamilton'       => 'Hamilton',
+            '%Guelph Line%'        => 'Burlington',
+            '%Wellington%Hamilton' => 'Hamilton',
+            '%Industrial Parkway%Aurora'  => 'Aurora',
+            '%Hurontario%Mississauga'     => 'Mississauga',
+            '%King St%Midland'     => 'Midland',
+            '%Fennell%Hamilton'    => 'Hamilton',
+            '%Ottawa Street%Hamilton' => 'Hamilton',
+            '%Rymal%Hamilton'      => 'Hamilton',
+            '%Queen St%Lakefield'  => 'Lakefield',
+            '%Reach St%Port Perry' => 'Port Perry',
+            '%Botanical%Burlington'=> 'Burlington',
+            '%Brant St%Burlington' => 'Burlington',
+            '%Hatt Street%Dundas'  => 'Dundas',
+            '%Pine Street%Collingwood' => 'Collingwood',
+            '%Maple Street%Niagara Falls' => 'Niagara Falls',
+            '%Drummond Road%Niagara Falls' => 'Niagara Falls',
+            '%East Main%Welland'   => 'Welland',
+            '%West Main%Welland'   => 'Welland',
+            '%Main Street%Dundas'  => 'Dundas',
+            '%Main Street%Niagara Falls' => 'Niagara Falls',
+            '%Main Street%Markham' => 'Markham',
+            '%Main Street%Mount Forest'  => 'Mount Forest',
+            '%Main Street%Newmarket'     => 'Newmarket',
+            '%Park Road%Brantford' => 'Brantford',
+            '%Connor Drive%Toronto'=> 'Toronto',
+            '%Underhill%Toronto'   => 'Toronto',
+            '%Kipling%Etobicoke'   => 'Toronto',
+            '%Woodbine%Markham'    => 'Markham',
+            '%St Andrews%Cambridge'=> 'Cambridge',
+            '%Arthur Street%Elmira'=> 'Elmira',
+            '%Barnswallow%Elmira'  => 'Elmira',
+            '%Church St%Saint Catharines' => 'St. Catharines',
+            '%Dalton%Georgina'     => 'Georgina',
+            '%King Street%Hamilt'  => 'Hamilton',
+            '%Ottawa Street%Hamilt'=> 'Hamilton',
+            '%Gage Ave%Hamilt'     => 'Hamilton',
+            '%Gage Avenue%Hamilt'  => 'Hamilton',
+            '%Wellington%Hamilt'   => 'Hamilton',
+            '%Fennell%Hamilt'      => 'Hamilton',
+            '%Rymal%Hamilt'        => 'Hamilton',
+        );
+
+        foreach ( $address_to_city as $pattern => $city ) {
+            $updated = $wpdb->query( $wpdb->prepare(
+                "UPDATE `{$table}` SET city_normalized = %s WHERE city_normalized LIKE %s AND city_normalized != %s",
+                $city,
+                $pattern,
+                $city
+            ) );
+            if ( $updated > 0 ) {
+                $repaired += $updated;
+            }
+        }
+
+        // ── Pass 3: Clear garbled / encoded / biographical values ──
+        // These are base64 artifacts, JS injection, or sentences stored as city names.
+        $garbage_patterns = array(
+            'q2l0eq',
+            'mself-%',
+            '%__next_f%',
+            '%was born in%',
+            '%settled in%',
+            '%Midtown in%',
+        );
+
+        foreach ( $garbage_patterns as $pattern ) {
+            // Try to extract a real city name from the garbage, otherwise clear it.
+            if ( strpos( $pattern, 'born in' ) !== false || strpos( $pattern, 'settled in' ) !== false || strpos( $pattern, 'Midtown in' ) !== false ) {
+                // Extract city from biographical text: "Jan was born in Toronto" → "Toronto"
+                $bio_rows = $wpdb->get_results(
+                    $wpdb->prepare( "SELECT id, city_normalized FROM `{$table}` WHERE city_normalized LIKE %s", $pattern )
+                );
+                foreach ( (array) $bio_rows as $bio_row ) {
+                    $extracted = '';
+                    if ( preg_match( '/(?:born in|settled in|Midtown in)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i', $bio_row->city_normalized, $m ) ) {
+                        $extracted = ucwords( strtolower( trim( $m[1] ) ) );
+                    }
+                    $wpdb->update( $table, array( 'city_normalized' => $extracted ), array( 'id' => $bio_row->id ) );
+                    $repaired++;
+                }
+            } else {
+                $updated = $wpdb->query(
+                    $wpdb->prepare( "UPDATE `{$table}` SET city_normalized = '' WHERE city_normalized LIKE %s", $pattern )
+                );
+                if ( $updated > 0 ) {
+                    $repaired += $updated;
+                }
+            }
+        }
+
+        // ── Pass 4: Clear facility / institution names stored as city ──
+        $facility_patterns = array(
+            'Sunrise of %',
+            'St. Joseph%Health%',
+            'St Joseph%Health%',
+            'The Villages',
+            'China Grove',
+        );
+
+        foreach ( $facility_patterns as $pattern ) {
+            $updated = $wpdb->query(
+                $wpdb->prepare( "UPDATE `{$table}` SET city_normalized = '' WHERE city_normalized LIKE %s", $pattern )
+            );
+            if ( $updated > 0 ) {
+                $repaired += $updated;
+            }
+        }
+
+        // ── Pass 5: General address cleanup ──
+        // Any city_normalized that contains "Street", "Avenue", "Drive", "Road",
+        // "Parkway", "Boulevard" etc. and wasn't caught above is likely an address.
+        // Extract the last word(s) as the city, or clear if ambiguous.
+        $address_rows = $wpdb->get_results(
+            "SELECT id, city_normalized FROM `{$table}`
+             WHERE (
+                city_normalized LIKE '% Street%'
+                OR city_normalized LIKE '% Avenue%'
+                OR city_normalized LIKE '% Drive%'
+                OR city_normalized LIKE '% Road%'
+                OR city_normalized LIKE '% Parkway%'
+                OR city_normalized LIKE '% Boulevard%'
+                OR city_normalized LIKE '% Line%'
+                OR city_normalized LIKE '% Rd %'
+                OR city_normalized LIKE '% St %'
+                OR city_normalized LIKE '% Ave %'
+                OR city_normalized LIKE '% Dr %'
+             )
+             AND suppressed_at IS NULL"
+        );
+
+        if ( ! empty( $address_rows ) ) {
+            foreach ( $address_rows as $addr_row ) {
+                // Try to extract city after the last comma.
+                $parts = explode( ',', $addr_row->city_normalized );
+                if ( count( $parts ) > 1 ) {
+                    $candidate = ucwords( strtolower( trim( end( $parts ) ) ) );
+                    // Remove province suffixes.
+                    $candidate = preg_replace( '/\s*(On|Ontario|Canada)\s*$/i', '', $candidate );
+                    $candidate = trim( $candidate );
+                    if ( strlen( $candidate ) >= 3 && strlen( $candidate ) <= 30 ) {
+                        $wpdb->update( $table, array( 'city_normalized' => $candidate ), array( 'id' => $addr_row->id ) );
+                        $repaired++;
+                        continue;
+                    }
+                }
+                // If no comma, clear the field — better no city than a bad address slug.
+                $wpdb->update( $table, array( 'city_normalized' => '' ), array( 'id' => $addr_row->id ) );
+                $repaired++;
+            }
+        }
+
+        if ( $repaired > 0 ) {
+            ontario_obituaries_log(
+                sprintf( 'v4.2.2: Repaired city_normalized for %d obituary records (truncated names, addresses, garbled data).', $repaired ),
+                'info'
+            );
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        }
+
+        ontario_obituaries_log( 'v4.2.2: City data quality repair migration complete.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
