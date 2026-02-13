@@ -130,6 +130,41 @@ if ( $birth_display && $death_display ) {
         </div>
         <?php endif; ?>
 
+        <?php
+        // v4.3.0: GoFundMe Auto-Linker — show verified campaign link.
+        if ( ! empty( $obituary->gofundme_url ) ) : ?>
+        <div class="ontario-obituary-gofundme">
+            <div class="ontario-obituary-gofundme-inner">
+                <div class="ontario-gofundme-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                </div>
+                <div class="ontario-gofundme-text">
+                    <h4><?php esc_html_e( 'Support the Family', 'ontario-obituaries' ); ?></h4>
+                    <p><?php printf(
+                        esc_html__( 'A verified GoFundMe campaign has been created for %s. Your support can make a meaningful difference during this difficult time.', 'ontario-obituaries' ),
+                        esc_html( $obituary->name )
+                    ); ?></p>
+                    <a href="<?php echo esc_url( $obituary->gofundme_url ); ?>" target="_blank" rel="noopener noreferrer" class="ontario-gofundme-btn">
+                        <?php esc_html_e( 'Donate on GoFundMe', 'ontario-obituaries' ); ?>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    </a>
+                </div>
+            </div>
+            <p class="ontario-gofundme-disclaimer">
+                <?php esc_html_e( 'This link was automatically matched using name, date, and location verification. Monaco Monuments is not affiliated with GoFundMe.', 'ontario-obituaries' ); ?>
+            </p>
+        </div>
+        <?php endif; ?>
+
+        <?php
+        // v4.3.0: AI Authenticity audit badge — show verified status.
+        if ( ! empty( $obituary->audit_status ) && 'pass' === $obituary->audit_status ) : ?>
+        <div class="ontario-obituary-verified-badge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+            <span><?php esc_html_e( 'AI Verified — data accuracy confirmed', 'ontario-obituaries' ); ?></span>
+        </div>
+        <?php endif; ?>
+
         <!-- Footer / provenance -->
         <footer class="ontario-obituary-footer">
             <?php if ( ! empty( $obituary->source_url ) ) : ?>
