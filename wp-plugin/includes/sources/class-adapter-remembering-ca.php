@@ -643,27 +643,81 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             $card['published_date'] = $card['detail_published_date'];
         }
 
-        // v3.12.0 FIX (Goal A): Death-date priority — prefer the textual death
-        // date extracted from the obituary body over ALL other sources.
+        // v4.2.4 FIX: Death-date priority — phrase-based extraction from the
+        // obituary body ("passed away on...") is the most reliable source.
+        // The structured year range on Remembering.ca can be WRONG — the platform
+        // sometimes updates the death year to the current year when republishing
+        // older obituaries (e.g., "1950-2026" when the person actually died in 2024).
         //
-        // v3.15.2: Priority order (highest → lowest):
-        //   1. detail_death_date     — extracted from full detail page description (most reliable)
-        //   2. death_date_from_text  — explicit phrase like "passed away on Jan 6, 2026" (listing card)
-        //   3. dates['death']        — from structured date range ("Jan 1, 1940 - Jan 10, 2026")
-        //   4. published_date        — "Published online January 10, 2026" (last resort)
+        // Priority order (highest → lowest):
+        //   1. death_date_from_text   — "passed away on Jan 6, 2025" (from listing card body)
+        //   2. detail_death_date      — phrase-extracted from detail page description
+        //   3. dates['death']         — from structured date range ("Jan 1, 1940 - Jan 10, 2026")
+        //   4. published_date         — "Published online January 10, 2026" (last resort)
         //
-        // v3.15.2: detail_death_date from SSR detail page is the most accurate,
-        // since it has the full obituary text with context.
-        if ( ! empty( $card['detail_death_date'] ) ) {
+        // v4.2.4: Swapped priorities #1 and #2. The listing card death_date_from_text
+        // is extracted using ONLY death-keyword phrases ("passed away", "died", etc.)
+        // while detail_death_date can also match generic date ranges that may contain
+        // the wrong year from the source platform's metadata.
+
+        // First priority: phrase-extracted death date from listing card text
+        if ( ! empty( $card['death_date_from_text'] ) ) {
+            $text_death = $this->normalize_date( $card['death_date_from_text'] );
+            if ( ! empty( $text_death ) ) {
+                $date_of_death = $text_death;
+            }
+        }
+
+        // Second priority: phrase-extracted death date from detail page
+        if ( empty( $date_of_death ) && ! empty( $card['detail_death_date'] ) ) {
             $detail_death = $this->normalize_date( $card['detail_death_date'] );
             if ( ! empty( $detail_death ) ) {
                 $date_of_death = $detail_death;
             }
         }
-        if ( empty( $date_of_death ) && ! empty( $card['death_date_from_text'] ) ) {
-            $text_death = $this->normalize_date( $card['death_date_from_text'] );
-            if ( ! empty( $text_death ) ) {
-                $date_of_death = $text_death;
+
+        // v4.2.4: Cross-validation — if detail_death_date disagrees with
+        // death_date_from_text on the YEAR, trust the text-based phrase.
+        // This catches cases where Remembering.ca shows "1950-2026" in metadata
+        // but the obituary body says "passed away on April 9, 2025".
+        if ( ! empty( $date_of_death ) && ! empty( $card['death_date_from_text'] ) ) {
+            $text_death_norm = $this->normalize_date( $card['death_date_from_text'] );
+            if ( ! empty( $text_death_norm ) ) {
+                $current_year = intval( substr( $date_of_death, 0, 4 ) );
+                $text_year    = intval( substr( $text_death_norm, 0, 4 ) );
+                if ( $current_year !== $text_year && $text_year >= 2018 && $text_year <= intval( date( 'Y' ) ) ) {
+                    ontario_obituaries_log(
+                        sprintf(
+                            'v4.2.4: Death date cross-validation override — %s (structured) → %s (text phrase) for "%s".',
+                            $date_of_death, $text_death_norm, $name
+                        ),
+                        'info'
+                    );
+                    $date_of_death = $text_death_norm;
+                }
+            }
+        }
+
+        // v4.2.4: Reject future death dates — if date_of_death is in the future,
+        // it's almost certainly wrong metadata from the source platform.
+        if ( ! empty( $date_of_death ) && $date_of_death > date( 'Y-m-d' ) ) {
+            ontario_obituaries_log(
+                sprintf(
+                    'v4.2.4: Rejecting future death date %s for "%s" — using text-based date or clearing.',
+                    $date_of_death, $name
+                ),
+                'warning'
+            );
+            // Try text-based date as fallback
+            if ( ! empty( $card['death_date_from_text'] ) ) {
+                $fallback = $this->normalize_date( $card['death_date_from_text'] );
+                if ( ! empty( $fallback ) && $fallback <= date( 'Y-m-d' ) ) {
+                    $date_of_death = $fallback;
+                } else {
+                    $date_of_death = '';
+                }
+            } else {
+                $date_of_death = '';
             }
         }
 

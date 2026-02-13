@@ -139,6 +139,20 @@ class Ontario_Obituaries {
             }
         }
 
+        // v4.2.4: When AI rewrites are enabled AND a key is set, schedule the
+        // first rewrite batch immediately (30s delay). Previously the batch only
+        // fired after a collection event, meaning enabling AI rewrites wouldn't
+        // do anything until the next 12h cron cycle.
+        $groq_key = get_option( 'ontario_obituaries_groq_api_key', '' );
+        if ( ! empty( $sanitized['ai_rewrite_enabled'] ) && ! empty( $groq_key ) ) {
+            if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+                wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
+                if ( function_exists( 'ontario_obituaries_log' ) ) {
+                    ontario_obituaries_log( 'v4.2.4: AI Rewrite batch scheduled (30s) — triggered by settings save.', 'info' );
+                }
+            }
+        }
+
         // Numeric with bounds
         $sanitized['max_age']         = isset( $input['max_age'] )         ? max( 1, min( 365, intval( $input['max_age'] ) ) )         : 7;
         $sanitized['retry_attempts']  = isset( $input['retry_attempts'] )  ? max( 1, min( 10,  intval( $input['retry_attempts'] ) ) )  : 3;
