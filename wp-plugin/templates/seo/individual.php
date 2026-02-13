@@ -11,6 +11,8 @@
  * v3.14.1: Full Monaco Monuments themed detail page with dates, image, CTA.
  * v3.15.0: Forced enrichment sweep populates images; year_death extraction fix.
  * v3.15.1: Better images (300x400 print-only CDN); full description extraction; SPA skip.
+ * v4.4.0: Enhanced schema.org (DonateAction, LocalBusiness, BreadcrumbList); Google Ads tracking.
+ * v4.5.0: AI Chatbot integration; version bump.
  *
  * Variables provided via query var 'ontario_obituaries_seo_data' (extracted by wrapper):
  *   $obituary     — object the obituary record
@@ -46,7 +48,151 @@ if ( $birth_display && $death_display ) {
 }
 ?>
 
-<div class="ontario-obituary-individual" itemscope itemtype="https://schema.org/Person">
+<?php
+// v4.4.0: Enhanced structured data — JSON-LD for Person, DonateAction, LocalBusiness, BreadcrumbList.
+$schema_person = array(
+    '@type'  => 'Person',
+    'name'   => $obituary->name,
+);
+if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) {
+    $schema_person['birthDate'] = $obituary->date_of_birth;
+}
+if ( ! empty( $obituary->date_of_death ) && '0000-00-00' !== $obituary->date_of_death ) {
+    $schema_person['deathDate'] = $obituary->date_of_death;
+}
+if ( ! empty( $obituary->image_url ) ) {
+    $schema_person['image'] = $obituary->image_url;
+}
+if ( ! empty( $obituary->location ) ) {
+    $schema_person['deathPlace'] = array(
+        '@type'   => 'Place',
+        'name'    => $obituary->location . ', Ontario',
+        'address' => array(
+            '@type'           => 'PostalAddress',
+            'addressLocality' => $obituary->location,
+            'addressRegion'   => 'ON',
+            'addressCountry'  => 'CA',
+        ),
+    );
+}
+
+// Build the memorial page URL for schema references.
+$schema_memorial_url = home_url( sprintf( '/obituaries/ontario/%s/%s-%d/',
+    sanitize_title( $city_name ? $city_name : 'ontario' ),
+    sanitize_title( $obituary->name ),
+    $obituary->id
+) );
+$schema_person['url'] = $schema_memorial_url;
+
+// WebPage wrapper.
+$schema_webpage = array(
+    '@type'       => 'WebPage',
+    'name'        => sprintf( '%s — Ontario Obituary', $obituary->name ),
+    'url'         => $schema_memorial_url,
+    'datePublished' => ! empty( $obituary->created_at ) ? gmdate( 'c', strtotime( $obituary->created_at ) ) : '',
+    'mainEntity'  => $schema_person,
+);
+
+// DonateAction for GoFundMe (schema.org DonateAction — rich result for fundraisers).
+if ( ! empty( $obituary->gofundme_url ) ) {
+    $schema_person['potentialAction'] = array(
+        '@type'       => 'DonateAction',
+        'name'        => sprintf( 'Donate to %s Memorial Fund', $obituary->name ),
+        'description' => sprintf( 'Support the family of %s through their verified GoFundMe memorial campaign.', $obituary->name ),
+        'recipient'   => array(
+            '@type' => 'Person',
+            'name'  => $obituary->name,
+        ),
+        'target' => array(
+            '@type'      => 'EntryPoint',
+            'urlTemplate' => $obituary->gofundme_url,
+            'actionPlatform' => array(
+                'http://schema.org/DesktopWebPlatform',
+                'http://schema.org/MobileWebPlatform',
+            ),
+        ),
+    );
+}
+
+// BreadcrumbList structured data.
+$breadcrumb_items = array(
+    array( '@type' => 'ListItem', 'position' => 1, 'name' => 'Home', 'item' => home_url( '/' ) ),
+    array( '@type' => 'ListItem', 'position' => 2, 'name' => 'Ontario Obituaries', 'item' => home_url( '/obituaries/ontario/' ) ),
+);
+if ( ! empty( $city_name ) ) {
+    $breadcrumb_items[] = array(
+        '@type'    => 'ListItem',
+        'position' => 3,
+        'name'     => $city_name,
+        'item'     => home_url( '/obituaries/ontario/' . sanitize_title( $city_name ) . '/' ),
+    );
+    $breadcrumb_items[] = array(
+        '@type'    => 'ListItem',
+        'position' => 4,
+        'name'     => $obituary->name,
+    );
+} else {
+    $breadcrumb_items[] = array(
+        '@type'    => 'ListItem',
+        'position' => 3,
+        'name'     => $obituary->name,
+    );
+}
+
+// LocalBusiness for Monaco Monuments (advertiser attribution).
+$schema_local_biz = array(
+    '@type'     => 'LocalBusiness',
+    '@id'       => 'https://monacomonuments.ca/#business',
+    'name'      => 'Monaco Monuments',
+    'url'       => 'https://monacomonuments.ca',
+    'telephone' => '+1-905-392-0778',
+    'address'   => array(
+        '@type'           => 'PostalAddress',
+        'streetAddress'   => '1190 Twinney Dr. Unit #8',
+        'addressLocality' => 'Newmarket',
+        'addressRegion'   => 'ON',
+        'postalCode'      => 'L3Y 1C8',
+        'addressCountry'  => 'CA',
+    ),
+    'geo'       => array(
+        '@type'     => 'GeoCoordinates',
+        'latitude'  => 44.0532,
+        'longitude' => -79.4613,
+    ),
+    'priceRange'   => '$$',
+    'description'  => 'Custom monuments, headstones, and memorials serving York Region, Newmarket, Aurora, Richmond Hill, and Southern Ontario.',
+    'openingHoursSpecification' => array(
+        '@type'     => 'OpeningHoursSpecification',
+        'dayOfWeek' => array( 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday' ),
+        'opens'     => '09:00',
+        'closes'    => '17:00',
+    ),
+    'sameAs' => array(
+        'https://www.facebook.com/monacomonuments/',
+        'https://www.google.com/maps/place/Monaco+Monuments/',
+    ),
+);
+
+// Build the complete JSON-LD graph.
+$json_ld = array(
+    '@context' => 'https://schema.org',
+    '@graph'   => array(
+        $schema_webpage,
+        array(
+            '@type'           => 'BreadcrumbList',
+            'itemListElement' => $breadcrumb_items,
+        ),
+        $schema_local_biz,
+    ),
+);
+?>
+
+<!-- v4.4.0: Enhanced JSON-LD structured data -->
+<script type="application/ld+json">
+<?php echo wp_json_encode( $json_ld, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ); ?>
+</script>
+
+<div class="ontario-obituary-individual">
 
     <!-- Breadcrumbs -->
     <nav class="ontario-obituaries-breadcrumbs">
@@ -72,7 +218,7 @@ if ( $birth_display && $death_display ) {
             <?php endif; ?>
 
             <div class="ontario-obituary-hero-info">
-                <h1 itemprop="name"><?php echo esc_html( $obituary->name ); ?></h1>
+                <h1><?php echo esc_html( $obituary->name ); ?></h1>
 
                 <?php if ( $date_range_display ) : ?>
                 <div class="ontario-obituary-dates">
@@ -88,9 +234,9 @@ if ( $birth_display && $death_display ) {
 
                 <div class="ontario-obituary-meta-details">
                     <?php if ( ! empty( $obituary->location ) ) : ?>
-                        <div class="ontario-obituary-location-tag" itemprop="deathPlace" itemscope itemtype="https://schema.org/Place">
+                        <div class="ontario-obituary-location-tag">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                            <span itemprop="name"><?php echo esc_html( $obituary->location ); ?></span>, Ontario
+                            <span><?php echo esc_html( $obituary->location ); ?></span>, Ontario
                         </div>
                     <?php endif; ?>
 
@@ -104,7 +250,7 @@ if ( $birth_display && $death_display ) {
             </div>
         </div>
 
-        <!-- Schema.org meta (hidden) -->
+        <!-- Schema.org meta now in JSON-LD above; hidden meta kept for legacy parsers -->
         <?php if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) : ?>
             <meta itemprop="birthDate" content="<?php echo esc_attr( $obituary->date_of_birth ); ?>">
         <?php endif; ?>
