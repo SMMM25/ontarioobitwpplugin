@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.2.5
+ * Version: 4.3.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.2.5' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.3.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -195,6 +195,12 @@ function ontario_obituaries_includes() {
 
     // v4.2.0: IndexNow — instant search engine notification on new obituaries
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-indexnow.php';
+
+    // v4.3.0: GoFundMe Auto-Linker — matches obituaries to memorial fundraisers
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-gofundme-linker.php';
+
+    // v4.3.0: AI Authenticity Checker — 24/7 random data quality audits
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-authenticity-checker.php';
 
     // SEO — needed on frontend for rewrite rules
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
@@ -1040,6 +1046,14 @@ function ontario_obituaries_scheduled_collection() {
             ontario_obituaries_log( 'v4.1.0: Scheduled AI rewrite batch (120s after collection).', 'info' );
         }
     }
+
+    // v4.3.0: After collection, schedule GoFundMe linker batch if enabled.
+    if ( ! empty( $settings_for_rewrite['gofundme_enabled'] ) ) {
+        if ( ! wp_next_scheduled( 'ontario_obituaries_gofundme_batch' ) ) {
+            wp_schedule_single_event( time() + 180, 'ontario_obituaries_gofundme_batch' );
+            ontario_obituaries_log( 'v4.3.0: Scheduled GoFundMe linker batch (180s after collection).', 'info' );
+        }
+    }
 }
 add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled_collection' );
 
@@ -1090,6 +1104,107 @@ function ontario_obituaries_ai_rewrite_batch() {
     }
 }
 add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrite_batch' );
+
+/**
+ * v4.3.0: GoFundMe Auto-Linker batch.
+ *
+ * Runs after collection and on its own schedule. Searches GoFundMe for
+ * memorial campaigns matching obituary records using 3-point verification.
+ */
+function ontario_obituaries_gofundme_batch() {
+    $settings = get_option( 'ontario_obituaries_settings', array() );
+
+    if ( empty( $settings['gofundme_enabled'] ) ) {
+        return;
+    }
+
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-gofundme-linker.php';
+    $linker = new Ontario_Obituaries_GoFundMe_Linker();
+    $result = $linker->process_batch();
+
+    ontario_obituaries_log(
+        sprintf(
+            'GoFundMe Linker batch: %d processed, %d matched, %d no match.',
+            $result['processed'], $result['matched'], $result['no_match']
+        ),
+        'info'
+    );
+
+    // Schedule next batch if there are pending obituaries.
+    $stats = $linker->get_stats();
+    if ( $stats['pending'] > 0 && ! wp_next_scheduled( 'ontario_obituaries_gofundme_batch' ) ) {
+        wp_schedule_single_event( time() + 300, 'ontario_obituaries_gofundme_batch' );
+    }
+
+    if ( $result['matched'] > 0 ) {
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+    }
+}
+add_action( 'ontario_obituaries_gofundme_batch', 'ontario_obituaries_gofundme_batch' );
+
+/**
+ * v4.3.0: AI Authenticity Checker batch.
+ *
+ * Runs every 4 hours via WP-Cron. Picks random obituaries and audits them
+ * for data consistency using the Groq LLM.
+ */
+function ontario_obituaries_authenticity_audit() {
+    $settings = get_option( 'ontario_obituaries_settings', array() );
+
+    if ( empty( $settings['authenticity_enabled'] ) ) {
+        return;
+    }
+
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-authenticity-checker.php';
+    $checker = new Ontario_Obituaries_Authenticity_Checker();
+
+    if ( ! $checker->is_configured() ) {
+        ontario_obituaries_log( 'Authenticity Checker: Skipped — no Groq API key.', 'info' );
+        return;
+    }
+
+    $result = $checker->run_audit_batch();
+
+    ontario_obituaries_log(
+        sprintf(
+            'Authenticity audit: %d audited, %d passed, %d flagged.',
+            $result['audited'], $result['passed'], $result['flagged']
+        ),
+        'info'
+    );
+
+    if ( $result['flagged'] > 0 ) {
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+    }
+}
+add_action( 'ontario_obituaries_authenticity_audit', 'ontario_obituaries_authenticity_audit' );
+
+/**
+ * v4.3.0: Schedule recurring authenticity audit every 4 hours.
+ * Hooked to init so it runs on every page load check.
+ */
+function ontario_obituaries_schedule_authenticity_audit() {
+    $settings = get_option( 'ontario_obituaries_settings', array() );
+
+    if ( ! empty( $settings['authenticity_enabled'] ) && ! wp_next_scheduled( 'ontario_obituaries_authenticity_audit' ) ) {
+        wp_schedule_event( time() + 300, 'four_hours', 'ontario_obituaries_authenticity_audit' );
+    }
+}
+add_action( 'init', 'ontario_obituaries_schedule_authenticity_audit', 20 );
+
+/**
+ * v4.3.0: Register custom cron interval for authenticity checker.
+ */
+function ontario_obituaries_cron_intervals( $schedules ) {
+    if ( ! isset( $schedules['four_hours'] ) ) {
+        $schedules['four_hours'] = array(
+            'interval' => 14400,
+            'display'  => __( 'Every 4 Hours', 'ontario-obituaries' ),
+        );
+    }
+    return $schedules;
+}
+add_filter( 'cron_schedules', 'ontario_obituaries_cron_intervals' );
 
 /**
  * P0-1 FIX: One-time initial collection (runs via WP-Cron after activation).
@@ -2924,6 +3039,45 @@ function ontario_obituaries_on_plugin_update() {
         }
 
         ontario_obituaries_log( 'v4.2.5: Whitespace-normalized death date repair complete.', 'info' );
+    }
+
+    // ── v4.3.0: Add GoFundMe + Authenticity Checker columns ──
+    if ( version_compare( $stored_version, '4.3.0', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        $existing_cols = $wpdb->get_col( $wpdb->prepare(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+            $table
+        ) );
+
+        $new_cols = array(
+            // GoFundMe columns.
+            'gofundme_url'        => "ALTER TABLE `{$table}` ADD COLUMN gofundme_url varchar(2083) DEFAULT NULL",
+            'gofundme_checked_at' => "ALTER TABLE `{$table}` ADD COLUMN gofundme_checked_at datetime DEFAULT NULL",
+            // Authenticity Checker columns.
+            'last_audit_at'       => "ALTER TABLE `{$table}` ADD COLUMN last_audit_at datetime DEFAULT NULL",
+            'audit_status'        => "ALTER TABLE `{$table}` ADD COLUMN audit_status varchar(20) DEFAULT NULL",
+            'audit_flags'         => "ALTER TABLE `{$table}` ADD COLUMN audit_flags text DEFAULT NULL",
+        );
+
+        $added = 0;
+        foreach ( $new_cols as $col => $sql ) {
+            if ( ! in_array( $col, $existing_cols, true ) ) {
+                $wpdb->query( $sql );
+                $added++;
+            }
+        }
+
+        // Add indexes for the new columns.
+        $wpdb->query( "ALTER TABLE `{$table}` ADD KEY idx_gofundme_checked (gofundme_checked_at)" );
+        $wpdb->query( "ALTER TABLE `{$table}` ADD KEY idx_audit_status (audit_status)" );
+        $wpdb->query( "ALTER TABLE `{$table}` ADD KEY idx_last_audit_at (last_audit_at)" );
+
+        ontario_obituaries_log(
+            sprintf( 'v4.3.0: Added %d new columns (GoFundMe linker + Authenticity Checker).', $added ),
+            'info'
+        );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );

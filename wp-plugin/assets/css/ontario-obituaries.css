@@ -1439,3 +1439,93 @@
         flex-direction: column;
     }
 }
+
+/* ── v4.3.0: GoFundMe Auto-Linker Section ──────────────────────────── */
+.ontario-obituary-gofundme {
+    margin: 2rem 0;
+    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(22, 163, 74, 0.08);
+}
+.ontario-obituary-gofundme-inner {
+    display: flex;
+    gap: 1.25rem;
+    align-items: flex-start;
+}
+.ontario-gofundme-icon {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    background: #16a34a;
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.ontario-gofundme-icon svg {
+    stroke: #fff;
+}
+.ontario-gofundme-text h4 {
+    margin: 0 0 0.5rem;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #15803d;
+}
+.ontario-gofundme-text p {
+    margin: 0 0 1rem;
+    font-size: 0.95rem;
+    color: #374151;
+    line-height: 1.5;
+}
+.ontario-gofundme-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #16a34a;
+    color: #fff !important;
+    padding: 0.65rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    text-decoration: none !important;
+    transition: background 0.2s, transform 0.15s;
+}
+.ontario-gofundme-btn:hover {
+    background: #15803d;
+    transform: translateY(-1px);
+    color: #fff !important;
+}
+.ontario-gofundme-btn svg {
+    stroke: #fff;
+}
+.ontario-gofundme-disclaimer {
+    margin: 1rem 0 0;
+    font-size: 0.78rem;
+    color: #6b7280;
+    font-style: italic;
+}
+@media (max-width: 600px) {
+    .ontario-obituary-gofundme-inner {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+}
+
+/* ── v4.3.0: AI Verified Badge ──────────────────────────────────────── */
+.ontario-obituary-verified-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 1rem 0;
+    padding: 0.4rem 0.85rem;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    color: #15803d;
+    font-weight: 500;
+}

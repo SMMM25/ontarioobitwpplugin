@@ -120,7 +120,7 @@ class Ontario_Obituaries {
         $sanitized = array();
 
         // Booleans
-        foreach ( array( 'enabled', 'auto_publish', 'notify_admin', 'adaptive_mode', 'debug_logging', 'fuzzy_dedupe', 'ai_rewrite_enabled' ) as $key ) {
+        foreach ( array( 'enabled', 'auto_publish', 'notify_admin', 'adaptive_mode', 'debug_logging', 'fuzzy_dedupe', 'ai_rewrite_enabled', 'gofundme_enabled', 'authenticity_enabled' ) as $key ) {
             $sanitized[ $key ] = ! empty( $input[ $key ] );
         }
 
@@ -149,6 +149,26 @@ class Ontario_Obituaries {
                 wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
                 if ( function_exists( 'ontario_obituaries_log' ) ) {
                     ontario_obituaries_log( 'v4.2.4: AI Rewrite batch scheduled (30s) — triggered by settings save.', 'info' );
+                }
+            }
+        }
+
+        // v4.3.0: Trigger GoFundMe batch immediately on settings save if enabled.
+        if ( ! empty( $sanitized['gofundme_enabled'] ) ) {
+            if ( ! wp_next_scheduled( 'ontario_obituaries_gofundme_batch' ) ) {
+                wp_schedule_single_event( time() + 60, 'ontario_obituaries_gofundme_batch' );
+                if ( function_exists( 'ontario_obituaries_log' ) ) {
+                    ontario_obituaries_log( 'v4.3.0: GoFundMe batch scheduled (60s) — triggered by settings save.', 'info' );
+                }
+            }
+        }
+
+        // v4.3.0: Trigger Authenticity audit on settings save if enabled.
+        if ( ! empty( $sanitized['authenticity_enabled'] ) && ! empty( $groq_key ) ) {
+            if ( ! wp_next_scheduled( 'ontario_obituaries_authenticity_audit' ) ) {
+                wp_schedule_single_event( time() + 120, 'ontario_obituaries_authenticity_audit' );
+                if ( function_exists( 'ontario_obituaries_log' ) ) {
+                    ontario_obituaries_log( 'v4.3.0: Authenticity audit scheduled (120s) — triggered by settings save.', 'info' );
                 }
             }
         }
@@ -524,6 +544,98 @@ class Ontario_Obituaries {
                                 );
                             } else {
                                 esc_html_e( 'AI Rewriter class not loaded.', 'ontario-obituaries' );
+                            }
+                            ?>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                </table>
+
+                <h2 style="margin-top:30px;"><?php esc_html_e( 'GoFundMe Auto-Linker', 'ontario-obituaries' ); ?></h2>
+                <p class="description" style="margin-bottom:15px;">
+                    <?php esc_html_e( 'Automatically searches GoFundMe for memorial/funeral campaigns matching your obituary records. Uses strict 3-point verification (name + death date + location) to prevent false matches. No API key required.', 'ontario-obituaries' ); ?>
+                </p>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Enable GoFundMe Linking', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[gofundme_enabled]" value="1" <?php checked( ! empty( $settings['gofundme_enabled'] ) ); ?> />
+                                <?php esc_html_e( 'Automatically search for matching GoFundMe campaigns', 'ontario-obituaries' ); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e( 'Checks 20 obituaries per batch, 1 search every 3 seconds. Verified links appear on memorial pages as a "Support the Family" button.', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php if ( ! empty( $settings['gofundme_enabled'] ) ) : ?>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'GoFundMe Status', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php
+                            if ( class_exists( 'Ontario_Obituaries_GoFundMe_Linker' ) ) {
+                                $linker     = new Ontario_Obituaries_GoFundMe_Linker();
+                                $gfm_stats  = $linker->get_stats();
+                                printf(
+                                    '<strong>%s</strong> total &nbsp;|&nbsp; <strong style="color:green;">%s</strong> matched &nbsp;|&nbsp; <strong>%s</strong> checked &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending',
+                                    esc_html( number_format_i18n( $gfm_stats['total'] ) ),
+                                    esc_html( number_format_i18n( $gfm_stats['matched'] ) ),
+                                    esc_html( number_format_i18n( $gfm_stats['checked'] ) ),
+                                    esc_html( number_format_i18n( $gfm_stats['pending'] ) )
+                                );
+                            }
+                            ?>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                </table>
+
+                <h2 style="margin-top:30px;"><?php esc_html_e( 'AI Authenticity Checker', 'ontario-obituaries' ); ?></h2>
+                <p class="description" style="margin-bottom:15px;">
+                    <?php esc_html_e( 'Runs 24/7 random audits of obituary data using AI to verify dates, names, locations, and cross-reference consistency. Flags and optionally auto-corrects issues. Uses the same Groq API key as the AI Rewriter.', 'ontario-obituaries' ); ?>
+                </p>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Enable Authenticity Checks', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[authenticity_enabled]" value="1" <?php checked( ! empty( $settings['authenticity_enabled'] ) ); ?> />
+                                <?php esc_html_e( 'Run automated data quality audits every 4 hours', 'ontario-obituaries' ); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e( 'Audits 10 random obituaries per cycle (8 never-audited + 2 re-checks). Requires Groq API key. Flags issues for admin review and auto-corrects high-confidence errors.', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php if ( ! empty( $settings['authenticity_enabled'] ) && ! empty( $groq_key ) ) : ?>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Audit Status', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php
+                            if ( class_exists( 'Ontario_Obituaries_Authenticity_Checker' ) ) {
+                                $checker      = new Ontario_Obituaries_Authenticity_Checker();
+                                $audit_stats  = $checker->get_stats();
+                                printf(
+                                    '<strong>%s</strong> total &nbsp;|&nbsp; <strong style="color:green;">%s</strong> passed &nbsp;|&nbsp; <strong style="color:red;">%s</strong> flagged &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> never audited',
+                                    esc_html( number_format_i18n( $audit_stats['total'] ) ),
+                                    esc_html( number_format_i18n( $audit_stats['passed'] ) ),
+                                    esc_html( number_format_i18n( $audit_stats['flagged'] ) ),
+                                    esc_html( number_format_i18n( $audit_stats['never_audited'] ) )
+                                );
+
+                                // Show recently flagged items.
+                                $flagged = $checker->get_flagged( 5 );
+                                if ( ! empty( $flagged ) ) {
+                                    echo '<div style="margin-top:10px;padding:10px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;">';
+                                    echo '<strong>' . esc_html__( 'Recently Flagged:', 'ontario-obituaries' ) . '</strong><ul style="margin:5px 0 0 15px;">';
+                                    foreach ( $flagged as $f ) {
+                                        $flags = json_decode( $f->audit_flags, true );
+                                        $flag_text = is_array( $flags ) ? implode( '; ', array_slice( $flags, 0, 2 ) ) : '';
+                                        printf(
+                                            '<li><strong>ID %d</strong> %s — <em>%s</em></li>',
+                                            intval( $f->id ),
+                                            esc_html( $f->name ),
+                                            esc_html( $flag_text )
+                                        );
+                                    }
+                                    echo '</ul></div>';
+                                }
                             }
                             ?>
                         </td>
