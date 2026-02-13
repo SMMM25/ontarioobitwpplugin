@@ -120,13 +120,23 @@ class Ontario_Obituaries {
         $sanitized = array();
 
         // Booleans
-        foreach ( array( 'enabled', 'auto_publish', 'notify_admin', 'adaptive_mode', 'debug_logging', 'fuzzy_dedupe' ) as $key ) {
+        foreach ( array( 'enabled', 'auto_publish', 'notify_admin', 'adaptive_mode', 'debug_logging', 'fuzzy_dedupe', 'ai_rewrite_enabled' ) as $key ) {
             $sanitized[ $key ] = ! empty( $input[ $key ] );
         }
 
         // Text
         foreach ( array( 'time', 'filter_keywords' ) as $key ) {
             $sanitized[ $key ] = isset( $input[ $key ] ) ? sanitize_text_field( $input[ $key ] ) : '';
+        }
+
+        // v4.2.3: Groq API key — stored separately in its own option for security.
+        if ( isset( $input['groq_api_key'] ) ) {
+            $key_value = sanitize_text_field( $input['groq_api_key'] );
+            if ( ! empty( $key_value ) ) {
+                update_option( 'ontario_obituaries_groq_api_key', $key_value );
+            } elseif ( empty( $key_value ) && isset( $input['groq_api_key_clear'] ) ) {
+                delete_option( 'ontario_obituaries_groq_api_key' );
+            }
         }
 
         // Numeric with bounds
@@ -445,6 +455,66 @@ class Ontario_Obituaries {
                             </label>
                         </td>
                     </tr>
+                </table>
+
+                <h2 style="margin-top:30px;"><?php esc_html_e( 'AI Rewrite Engine', 'ontario-obituaries' ); ?></h2>
+                <p class="description" style="margin-bottom:15px;">
+                    <?php esc_html_e( 'Automatically rewrites obituary text into unique, professional prose to avoid copyright issues. Uses Groq API (free tier, no credit card needed).', 'ontario-obituaries' ); ?>
+                </p>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Enable AI Rewrites', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[ai_rewrite_enabled]" value="1" <?php checked( ! empty( $settings['ai_rewrite_enabled'] ) ); ?> />
+                                <?php esc_html_e( 'Automatically rewrite obituaries after each collection', 'ontario-obituaries' ); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e( 'Requires a Groq API key below. Rewrites 25 obituaries per batch, 1 request every 6 seconds.', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Groq API Key', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php
+                            $groq_key = get_option( 'ontario_obituaries_groq_api_key', '' );
+                            $key_masked = ! empty( $groq_key ) ? substr( $groq_key, 0, 8 ) . str_repeat( '*', max( 0, strlen( $groq_key ) - 12 ) ) . substr( $groq_key, -4 ) : '';
+                            ?>
+                            <input type="text" class="regular-text" name="ontario_obituaries_settings[groq_api_key]" value="" placeholder="<?php echo esc_attr( ! empty( $key_masked ) ? $key_masked : 'gsk_...' ); ?>" autocomplete="off" />
+                            <?php if ( ! empty( $groq_key ) ) : ?>
+                                <span style="color:green;">&#10003; <?php esc_html_e( 'Key is set', 'ontario-obituaries' ); ?></span>
+                            <?php else : ?>
+                                <span style="color:red;">&#10007; <?php esc_html_e( 'No key set', 'ontario-obituaries' ); ?></span>
+                            <?php endif; ?>
+                            <p class="description">
+                                <?php printf(
+                                    esc_html__( 'Get a free API key at %s (no credit card needed). Paste it here and click Save. Leave blank to keep the current key.', 'ontario-obituaries' ),
+                                    '<a href="https://console.groq.com" target="_blank">console.groq.com</a>'
+                                ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <?php if ( ! empty( $groq_key ) ) : ?>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'AI Rewrite Status', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php
+                            if ( class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+                                $rewriter = new Ontario_Obituaries_AI_Rewriter();
+                                $stats    = $rewriter->get_stats();
+                                printf(
+                                    '<strong>%s</strong> total &nbsp;|&nbsp; <strong style="color:green;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong>%s%%</strong> complete',
+                                    esc_html( number_format_i18n( $stats['total'] ) ),
+                                    esc_html( number_format_i18n( $stats['rewritten'] ) ),
+                                    esc_html( number_format_i18n( $stats['pending'] ) ),
+                                    esc_html( number_format_i18n( $stats['percent_complete'], 1 ) )
+                                );
+                            } else {
+                                esc_html_e( 'AI Rewriter class not loaded.', 'ontario-obituaries' );
+                            }
+                            ?>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
                 </table>
 
                 <?php submit_button( __( 'Save Settings', 'ontario-obituaries' ) ); ?>

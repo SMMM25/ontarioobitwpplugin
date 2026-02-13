@@ -1,10 +1,10 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-13 (after PR #52 merge + PR #53 open)
-> **Plugin version:** `4.2.2` (sandbox, PR #53 pending) / `4.2.1` (main branch, PR #52 merged)
-> **Live site version:** `4.0.0` (monacomonuments.ca — deployment pending)
-> **Main branch HEAD:** `c340ee0` (GitHub merge commit for PR #52)
-> **Next deployment:** v4.2.2 via cPanel manual upload
+> **Last updated:** 2026-02-13 (after v4.2.2 live deploy + PR #54 open)
+> **Plugin version:** `4.2.3` (sandbox, PR #54 pending)
+> **Live site version:** `4.2.2` (monacomonuments.ca — deployed 2026-02-13)
+> **Main branch HEAD:** PR #53 merged
+> **Next deployment:** v4.2.3 via cPanel manual upload (admin AI Rewriter UI)
 
 ---
 
@@ -264,34 +264,36 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #50 | Merged | `f031ffa` | fix(urgent): reverse redirect direction + remove broken shortcode alias |
 | #51 | Merged | `251f447` | feat(v4.0.0): add 6 Postmedia obituary sources — expand coverage 1→7 |
 | #52 | Merged | `a50904c` | feat(v4.2.1): Complete AI Memorial System — Phases 1-4 + QA audit fixes |
-| #53 | **OPEN** | `41c4c88` | fix(v4.2.2): city data quality repair + sitemap ai_description fix |
+| #53 | Merged | `b71f4b1` | fix(v4.2.2): city data quality repair + sitemap ai_description fix |
+| #54 | **OPEN** | pending | feat(v4.2.3): admin UI for AI Rewriter + Groq key + additional city slug fixes |
 
 ---
 
 ## CURRENT STATE (as of 2026-02-13)
 
-### Plugin Version: **4.2.2** (sandbox — PR #53 pending)
-### Main Branch Version: **4.2.1** (PR #52 merged 2026-02-13)
-### Live Site Version: **4.0.0** (monacomonuments.ca — deployment pending)
+### Plugin Version: **4.2.3** (sandbox — PR #54 pending)
+### Main Branch Version: **4.2.2** (PR #53 merged 2026-02-13)
+### Live Site Version: **4.2.2** (monacomonuments.ca — deployed 2026-02-13)
 
-### What's Working (Live — v4.0.0)
+### What's Working (Live — v4.2.2)
 - Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
-- **627 obituaries** in database (up from 193), displaying on /ontario-obituaries/ with 32 pages
+- **725 obituaries** in database, displaying on /ontario-obituaries/ with 37 pages
 - All 7 sources collecting successfully every 12h via WP-Cron
+- **528 URLs** in sitemap, **117 unique city slugs** (down from 155 — 38 bad slugs fixed)
+- **70 city cards** on Ontario hub page
+- Memorial pages with QR code (qrserver.com), lead capture form with AJAX handler
+- Schema.org markup (Person, BurialEvent, BreadcrumbList, LocalBusiness)
+- IndexNow search engine notification active
+- Domain lock security feature active
+- Logo filter active — images < 15 KB rejected at scrape time
 - MU-plugin v2.1.0 (monaco-site-hardening.php) — performance + security
-- WooCommerce asset dequeue (3 scripts/CSS removed)
-- SEO pages, schema, sitemaps functional (505 URLs in sitemap)
 - LiteSpeed cache with tag-based purge
 - Suppression/removal system
-- Logo filter active — images < 15 KB rejected at scrape time
 
-### What's NOT yet active on live site (requires v4.2.2 deployment)
-- AI rewrite engine (needs Groq API key + plugin update)
-- Memorial page enhancements (QR codes, lead capture form, BurialEvent schema)
-- IndexNow search engine notification
-- Domain lock security feature
-- City data quality repair migration
-- Sitemap ai_description inclusion
+### What's NOT yet active on live site
+- **AI rewrite engine** — code deployed, **needs Groq API key to activate** (copyright protection)
+- **Admin settings UI for AI Rewriter** — requires v4.2.3 deploy (PR #54)
+- **14 remaining address-pattern city slugs** — requires v4.2.3 deploy (PR #54)
 
 ### What v4.2.2 Changes (SANDBOX — Pending PR)
 **v4.0.1 — Logo Filter:**
@@ -329,6 +331,12 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - **ROOT-CAUSE FIX**: Strengthened `normalize_city()` in adapter base to reject bad data at ingest time
 - **SITEMAP FIX**: Query now includes obituaries where `ai_description` > 100 chars (not just `description`)
 - Version bump: 4.2.1 → 4.2.2
+
+**v4.2.3 — Admin UI + Extended City Repair:**
+- **ADMIN UI**: Added AI Rewrite settings to Settings page (enable/disable checkbox + Groq API key field + live stats)
+- **DATA REPAIR**: Extended migration with 17 additional address→city mappings for remaining bad slugs
+- **NO MORE wp_options EDITING**: Owner can now enable AI rewrites from WP Admin → Ontario Obituaries → Settings
+- Version bump: 4.2.2 → 4.2.3
 
 ### What v4.0.0 Changed (DEPLOYED 2026-02-13)
 - **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
@@ -421,11 +429,13 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | P5-2 | Build plugin ZIP (v4.2.1) | **DONE** (PR #52, 182 KB) |
 | P5-3 | QA audit — found & fixed 2 bugs + 1 improvement (v4.2.1) | **DONE** |
 | P5-4 | Create PR with full documentation | **DONE** (PR #52 — MERGED) |
-| P5-5 | City data quality repair (v4.2.2) | **DONE** (PR #53 — OPEN) |
+| P5-5 | City data quality repair (v4.2.2) | **DONE** (PR #53 — MERGED) |
 | P5-6 | Build plugin ZIP (v4.2.2) | **DONE** (186 KB) |
-| P5-7 | Deploy v4.2.2 to live site (manual via cPanel) | **PENDING — owner action** |
-| P5-8 | Set Groq API key to enable AI rewrites | **PENDING — owner action** |
-| P5-9 | Verify live site post-deploy | **PENDING** |
+| P5-7 | Deploy v4.2.2 to live site (manual via cPanel) | **DONE** (2026-02-13) |
+| P5-8 | Verify live site post-deploy | **DONE** (725 obits, 528 URLs, 16 slugs fixed) |
+| P5-9 | Admin UI for AI Rewriter (v4.2.3) | **DONE** (PR #54 — OPEN) |
+| P5-10 | Set Groq API key to enable AI rewrites | **PENDING — owner action** |
+| P5-11 | Build plugin ZIP (v4.2.3) | **PENDING** |
 
 ---
 
