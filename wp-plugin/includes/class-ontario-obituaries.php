@@ -120,7 +120,7 @@ class Ontario_Obituaries {
         $sanitized = array();
 
         // Booleans
-        foreach ( array( 'enabled', 'auto_publish', 'notify_admin', 'adaptive_mode', 'debug_logging', 'fuzzy_dedupe', 'ai_rewrite_enabled', 'gofundme_enabled', 'authenticity_enabled' ) as $key ) {
+        foreach ( array( 'enabled', 'auto_publish', 'notify_admin', 'adaptive_mode', 'debug_logging', 'fuzzy_dedupe', 'ai_rewrite_enabled', 'gofundme_enabled', 'authenticity_enabled', 'google_ads_enabled', 'chatbot_enabled' ) as $key ) {
             $sanitized[ $key ] = ! empty( $input[ $key ] );
         }
 
@@ -171,6 +171,40 @@ class Ontario_Obituaries {
                     ontario_obituaries_log( 'v4.3.0: Authenticity audit scheduled (120s) — triggered by settings save.', 'info' );
                 }
             }
+        }
+
+        // v4.4.0: Save Google Ads credentials separately (encrypted option).
+        if ( isset( $input['google_ads_customer_id'] ) ) {
+            $ads_creds = get_option( 'ontario_obituaries_google_ads_credentials', array() );
+            $fields = array( 'developer_token', 'client_id', 'client_secret', 'refresh_token', 'customer_id', 'manager_id' );
+            foreach ( $fields as $field ) {
+                $key_name = 'google_ads_' . $field;
+                if ( isset( $input[ $key_name ] ) && '' !== $input[ $key_name ] ) {
+                    $ads_creds[ $field ] = sanitize_text_field( $input[ $key_name ] );
+                }
+            }
+            update_option( 'ontario_obituaries_google_ads_credentials', $ads_creds );
+        }
+
+        // v4.4.0: Trigger Google Ads analysis on settings save if enabled.
+        if ( ! empty( $sanitized['google_ads_enabled'] ) ) {
+            if ( ! wp_next_scheduled( 'ontario_obituaries_google_ads_analysis' ) ) {
+                wp_schedule_single_event( time() + 180, 'ontario_obituaries_google_ads_analysis' );
+                if ( function_exists( 'ontario_obituaries_log' ) ) {
+                    ontario_obituaries_log( 'v4.4.0: Google Ads analysis scheduled (180s) — triggered by settings save.', 'info' );
+                }
+            }
+        }
+
+        // v4.5.0: Save chatbot settings.
+        if ( ! empty( $sanitized['chatbot_enabled'] ) ) {
+            $chatbot_settings = get_option( 'ontario_obituaries_chatbot_settings', array() );
+            $chatbot_settings['enabled'] = true;
+            update_option( 'ontario_obituaries_chatbot_settings', $chatbot_settings );
+        } else {
+            $chatbot_settings = get_option( 'ontario_obituaries_chatbot_settings', array() );
+            $chatbot_settings['enabled'] = false;
+            update_option( 'ontario_obituaries_chatbot_settings', $chatbot_settings );
         }
 
         // Numeric with bounds
@@ -636,6 +670,227 @@ class Ontario_Obituaries {
                                     }
                                     echo '</ul></div>';
                                 }
+                            }
+                            ?>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                </table>
+
+                <h2 style="margin-top:30px;"><?php esc_html_e( 'AI Customer Chatbot', 'ontario-obituaries' ); ?></h2>
+                <p class="description" style="margin-bottom:15px;">
+                    <?php esc_html_e( 'A sophisticated AI-powered chatbot that greets website visitors, answers questions about your services, and directs customers to your intake form and email. Uses the same Groq API key for intelligent conversation. Zero additional cost.', 'ontario-obituaries' ); ?>
+                </p>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Enable AI Chatbot', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[chatbot_enabled]" value="1" <?php checked( ! empty( $settings['chatbot_enabled'] ) ); ?> />
+                                <?php esc_html_e( 'Show AI chatbot on all public pages', 'ontario-obituaries' ); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e( 'The chatbot appears as a floating button in the bottom-right corner. It greets visitors, answers questions about monuments and services, directs them to your intake form, and can send inquiries directly to info@monacomonuments.ca. Works with or without Groq API key (falls back to smart rule-based responses).', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php if ( ! empty( $settings['chatbot_enabled'] ) ) : ?>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Chatbot Stats', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php
+                            if ( class_exists( 'Ontario_Obituaries_AI_Chatbot' ) ) {
+                                $chatbot       = new Ontario_Obituaries_AI_Chatbot();
+                                $chatbot_stats = $chatbot->get_stats();
+                                printf(
+                                    '<strong>%s</strong> total messages &nbsp;|&nbsp; <strong style="color:green;">%s</strong> last 24h &nbsp;|&nbsp; <strong>%s</strong> last 7 days &nbsp;|&nbsp; <strong>%s</strong> unique visitors',
+                                    esc_html( number_format_i18n( $chatbot_stats['total_messages'] ) ),
+                                    esc_html( number_format_i18n( $chatbot_stats['last_24h'] ) ),
+                                    esc_html( number_format_i18n( $chatbot_stats['last_7d'] ) ),
+                                    esc_html( number_format_i18n( $chatbot_stats['unique_visitors'] ) )
+                                );
+                            }
+                            ?>
+                            <p class="description"><?php esc_html_e( 'Connected to: info@monacomonuments.ca | Intake form: monacomonuments.ca/contact/', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                </table>
+
+                <h2 style="margin-top:30px;"><?php esc_html_e( 'Google Ads Campaign Optimizer', 'ontario-obituaries' ); ?></h2>
+                <p class="description" style="margin-bottom:15px;">
+                    <?php esc_html_e( 'Connects to your Google Ads account to monitor campaign performance, analyze keywords, and provide AI-powered optimization recommendations. Runs daily analysis using the same Groq API key.', 'ontario-obituaries' ); ?>
+                </p>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Enable Google Ads Optimizer', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="ontario_obituaries_settings[google_ads_enabled]" value="1" <?php checked( ! empty( $settings['google_ads_enabled'] ) ); ?> />
+                                <?php esc_html_e( 'Connect to Google Ads API and run daily AI-powered optimization analysis', 'ontario-obituaries' ); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e( 'Requires Google Ads API credentials below. Fetches campaign metrics, keyword performance, and search terms daily. AI analysis generates bid, budget, keyword, and ad copy recommendations.', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php
+                    $ads_creds = get_option( 'ontario_obituaries_google_ads_credentials', array() );
+                    $ads_configured = ! empty( $ads_creds['developer_token'] ) && ! empty( $ads_creds['customer_id'] );
+                    ?>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Google Ads Customer ID', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <input type="text" class="regular-text" name="ontario_obituaries_settings[google_ads_customer_id]" value="" placeholder="<?php echo esc_attr( ! empty( $ads_creds['customer_id'] ) ? preg_replace( '/(\d{3})(\d{3})(\d{4})/', '$1-$2-$3', $ads_creds['customer_id'] ) : '903-524-8478' ); ?>" />
+                            <?php if ( ! empty( $ads_creds['customer_id'] ) ) : ?>
+                                <span style="color:green;">&#10003; <?php esc_html_e( 'Set', 'ontario-obituaries' ); ?></span>
+                            <?php endif; ?>
+                            <p class="description"><?php esc_html_e( 'Your Google Ads account number (xxx-xxx-xxxx). Found at the top of your Google Ads dashboard.', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Developer Token', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php $dev_masked = ! empty( $ads_creds['developer_token'] ) ? substr( $ads_creds['developer_token'], 0, 6 ) . '****' . substr( $ads_creds['developer_token'], -4 ) : ''; ?>
+                            <input type="text" class="regular-text" name="ontario_obituaries_settings[google_ads_developer_token]" value="" placeholder="<?php echo esc_attr( $dev_masked ?: 'Enter developer token' ); ?>" autocomplete="off" />
+                            <?php if ( ! empty( $ads_creds['developer_token'] ) ) : ?>
+                                <span style="color:green;">&#10003; <?php esc_html_e( 'Set', 'ontario-obituaries' ); ?></span>
+                            <?php endif; ?>
+                            <p class="description">
+                                <?php printf(
+                                    esc_html__( 'Get your developer token from %s. Apply through your MCC account.', 'ontario-obituaries' ),
+                                    '<a href="https://ads.google.com/nav/selectaccount" target="_blank">Google Ads API Center</a>'
+                                ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'OAuth2 Client ID', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <input type="text" class="regular-text" name="ontario_obituaries_settings[google_ads_client_id]" value="" placeholder="<?php echo esc_attr( ! empty( $ads_creds['client_id'] ) ? substr( $ads_creds['client_id'], 0, 20 ) . '...' : 'xxxxx.apps.googleusercontent.com' ); ?>" autocomplete="off" />
+                            <?php if ( ! empty( $ads_creds['client_id'] ) ) : ?>
+                                <span style="color:green;">&#10003; <?php esc_html_e( 'Set', 'ontario-obituaries' ); ?></span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'OAuth2 Client Secret', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <input type="password" class="regular-text" name="ontario_obituaries_settings[google_ads_client_secret]" value="" placeholder="<?php echo esc_attr( ! empty( $ads_creds['client_secret'] ) ? '********' : 'Enter client secret' ); ?>" autocomplete="off" />
+                            <?php if ( ! empty( $ads_creds['client_secret'] ) ) : ?>
+                                <span style="color:green;">&#10003; <?php esc_html_e( 'Set', 'ontario-obituaries' ); ?></span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'OAuth2 Refresh Token', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <input type="password" class="regular-text" name="ontario_obituaries_settings[google_ads_refresh_token]" value="" placeholder="<?php echo esc_attr( ! empty( $ads_creds['refresh_token'] ) ? '********' : 'Enter refresh token' ); ?>" autocomplete="off" />
+                            <?php if ( ! empty( $ads_creds['refresh_token'] ) ) : ?>
+                                <span style="color:green;">&#10003; <?php esc_html_e( 'Set', 'ontario-obituaries' ); ?></span>
+                            <?php endif; ?>
+                            <p class="description">
+                                <?php printf(
+                                    esc_html__( 'Create OAuth2 credentials in %s. Select "Desktop App" type. Use the OAuth Playground or the plugin\'s built-in auth flow to get a refresh token.', 'ontario-obituaries' ),
+                                    '<a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>'
+                                ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Manager Account ID (Optional)', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <input type="text" class="regular-text" name="ontario_obituaries_settings[google_ads_manager_id]" value="" placeholder="<?php echo esc_attr( ! empty( $ads_creds['manager_id'] ) ? preg_replace( '/(\d{3})(\d{3})(\d{4})/', '$1-$2-$3', $ads_creds['manager_id'] ) : 'MCC account ID (if applicable)' ); ?>" />
+                            <p class="description"><?php esc_html_e( 'Only needed if your developer token is from an MCC account different from the ad account.', 'ontario-obituaries' ); ?></p>
+                        </td>
+                    </tr>
+                    <?php if ( ! empty( $settings['google_ads_enabled'] ) && $ads_configured ) : ?>
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Campaign Dashboard', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <?php
+                            if ( class_exists( 'Ontario_Obituaries_Google_Ads_Optimizer' ) ) {
+                                $optimizer  = new Ontario_Obituaries_Google_Ads_Optimizer();
+                                $dash_stats = $optimizer->get_dashboard_stats();
+
+                                echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px;">';
+
+                                // Spend card.
+                                printf(
+                                    '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px;text-align:center;">'
+                                    . '<div style="font-size:0.75rem;color:#0369a1;">30-Day Spend</div>'
+                                    . '<div style="font-size:1.2rem;font-weight:700;color:#0c4a6e;">$%s</div></div>',
+                                    esc_html( number_format( $dash_stats['total_spend'], 2 ) )
+                                );
+
+                                // Clicks card.
+                                printf(
+                                    '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;">'
+                                    . '<div style="font-size:0.75rem;color:#15803d;">Clicks</div>'
+                                    . '<div style="font-size:1.2rem;font-weight:700;color:#14532d;">%s</div></div>',
+                                    esc_html( number_format_i18n( $dash_stats['total_clicks'] ) )
+                                );
+
+                                // CTR card.
+                                printf(
+                                    '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:10px;text-align:center;">'
+                                    . '<div style="font-size:0.75rem;color:#a16207;">CTR</div>'
+                                    . '<div style="font-size:1.2rem;font-weight:700;color:#78350f;">%s%%</div></div>',
+                                    esc_html( number_format( $dash_stats['avg_ctr'], 2 ) )
+                                );
+
+                                // CPC card.
+                                printf(
+                                    '<div style="background:#fdf4ff;border:1px solid #f0abfc;border-radius:8px;padding:10px;text-align:center;">'
+                                    . '<div style="font-size:0.75rem;color:#a21caf;">Avg CPC</div>'
+                                    . '<div style="font-size:1.2rem;font-weight:700;color:#701a75;">$%s</div></div>',
+                                    esc_html( number_format( $dash_stats['avg_cpc'], 2 ) )
+                                );
+
+                                // Conversions card.
+                                printf(
+                                    '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px;text-align:center;">'
+                                    . '<div style="font-size:0.75rem;color:#c2410c;">Conversions</div>'
+                                    . '<div style="font-size:1.2rem;font-weight:700;color:#7c2d12;">%s</div></div>',
+                                    esc_html( number_format( $dash_stats['total_conversions'], 1 ) )
+                                );
+
+                                echo '</div>';
+
+                                // Optimization score.
+                                if ( null !== $dash_stats['optimization_score'] ) {
+                                    $score = $dash_stats['optimization_score'];
+                                    $score_color = $score >= 80 ? '#15803d' : ( $score >= 60 ? '#a16207' : '#dc2626' );
+                                    printf(
+                                        '<div style="margin:8px 0;"><strong>AI Optimization Score:</strong> <span style="font-size:1.3rem;font-weight:700;color:%s;">%d/100</span></div>',
+                                        esc_attr( $score_color ),
+                                        intval( $score )
+                                    );
+                                }
+
+                                // Quick wins.
+                                $recommendations = $optimizer->get_recommendations();
+                                if ( ! empty( $recommendations['analysis']['quick_wins'] ) ) {
+                                    echo '<div style="margin-top:10px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;">';
+                                    echo '<strong>' . esc_html__( 'Quick Wins:', 'ontario-obituaries' ) . '</strong><ul style="margin:5px 0 0 15px;">';
+                                    foreach ( array_slice( $recommendations['analysis']['quick_wins'], 0, 3 ) as $win ) {
+                                        printf( '<li>%s</li>', esc_html( $win ) );
+                                    }
+                                    echo '</ul></div>';
+                                }
+
+                                // Warnings.
+                                if ( ! empty( $recommendations['analysis']['warnings'] ) ) {
+                                    echo '<div style="margin-top:10px;padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;">';
+                                    echo '<strong style="color:#dc2626;">' . esc_html__( 'Warnings:', 'ontario-obituaries' ) . '</strong><ul style="margin:5px 0 0 15px;">';
+                                    foreach ( array_slice( $recommendations['analysis']['warnings'], 0, 3 ) as $warn ) {
+                                        printf( '<li>%s</li>', esc_html( $warn ) );
+                                    }
+                                    echo '</ul></div>';
+                                }
+
+                                // Last fetched.
+                                printf(
+                                    '<p class="description" style="margin-top:8px;">%s: %s</p>',
+                                    esc_html__( 'Last analysis', 'ontario-obituaries' ),
+                                    esc_html( $dash_stats['last_fetched'] )
+                                );
                             }
                             ?>
                         </td>

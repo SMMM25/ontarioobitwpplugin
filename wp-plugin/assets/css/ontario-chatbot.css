@@ -1,0 +1,443 @@
+/**
+ * Monaco Monuments AI Chatbot — v4.5.0
+ * Floating chat widget with Monaco Monuments brand styling.
+ */
+
+/* ─── Toggle Button ────────────────────────────────────────── */
+.ontario-chatbot-toggle {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 99999;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #2c3e50;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    transition: transform 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+}
+
+.ontario-chatbot-toggle:hover {
+    transform: scale(1.08);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.3);
+    background: #1a252f;
+}
+
+.ontario-chatbot-toggle:active {
+    transform: scale(0.96);
+}
+
+/* Notification badge */
+.ontario-chatbot-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #c9a84c;
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: ontario-chatbot-pulse 2s ease-in-out infinite;
+}
+
+.ontario-chatbot-badge.ontario-chatbot-hidden {
+    display: none;
+}
+
+@keyframes ontario-chatbot-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.15); }
+}
+
+/* ─── Chat Window ──────────────────────────────────────────── */
+.ontario-chatbot-window {
+    position: fixed;
+    bottom: 100px;
+    right: 24px;
+    z-index: 99998;
+    width: 380px;
+    max-width: calc(100vw - 32px);
+    height: 520px;
+    max-height: calc(100vh - 140px);
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    animation: ontario-chatbot-slide-up 0.3s ease-out;
+}
+
+@keyframes ontario-chatbot-slide-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Header ───────────────────────────────────────────────── */
+.ontario-chatbot-header {
+    background: #2c3e50;
+    color: #fff;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.ontario-chatbot-header-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ontario-chatbot-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ontario-chatbot-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.ontario-chatbot-status {
+    font-size: 0.72rem;
+    opacity: 0.8;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.ontario-chatbot-status::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+    display: inline-block;
+}
+
+.ontario-chatbot-close {
+    background: none;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ontario-chatbot-close:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* ─── Messages Area ────────────────────────────────────────── */
+.ontario-chatbot-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    scroll-behavior: smooth;
+    background: #f8f9fa;
+}
+
+.ontario-chatbot-messages::-webkit-scrollbar {
+    width: 4px;
+}
+
+.ontario-chatbot-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.ontario-chatbot-messages::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 4px;
+}
+
+/* Message bubbles */
+.ontario-chatbot-msg {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    word-wrap: break-word;
+    animation: ontario-chatbot-msg-in 0.25s ease-out;
+}
+
+@keyframes ontario-chatbot-msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.ontario-chatbot-msg-bot {
+    align-self: flex-start;
+    background: #ffffff;
+    color: #232323;
+    border: 1px solid #e5e7eb;
+    border-bottom-left-radius: 4px;
+}
+
+.ontario-chatbot-msg-user {
+    align-self: flex-end;
+    background: #2c3e50;
+    color: #ffffff;
+    border-bottom-right-radius: 4px;
+}
+
+/* Typing indicator */
+.ontario-chatbot-typing {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 18px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    border-bottom-left-radius: 4px;
+}
+
+.ontario-chatbot-typing-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #9ca3af;
+    animation: ontario-chatbot-typing-bounce 1.4s ease-in-out infinite;
+}
+
+.ontario-chatbot-typing-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.ontario-chatbot-typing-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes ontario-chatbot-typing-bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+}
+
+/* ─── Quick Actions ────────────────────────────────────────── */
+.ontario-chatbot-quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 16px;
+    background: #f8f9fa;
+    border-top: 1px solid #e5e7eb;
+    flex-shrink: 0;
+}
+
+.ontario-chatbot-quick-btn {
+    padding: 5px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 16px;
+    background: #ffffff;
+    color: #374151;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    font-family: inherit;
+}
+
+.ontario-chatbot-quick-btn:hover {
+    background: #2c3e50;
+    color: #fff;
+    border-color: #2c3e50;
+}
+
+/* ─── Input Area ───────────────────────────────────────────── */
+.ontario-chatbot-input-area {
+    border-top: 1px solid #e5e7eb;
+    background: #fff;
+    flex-shrink: 0;
+}
+
+.ontario-chatbot-form {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    gap: 8px;
+}
+
+.ontario-chatbot-input {
+    flex: 1;
+    border: 1px solid #d1d5db;
+    border-radius: 20px;
+    padding: 9px 16px;
+    font-size: 0.88rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+    background: #f9fafb;
+}
+
+.ontario-chatbot-input:focus {
+    border-color: #2c3e50;
+    background: #fff;
+}
+
+.ontario-chatbot-input::placeholder {
+    color: #9ca3af;
+}
+
+.ontario-chatbot-send {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: none;
+    background: #2c3e50;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, transform 0.15s;
+    flex-shrink: 0;
+}
+
+.ontario-chatbot-send:hover {
+    background: #1a252f;
+    transform: scale(1.05);
+}
+
+.ontario-chatbot-send:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Powered by / links */
+.ontario-chatbot-powered {
+    text-align: center;
+    padding: 0 12px 8px;
+    font-size: 0.72rem;
+    color: #9ca3af;
+}
+
+.ontario-chatbot-powered a {
+    color: #2c3e50;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.ontario-chatbot-powered a:hover {
+    text-decoration: underline;
+}
+
+/* ─── Email Form in Chat ───────────────────────────────────── */
+.ontario-chatbot-email-form {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    padding: 12px;
+    margin-top: 4px;
+    max-width: 90%;
+    align-self: flex-start;
+    animation: ontario-chatbot-msg-in 0.3s ease-out;
+}
+
+.ontario-chatbot-email-form h5 {
+    margin: 0 0 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #15803d;
+}
+
+.ontario-chatbot-email-form input,
+.ontario-chatbot-email-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    font-family: inherit;
+    margin-bottom: 6px;
+    outline: none;
+}
+
+.ontario-chatbot-email-form input:focus,
+.ontario-chatbot-email-form textarea:focus {
+    border-color: #15803d;
+}
+
+.ontario-chatbot-email-form textarea {
+    height: 50px;
+    resize: vertical;
+}
+
+.ontario-chatbot-email-form button {
+    background: #15803d;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    transition: background 0.2s;
+    font-family: inherit;
+}
+
+.ontario-chatbot-email-form button:hover {
+    background: #166534;
+}
+
+/* ─── Responsive ───────────────────────────────────────────── */
+@media (max-width: 480px) {
+    .ontario-chatbot-window {
+        width: calc(100vw - 16px);
+        right: 8px;
+        bottom: 90px;
+        height: calc(100vh - 120px);
+        max-height: calc(100vh - 120px);
+        border-radius: 12px;
+    }
+
+    .ontario-chatbot-toggle {
+        right: 16px;
+        bottom: 16px;
+        width: 54px;
+        height: 54px;
+    }
+
+    .ontario-chatbot-quick-actions {
+        padding: 6px 10px;
+    }
+}
+
+/* ─── Print: hide chatbot ──────────────────────────────────── */
+@media print {
+    .ontario-chatbot-widget {
+        display: none !important;
+    }
+}

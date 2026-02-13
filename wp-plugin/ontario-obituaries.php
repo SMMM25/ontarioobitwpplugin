@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.3.0
+ * Version: 4.5.0
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.3.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.5.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -202,6 +202,12 @@ function ontario_obituaries_includes() {
     // v4.3.0: AI Authenticity Checker — 24/7 random data quality audits
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-authenticity-checker.php';
 
+    // v4.4.0: Google Ads Campaign Optimizer — REST API integration + AI analysis
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-google-ads-optimizer.php';
+
+    // v4.5.0: AI Chatbot — Groq-powered customer service assistant
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-chatbot.php';
+
     // SEO — needed on frontend for rewrite rules
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
 
@@ -235,6 +241,10 @@ function ontario_obituaries_includes() {
     // Initialize SEO
     $seo = new Ontario_Obituaries_SEO();
     $seo->init();
+
+    // v4.5.0: AI Chatbot
+    $chatbot = new Ontario_Obituaries_AI_Chatbot();
+    $chatbot->init();
 }
 
 /**
@@ -1191,6 +1201,50 @@ function ontario_obituaries_schedule_authenticity_audit() {
     }
 }
 add_action( 'init', 'ontario_obituaries_schedule_authenticity_audit', 20 );
+
+/**
+ * v4.4.0: Google Ads daily optimization analysis.
+ *
+ * Runs once daily via WP-Cron. Fetches campaign performance data,
+ * sends to AI for analysis, and stores optimization recommendations.
+ */
+function ontario_obituaries_google_ads_daily_analysis() {
+    $settings = get_option( 'ontario_obituaries_settings', array() );
+
+    if ( empty( $settings['google_ads_enabled'] ) ) {
+        return;
+    }
+
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-google-ads-optimizer.php';
+    $optimizer = new Ontario_Obituaries_Google_Ads_Optimizer();
+
+    if ( ! $optimizer->is_configured() ) {
+        ontario_obituaries_log( 'Google Ads Optimizer: Skipped — not configured.', 'info' );
+        return;
+    }
+
+    $result = $optimizer->run_optimization_analysis();
+
+    if ( is_wp_error( $result ) ) {
+        ontario_obituaries_log( 'Google Ads Optimizer: Analysis failed — ' . $result->get_error_message(), 'error' );
+    } else {
+        $score = isset( $result['analysis']['overall_score'] ) ? $result['analysis']['overall_score'] : 'N/A';
+        ontario_obituaries_log( sprintf( 'Google Ads Optimizer: Daily analysis complete. Score: %s.', $score ), 'info' );
+    }
+}
+add_action( 'ontario_obituaries_google_ads_analysis', 'ontario_obituaries_google_ads_daily_analysis' );
+
+/**
+ * v4.4.0: Schedule daily Google Ads analysis.
+ */
+function ontario_obituaries_schedule_google_ads_analysis() {
+    $settings = get_option( 'ontario_obituaries_settings', array() );
+
+    if ( ! empty( $settings['google_ads_enabled'] ) && ! wp_next_scheduled( 'ontario_obituaries_google_ads_analysis' ) ) {
+        wp_schedule_event( time() + 600, 'daily', 'ontario_obituaries_google_ads_analysis' );
+    }
+}
+add_action( 'init', 'ontario_obituaries_schedule_google_ads_analysis', 25 );
 
 /**
  * v4.3.0: Register custom cron interval for authenticity checker.
