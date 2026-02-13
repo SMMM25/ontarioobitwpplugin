@@ -1,10 +1,10 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-13 (after v4.2.2 live deploy + PR #54 open)
-> **Plugin version:** `4.2.3` (sandbox, PR #54 pending)
-> **Live site version:** `4.2.2` (monacomonuments.ca — deployed 2026-02-13)
-> **Main branch HEAD:** PR #53 merged
-> **Next deployment:** v4.2.3 via cPanel manual upload (admin AI Rewriter UI)
+> **Last updated:** 2026-02-13 (after v4.2.3 live deploy + PR #55 open)
+> **Plugin version:** `4.2.4` (sandbox, PR #55 pending)
+> **Live site version:** `4.2.3` (monacomonuments.ca — deployed 2026-02-13)
+> **Main branch HEAD:** PR #54 merged
+> **Next deployment:** v4.2.4 via cPanel manual upload (death date fix + AI Rewriter trigger fix)
 
 ---
 
@@ -265,15 +265,16 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #51 | Merged | `251f447` | feat(v4.0.0): add 6 Postmedia obituary sources — expand coverage 1→7 |
 | #52 | Merged | `a50904c` | feat(v4.2.1): Complete AI Memorial System — Phases 1-4 + QA audit fixes |
 | #53 | Merged | `b71f4b1` | fix(v4.2.2): city data quality repair + sitemap ai_description fix |
-| #54 | **OPEN** | pending | feat(v4.2.3): admin UI for AI Rewriter + Groq key + additional city slug fixes |
+| #54 | Merged | pending | feat(v4.2.3): admin UI for AI Rewriter + Groq key + additional city slug fixes |
+| #55 | **OPEN** | pending | fix(v4.2.4): death date cross-validation + AI Rewriter activation fix |
 
 ---
 
 ## CURRENT STATE (as of 2026-02-13)
 
-### Plugin Version: **4.2.3** (sandbox — PR #54 pending)
-### Main Branch Version: **4.2.2** (PR #53 merged 2026-02-13)
-### Live Site Version: **4.2.2** (monacomonuments.ca — deployed 2026-02-13)
+### Plugin Version: **4.2.4** (sandbox — PR #55 pending)
+### Main Branch Version: **4.2.3** (PR #54 merged 2026-02-13)
+### Live Site Version: **4.2.3** (monacomonuments.ca — deployed 2026-02-13)
 
 ### What's Working (Live — v4.2.2)
 - Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
@@ -291,9 +292,10 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - Suppression/removal system
 
 ### What's NOT yet active on live site
-- **AI rewrite engine** — code deployed, **needs Groq API key to activate** (copyright protection)
-- **Admin settings UI for AI Rewriter** — requires v4.2.3 deploy (PR #54)
-- **14 remaining address-pattern city slugs** — requires v4.2.3 deploy (PR #54)
+- **AI Rewriter batch not yet firing** — Groq key set + enabled, but batch only triggers after collection event (12h cron). v4.2.4 fixes this to trigger immediately on settings save.
+- **8 death dates are wrong** — source metadata year differs from obituary text (e.g., header says 2026, text says 2025). v4.2.4 migration repairs these.
+- **1 future death date** (Michael McCarty: May 7, 2026) — impossible, should be May 7, 2024.
+- **q2l0eq garbled slug** still in sitemap — v4.2.4 migration cleans it.
 
 ### What v4.2.2 Changes (SANDBOX — Pending PR)
 **v4.0.1 — Logo Filter:**
@@ -337,6 +339,15 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - **DATA REPAIR**: Extended migration with 17 additional address→city mappings for remaining bad slugs
 - **NO MORE wp_options EDITING**: Owner can now enable AI rewrites from WP Admin → Ontario Obituaries → Settings
 - Version bump: 4.2.2 → 4.2.3
+
+**v4.2.4 — Death Date Cross-Validation + AI Rewriter Fix:**
+- **BUG FIX**: Death dates from Remembering.ca structured metadata can have WRONG year (source updates year range to current year when republishing older obituaries). Fixed date priority: phrase-based extraction ("passed away on...") now overrides structured date ranges.
+- **BUG FIX**: Future death dates (after today) are now rejected and replaced with text-based date or cleared.
+- **BUG FIX**: AI Rewriter batch was only scheduled after collection events (every 12h). Now also schedules immediately (30s delay) when settings are saved with AI enabled.
+- **DATA REPAIR**: Migration cross-validates all death dates against obituary text, fixes ~8 year mismatches.
+- **DATA REPAIR**: Cleans remaining `q2l0eq` garbled city slug.
+- **SECURITY AUDIT**: SQL injection, AJAX nonce, template XSS — all passed.
+- Version bump: 4.2.3 → 4.2.4
 
 ### What v4.0.0 Changed (DEPLOYED 2026-02-13)
 - **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
@@ -433,9 +444,13 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | P5-6 | Build plugin ZIP (v4.2.2) | **DONE** (186 KB) |
 | P5-7 | Deploy v4.2.2 to live site (manual via cPanel) | **DONE** (2026-02-13) |
 | P5-8 | Verify live site post-deploy | **DONE** (725 obits, 528 URLs, 16 slugs fixed) |
-| P5-9 | Admin UI for AI Rewriter (v4.2.3) | **DONE** (PR #54 — OPEN) |
-| P5-10 | Set Groq API key to enable AI rewrites | **PENDING — owner action** |
-| P5-11 | Build plugin ZIP (v4.2.3) | **PENDING** |
+| P5-9 | Admin UI for AI Rewriter (v4.2.3) | **DONE** (PR #54 — MERGED) |
+| P5-10 | Set Groq API key to enable AI rewrites | **DONE** (2026-02-13) |
+| P5-11 | Deploy v4.2.3 to live site | **DONE** (2026-02-13) |
+| P5-12 | Death date cross-validation fix (v4.2.4) | **DONE** (PR #55 — OPEN) |
+| P5-13 | AI Rewriter trigger fix (v4.2.4) | **DONE** (PR #55 — OPEN) |
+| P5-14 | Security audit (SQL/AJAX/XSS) | **DONE** — all passed |
+| P5-15 | Deploy v4.2.4 to live site | **PENDING — owner action** |
 
 ---
 

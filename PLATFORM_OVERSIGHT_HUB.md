@@ -34,9 +34,9 @@ to prevent further breakage.
 ### Current Versions (as of 2026-02-13)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 4.2.2 | monacomonuments.ca — deployed via cPanel |
-| **Main branch** | 4.2.2 | PR #52 + #53 merged |
-| **Sandbox / PR** | 4.2.3 | PR #54 pending — admin AI Rewriter UI + additional city-slug fixes |
+| **Live site** | 4.2.3 | monacomonuments.ca — deployed via cPanel |
+| **Main branch** | 4.2.3 | PR #54 merged |
+| **Sandbox / PR** | 4.2.4 | PR #55 pending — death date fix + AI Rewriter activation fix |
 
 ### Live Site Stats (verified 2026-02-13 post-deploy)
 - **725 obituaries** displayed across 37 pagination pages
@@ -69,10 +69,14 @@ to prevent further breakage.
 | City data quality repair (round 1) | v4.2.2 | ✅ LIVE — 16 truncated slugs fixed |
 | Sitemap ai_description fix | v4.2.2 | ✅ LIVE |
 | Hardened normalize_city() | v4.2.2 | ✅ LIVE |
-| Admin UI for AI Rewriter toggle | v4.2.3 | 🔶 PR #54 pending |
-| Admin UI for Groq API key input | v4.2.3 | 🔶 PR #54 pending |
-| AI Rewrite stats on settings page | v4.2.3 | 🔶 PR #54 pending |
-| City slug fix round 2 (14 address patterns) | v4.2.3 | 🔶 PR #54 pending |
+| Admin UI for AI Rewriter toggle | v4.2.3 | ✅ LIVE |
+| Admin UI for Groq API key input | v4.2.3 | ✅ LIVE |
+| AI Rewrite stats on settings page | v4.2.3 | ✅ LIVE |
+| City slug fix round 2 (14 address patterns) | v4.2.3 | ✅ LIVE |
+| Death date cross-validation fix | v4.2.4 | 🔶 PR #55 pending |
+| AI Rewriter immediate batch on save | v4.2.4 | 🔶 PR #55 pending |
+| Future death date rejection | v4.2.4 | 🔶 PR #55 pending |
+| q2l0eq garbled slug cleanup | v4.2.4 | 🔶 PR #55 pending |
 
 ### AI Rewriter Status
 - **Code**: Complete (`class-ai-rewriter.php`)
@@ -83,14 +87,19 @@ to prevent further breakage.
 - **What it does**: Rewrites scraped obituary text into original prose using Llama 3.3 70B
 - **Rate**: 25 per batch, 1 request per 6 seconds, auto-reschedules until caught up
 - **Copyright protection**: Until this is active, site displays original scraped text
-- **⚠️ THIS IS THE #1 REMAINING TASK** — without the AI rewriter active, all 725 obituaries display original copyrighted text
+- **Groq API key set** (2026-02-13) — AI rewrites enabled via admin settings
+- **⚠️ v4.2.4 FIX NEEDED**: AI batch only fired after cron collection, not after settings save — fixed in PR #55
+- **⚠️ CRITICAL**: Until AI rewrites complete, all 725 obituaries display original copyrighted text
 
 ### Known Data Quality Issues
-1. ~~**Truncated/garbled city names**~~ → ✅ Fixed by v4.2.2 migration (16 slugs repaired)
-2. **14 address-pattern city slugs remain** (e.g., `brant-st-burlington`) → v4.2.3 migration pending
-3. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
-4. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
-5. **Schema redesign needed** for records without death date → future work
+1. ~~**Truncated/garbled city names**~~ → ✅ Fixed by v4.2.2 + v4.2.3 migrations
+2. ~~**14 address-pattern city slugs**~~ → ✅ Fixed by v4.2.3 migration
+3. **Wrong death years on ~8 obituaries** → v4.2.4 migration pending (source metadata says 2026 but text says 2024/2025)
+4. **1 future death date** (Michael McCarty: 2026-05-07) → v4.2.4 migration pending
+5. **q2l0eq garbled slug** still in sitemap → v4.2.4 migration pending
+6. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
+7. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
+8. **Schema redesign needed** for records without death date → future work
 
 ### Key Files to Know
 | File | What it does |
@@ -123,16 +132,19 @@ to prevent further breakage.
 | #51 | Merged | v4.0.0 | 6 new Postmedia sources (1→7) |
 | #52 | Merged | v4.2.1 | AI Memorial System phases 1-4 + QA audit fixes |
 | #53 | Merged | v4.2.2 | City data quality repair + sitemap fix |
-| #54 | Open | v4.2.3 | Admin UI for AI Rewriter + Groq key + additional city slug fixes |
+| #54 | Merged | v4.2.3 | Admin UI for AI Rewriter + Groq key + additional city slug fixes |
+| #55 | Open | v4.2.4 | Death date cross-validation fix + AI Rewriter activation fix |
 
 ### Remaining Work (priority order)
 1. ~~**Deploy v4.2.2** to live site~~ → ✅ Done 2026-02-13
-2. **Merge PR #54 (v4.2.3)** and deploy (owner — cPanel upload)
-3. **Enable AI Rewriter** via admin settings page after v4.2.3 deploy (owner — needs Groq API key)
-4. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
-5. **Schema redesign**: Handle records without death date (developer — future PR)
-6. **Out-of-province filtering** (developer — low priority)
-7. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
+2. ~~**Merge PR #54 (v4.2.3)** and deploy~~ → ✅ Done 2026-02-13
+3. ~~**Enable AI Rewriter** via admin settings page~~ → ✅ Done 2026-02-13 (Groq key set)
+4. **Merge PR #55 (v4.2.4)** and deploy — fixes death dates + AI Rewriter batch trigger
+5. **Verify AI rewrites are running** after v4.2.4 deploy (check settings page stats)
+6. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
+7. **Schema redesign**: Handle records without death date (developer — future PR)
+8. **Out-of-province filtering** (developer — low priority)
+9. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
 
 ---
 
@@ -481,12 +493,16 @@ a paid license for private repos.
 
 ### API Key Management
 - Stored in: `wp_options` → `ontario_obituaries_groq_api_key`
-- **v4.2.3+**: Set via WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
-- **v4.2.2 (current live)**: Set via Options plugin or `functions.php` snippet:
-  `update_option('ontario_obituaries_groq_api_key', 'gsk_YOUR_KEY');`
-- Or via WP-CLI: `wp option update ontario_obituaries_groq_api_key "gsk_xxx"`
-- Enable rewrites: Check "Enable AI Rewrites" checkbox on settings page (v4.2.3+)
-  or set `ai_rewrite_enabled` to true in `ontario_obituaries_settings` option (v4.2.2)
+- **v4.2.3+ (current live)**: Set via WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
+- **v4.2.4+**: Saving settings with AI enabled auto-schedules the first batch (30s delay)
+- Groq API key: `gsk_Ge1...7ZHT` (set 2026-02-13)
+- Both models confirmed available: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`
+
+### Security Audit Results (2026-02-13)
+- **SQL injection**: All user-facing queries use `$wpdb->prepare()` with placeholders ✅
+- **AJAX**: All handlers use `check_ajax_referer()` nonce verification; admin endpoints check `current_user_can('manage_options')` ✅
+- **XSS**: All template outputs use `esc_html()`, `esc_attr()`, `esc_url()` or are pre-escaped ✅
+- **Route params**: IDs use `intval()`, slugs use `sanitize_title()` ✅
 
 ### Rate Limits (Groq Free Tier)
 - Llama 3.3 70B: 1,000 requests/day, 12,000 tokens/minute

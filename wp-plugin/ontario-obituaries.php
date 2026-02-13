@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.2.3
+ * Version: 4.2.4
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.2.3' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.2.4' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -2713,6 +2713,118 @@ function ontario_obituaries_on_plugin_update() {
         }
 
         ontario_obituaries_log( 'v4.2.3: City data quality repair migration complete.', 'info' );
+    }
+
+    // ── v4.2.4: Death date cross-validation repair ──
+    // Fix obituaries where the structured date (from Remembering.ca metadata) is wrong.
+    // The source platform sometimes updates the death year to the current year when
+    // republishing/redisplaying older obituaries (e.g., "1950-2026" metadata but the
+    // obituary text says "passed away on April 9, 2025").
+    //
+    // This migration compares date_of_death against dates found in the description
+    // text using death-keyword phrases. If they disagree on the year, the text wins.
+    if ( version_compare( $stored_version, '4.2.4', '<' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $date_repairs = 0;
+
+        // Get all obituaries that have both a death date and a description
+        $rows = $wpdb->get_results(
+            "SELECT id, name, date_of_death, description FROM {$table} WHERE date_of_death != '' AND description != '' AND description IS NOT NULL"
+        );
+
+        $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+        $death_phrases = array(
+            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\w+){0,8}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/(?:peaceful\s+)?passing\s+of(?:\s+\w+){0,10}?(?:\s+on|\s+at)(?:\s+\w+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/died(?:\s+\w+){0,8}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\w+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            '/[Oo]n\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s+(?:\w+\s+){0,3}(?:passed\s+away|passed|died)/iu',
+        );
+
+        $today = date( 'Y-m-d' );
+        foreach ( $rows as $row ) {
+            $text_death_date = '';
+            foreach ( $death_phrases as $pattern ) {
+                if ( preg_match( $pattern, $row->description, $dm ) ) {
+                    $raw_date = trim( $dm[1] );
+                    $ts = strtotime( $raw_date );
+                    if ( $ts ) {
+                        $text_death_date = date( 'Y-m-d', $ts );
+                    }
+                    break;
+                }
+            }
+
+            if ( empty( $text_death_date ) ) {
+                continue; // No phrase-based date found in text
+            }
+
+            $db_year   = intval( substr( $row->date_of_death, 0, 4 ) );
+            $text_year = intval( substr( $text_death_date, 0, 4 ) );
+
+            // Only fix if years disagree AND the text date is valid (not future)
+            if ( $db_year !== $text_year && $text_death_date <= $today && $text_year >= 2018 ) {
+                $wpdb->update(
+                    $table,
+                    array( 'date_of_death' => $text_death_date ),
+                    array( 'id' => $row->id ),
+                    array( '%s' ),
+                    array( '%d' )
+                );
+                ontario_obituaries_log(
+                    sprintf(
+                        'v4.2.4: Fixed death date for "%s" (ID %d): %s → %s (text phrase override).',
+                        $row->name, $row->id, $row->date_of_death, $text_death_date
+                    ),
+                    'info'
+                );
+                $date_repairs++;
+            }
+
+            // Also catch future dates even if text year matches
+            if ( $db_year === $text_year && $row->date_of_death > $today ) {
+                // Future date but same year — might be wrong month/day from metadata
+                // If text date is in the past, use it
+                if ( $text_death_date <= $today ) {
+                    $wpdb->update(
+                        $table,
+                        array( 'date_of_death' => $text_death_date ),
+                        array( 'id' => $row->id ),
+                        array( '%s' ),
+                        array( '%d' )
+                    );
+                    ontario_obituaries_log(
+                        sprintf(
+                            'v4.2.4: Fixed future death date for "%s" (ID %d): %s → %s.',
+                            $row->name, $row->id, $row->date_of_death, $text_death_date
+                        ),
+                        'info'
+                    );
+                    $date_repairs++;
+                }
+            }
+        }
+
+        if ( $date_repairs > 0 ) {
+            ontario_obituaries_log(
+                sprintf( 'v4.2.4: Repaired death dates for %d obituary records (year mismatch / future dates).', $date_repairs ),
+                'info'
+            );
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        }
+
+        // Also clean the q2l0eq garbled city slug that survived previous migrations
+        $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table} SET city_normalized = '' WHERE city_normalized = %s",
+                'q2l0eq'
+            )
+        );
+
+        ontario_obituaries_log( 'v4.2.4: Death date cross-validation repair complete.', 'info' );
     }
 
     ontario_obituaries_log( sprintf( 'Plugin updated to v%s — caches purged, rewrite rules flushed.', ONTARIO_OBITUARIES_VERSION ), 'info' );
