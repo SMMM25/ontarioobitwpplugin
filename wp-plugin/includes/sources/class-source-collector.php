@@ -44,6 +44,53 @@ class Ontario_Obituaries_Source_Collector {
      * @param string $city   Optional — filter sources by city.
      * @return array Results { obituaries_found, obituaries_added, sources_processed, errors, per_source }
      */
+    /**
+     * v4.6.2: Collect from a single source by ID.
+     *
+     * Used by the source-by-source AJAX rescan to stay within server timeouts.
+     *
+     * @param int $source_id Source registry ID.
+     * @return array Same format as collect().
+     */
+    public function collect_source( $source_id ) {
+        global $wpdb;
+
+        $this->results = array(
+            'obituaries_found'  => 0,
+            'obituaries_added'  => 0,
+            'sources_processed' => 0,
+            'sources_skipped'   => 0,
+            'errors'            => array(),
+            'per_source'        => array(),
+            'started_at'        => current_time( 'mysql', true ),
+            'completed_at'      => '',
+        );
+
+        $table_name = $wpdb->prefix . 'ontario_obituaries';
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) !== $table_name ) {
+            $this->results['errors']['database'] = 'Obituaries table does not exist.';
+            $this->results['completed_at'] = current_time( 'mysql', true );
+            return $this->results;
+        }
+
+        // Load the specific source.
+        $source_table = Ontario_Obituaries_Source_Registry::table_name();
+        $source = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM `{$source_table}` WHERE id = %d AND enabled = 1",
+            $source_id
+        ), ARRAY_A );
+
+        if ( empty( $source ) ) {
+            $this->results['errors']['source'] = sprintf( 'Source ID %d not found or disabled.', $source_id );
+            $this->results['completed_at'] = current_time( 'mysql', true );
+            return $this->results;
+        }
+
+        $this->process_source( $source, $table_name );
+        $this->results['completed_at'] = current_time( 'mysql', true );
+        return $this->results;
+    }
+
     public function collect( $region = '', $city = '' ) {
         global $wpdb;
 

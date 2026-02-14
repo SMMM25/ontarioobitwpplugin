@@ -108,81 +108,104 @@
             // Remove any previous inline result
             $('#rescan-only-inline-result').remove();
 
-            // v4.6.1: Async pattern — fire the rescan, then poll for completion.
-            // This prevents LiteSpeed proxy timeouts from showing "Network error".
+            // v4.6.2: Source-by-source pattern.
+            // Step 1: Get the list of active sources.
+            // Step 2: Process each source one at a time (each request ~5-20s).
+            // This guarantees every request finishes well within the server timeout.
             $.post(ajaxUrl, {
                 action: 'ontario_obituaries_rescan_only',
                 nonce:  nonce
             }, function(response) {
-                if (response.success && response.data && response.data.status === 'running') {
-                    $status.text('Scanning sources in the background\u2026 (this takes 1\u20132 minutes)').css('color', '#826200');
-                    // Start polling every 5 seconds.
-                    pollRescanStatus();
-                } else {
-                    var msg = (response.data && response.data.message) || 'Failed to start rescan.';
+                if (!response.success || !response.data || !response.data.sources) {
+                    var msg = (response.data && response.data.message) || 'Failed to load sources.';
                     $status.html('\u274C ' + escHtml(msg)).css('color', '#d63638');
-                    $btn.prop('disabled', false);
-                }
-            }).fail(function() {
-                $status.html('\u274C Could not start rescan. Check your connection and try again.').css('color', '#d63638');
-                $btn.prop('disabled', false);
-            });
-
-            var pollCount = 0;
-            var maxPolls  = 60; // 60 × 5s = 5 minutes max
-
-            function pollRescanStatus() {
-                pollCount++;
-                var elapsed = pollCount * 5;
-
-                if (pollCount > maxPolls) {
-                    $status.html('\u26A0\uFE0F Rescan is taking longer than expected. It may still be running server-side. Refresh the page in a minute to check results.').css('color', '#826200');
                     $btn.prop('disabled', false);
                     return;
                 }
 
-                setTimeout(function() {
-                    $.post(ajaxUrl, {
-                        action: 'ontario_obituaries_rescan_only_status',
-                        nonce:  nonce
-                    }, function(response) {
-                        var d = response.data || {};
+                var sources    = response.data.sources;
+                var totalSrc   = sources.length;
+                var currentIdx = 0;
+                var totalFound = 0;
+                var totalAdded = 0;
+                var allPerSource = {};
 
-                        if (d.status === 'running') {
-                            // Still going — update timer and keep polling.
-                            $status.text('Scanning sources\u2026 ' + elapsed + 's elapsed.').css('color', '#826200');
-                            pollRescanStatus();
-                            return;
-                        }
+                if (totalSrc === 0) {
+                    $status.html('\u26A0\uFE0F No active sources found in the Source Registry.').css('color', '#826200');
+                    $btn.prop('disabled', false);
+                    return;
+                }
 
-                        // Complete or error.
-                        if (d.status === 'complete') {
-                            $status.html('\u2705 ' + escHtml(d.message || 'Rescan complete.')).css('color', '#00a32a');
-                        } else {
-                            $status.html('\u274C ' + escHtml(d.message || 'Rescan finished with errors.')).css('color', '#d63638');
-                        }
+                processNextSource();
 
-                        // Render inline per-source table
-                        if (d.per_source && Object.keys(d.per_source).length > 0) {
+                function processNextSource() {
+                    if (currentIdx >= totalSrc) {
+                        // All done!
+                        $status.html('\u2705 Rescan complete. Found ' + totalFound + ' obituaries, added ' + totalAdded + ' new.').css('color', '#00a32a');
+
+                        if (Object.keys(allPerSource).length > 0) {
                             var summaryHtml = '<p style="margin-top:12px;"><strong>Summary:</strong> '
-                                + 'Found ' + (d.found || 0)
-                                + ', Added ' + (d.added || 0)
-                                + ', Skipped ' + (d.skipped || 0)
-                                + ', Errors ' + (d.errors || 0)
+                                + 'Found ' + totalFound
+                                + ', Added ' + totalAdded
                                 + '</p>';
-                            var tableHtml = buildPerSourceTable(d.per_source, 'Per-Source Breakdown');
+                            var tableHtml = buildPerSourceTable(allPerSource, 'Per-Source Breakdown');
                             var $result = $('<div id="rescan-only-inline-result" style="margin-top:16px;">' + summaryHtml + tableHtml + '</div>');
                             $btn.closest('.card').append($result);
                         }
 
                         $btn.prop('disabled', false);
+                        return;
+                    }
 
-                    }).fail(function() {
-                        // Poll failed — try again (server might be busy with the scrape).
-                        pollRescanStatus();
+                    var src = sources[currentIdx];
+                    var isLast = (currentIdx === totalSrc - 1) ? '1' : '0';
+                    $status.text('Scanning source ' + (currentIdx + 1) + '/' + totalSrc + ': ' + src.name + '\u2026').css('color', '#826200');
+
+                    $.ajax({
+                        url: ajaxUrl,
+                        type: 'POST',
+                        timeout: 120000, // 2 minutes per source
+                        data: {
+                            action:    'ontario_obituaries_rescan_one_source',
+                            nonce:     nonce,
+                            source_id: src.id,
+                            is_last:   isLast
+                        }
+                    }).done(function(resp) {
+                        var d = resp.data || {};
+                        totalFound += (d.found || 0);
+                        totalAdded += (d.added || 0);
+
+                        if (d.per_source) {
+                            $.each(d.per_source, function(domain, ps) {
+                                allPerSource[domain] = ps;
+                            });
+                        }
+
+                        currentIdx++;
+                        processNextSource();
+
+                    }).fail(function(jqXHR, textStatus) {
+                        // Source timed out or failed — log it and move on.
+                        allPerSource[src.domain] = {
+                            name: src.name,
+                            found: 0,
+                            added: 0,
+                            errors: [textStatus === 'timeout' ? 'Request timed out (>2 min)' : 'Network error'],
+                            http_status: '',
+                            error_message: textStatus === 'timeout' ? 'Timed out' : 'Network error',
+                            final_url: '',
+                            duration_ms: 0
+                        };
+                        currentIdx++;
+                        processNextSource();
                     });
-                }, 5000); // Poll every 5 seconds.
-            }
+                }
+
+            }).fail(function() {
+                $status.html('\u274C Could not load sources. Check your connection and try again.').css('color', '#d63638');
+                $btn.prop('disabled', false);
+            });
         });
 
         /* ───────── Gate validation ───────── */
