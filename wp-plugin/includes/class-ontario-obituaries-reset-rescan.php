@@ -733,10 +733,12 @@ class Ontario_Obituaries_Reset_Rescan {
     public function ajax_rescan_only() {
         $this->verify_request();
 
-        // v4.6.1: Async pattern — schedule the rescan as a WP cron event and
-        // return immediately.  This prevents LiteSpeed / proxy gateway timeouts
-        // from killing the AJAX response (the scrape takes 60-120s for 7 sources).
-        // The JS will poll ajax_rescan_only_status for completion.
+        // v4.6.1: Async pattern — send the JSON response immediately, then
+        // continue running the scrape in the same PHP process (after flushing
+        // the response to the browser).  This prevents LiteSpeed / proxy gateway
+        // timeouts from showing "Network error" to the user.
+
+        @set_time_limit( 300 );
 
         // Mark rescan as in-progress.
         update_option( 'ontario_obituaries_rescan_only_running', array(
@@ -747,26 +749,67 @@ class Ontario_Obituaries_Reset_Rescan {
         // Clear previous result so the poll can detect fresh completion.
         delete_option( 'ontario_obituaries_rescan_only_last_result' );
 
-        // Schedule immediate one-time cron event for the actual rescan work.
-        if ( ! wp_next_scheduled( 'ontario_obituaries_rescan_only_cron' ) ) {
-            wp_schedule_single_event( time(), 'ontario_obituaries_rescan_only_cron' );
+        // Send the "started" response to the browser immediately.
+        $response_data = wp_json_encode( array(
+            'success' => true,
+            'data'    => array(
+                'message' => __( 'Rescan started. Scanning sources in the background…', 'ontario-obituaries' ),
+                'status'  => 'running',
+            ),
+        ) );
+
+        // Flush the response and close the connection so the browser gets it fast.
+        header( 'Content-Type: application/json; charset=' . get_option( 'blog_charset' ) );
+        header( 'Content-Length: ' . strlen( $response_data ) );
+        header( 'Connection: close' );
+
+        // Disable any output buffering.
+        while ( ob_get_level() > 0 ) {
+            ob_end_flush();
         }
 
-        // Trigger cron immediately (spawn a loopback request).
-        spawn_cron();
+        echo $response_data;
+        flush();
 
-        wp_send_json_success( array(
-            'message' => __( 'Rescan started. Scanning sources in the background…', 'ontario-obituaries' ),
-            'status'  => 'running',
-        ) );
+        // If running under PHP-FPM, tell it to finish the request now.
+        if ( function_exists( 'fastcgi_finish_request' ) ) {
+            fastcgi_finish_request();
+        }
+
+        // If running under LiteSpeed, use its equivalent.
+        if ( function_exists( 'litespeed_finish_request' ) ) {
+            litespeed_finish_request();
+        }
+
+        // ── Now run the actual rescan in the background ──
+        // The browser has already received its response.
+
+        // Ignore user abort — keep running even if the connection is gone.
+        ignore_user_abort( true );
+
+        // Schedule a WP cron fallback in case this inline execution gets killed.
+        // The cron handler checks if status is still 'running' before doing work.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_rescan_only_cron' ) ) {
+            wp_schedule_single_event( time() + 10, 'ontario_obituaries_rescan_only_cron' );
+        }
+
+        // Run the actual collection work.
+        $this->do_rescan_only_work();
+
+        // WordPress will die after wp_send_json normally — we need to exit
+        // cleanly after doing our background work.
+        exit;
     }
 
     /**
-     * WP Cron handler: Actually run the rescan-only collection in the background.
+     * Perform the actual rescan-only work (runs after response is sent).
+     *
+     * Extracted so it can be called from both the inline background execution
+     * and the WP Cron fallback.
      *
      * @since 4.6.1
      */
-    public function cron_rescan_only() {
+    public function do_rescan_only_work() {
         @set_time_limit( 300 );
 
         // Source Collector MUST be available
@@ -873,13 +916,28 @@ class Ontario_Obituaries_Reset_Rescan {
             'completed_at' => current_time( 'mysql' ),
         ) );
 
-        ontario_obituaries_log(
-            sprintf(
-                'Rescan-only complete (no deletion). %d found, %d added, %d sources, %d errors.',
-                $found, $added, $sources, $errors
-            ),
-            'info'
-        );
+        if ( function_exists( 'ontario_obituaries_log' ) ) {
+            ontario_obituaries_log(
+                sprintf(
+                    'Rescan-only complete (no deletion). %d found, %d added, %d sources, %d errors.',
+                    $found, $added, $sources, $errors
+                ),
+                'info'
+            );
+        }
+    }
+
+    /**
+     * WP Cron fallback handler: Run rescan-only via cron if inline execution fails.
+     *
+     * @since 4.6.1
+     */
+    public function cron_rescan_only() {
+        // Only run if still marked as 'running' (inline didn't complete).
+        $running = get_option( 'ontario_obituaries_rescan_only_running', array() );
+        if ( isset( $running['status'] ) && 'running' === $running['status'] ) {
+            $this->do_rescan_only_work();
+        }
     }
 
     /**

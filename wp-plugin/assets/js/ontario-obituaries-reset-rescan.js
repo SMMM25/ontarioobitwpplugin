@@ -128,7 +128,19 @@
                 $btn.prop('disabled', false);
             });
 
+            var pollCount = 0;
+            var maxPolls  = 60; // 60 × 5s = 5 minutes max
+
             function pollRescanStatus() {
+                pollCount++;
+                var elapsed = pollCount * 5;
+
+                if (pollCount > maxPolls) {
+                    $status.html('\u26A0\uFE0F Rescan is taking longer than expected. It may still be running server-side. Refresh the page in a minute to check results.').css('color', '#826200');
+                    $btn.prop('disabled', false);
+                    return;
+                }
+
                 setTimeout(function() {
                     $.post(ajaxUrl, {
                         action: 'ontario_obituaries_rescan_only_status',
@@ -137,8 +149,8 @@
                         var d = response.data || {};
 
                         if (d.status === 'running') {
-                            // Still going — keep polling.
-                            $status.text('Scanning sources\u2026 still running.').css('color', '#826200');
+                            // Still going — update timer and keep polling.
+                            $status.text('Scanning sources\u2026 ' + elapsed + 's elapsed.').css('color', '#826200');
                             pollRescanStatus();
                             return;
                         }
@@ -166,7 +178,7 @@
                         $btn.prop('disabled', false);
 
                     }).fail(function() {
-                        // Poll failed — try again (server might be busy).
+                        // Poll failed — try again (server might be busy with the scrape).
                         pollRescanStatus();
                     });
                 }, 5000); // Poll every 5 seconds.
