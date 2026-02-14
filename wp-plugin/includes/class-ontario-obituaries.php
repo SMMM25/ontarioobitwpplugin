@@ -527,7 +527,7 @@ class Ontario_Obituaries {
 
                 <h2 style="margin-top:30px;"><?php esc_html_e( 'AI Rewrite Engine', 'ontario-obituaries' ); ?></h2>
                 <p class="description" style="margin-bottom:15px;">
-                    <?php esc_html_e( 'Automatically rewrites obituary text into unique, professional prose to avoid copyright issues. Uses Groq API (free tier, no credit card needed).', 'ontario-obituaries' ); ?>
+                    <?php esc_html_e( 'Reads each obituary with Groq AI to extract accurate dates, age, location, and funeral home as structured data, then rewrites the prose into unique, professional text. Corrects scraper errors automatically. Uses Groq API (free tier, no credit card needed).', 'ontario-obituaries' ); ?>
                 </p>
                 <table class="form-table">
                     <tr valign="top">
@@ -537,7 +537,7 @@ class Ontario_Obituaries {
                                 <input type="checkbox" name="ontario_obituaries_settings[ai_rewrite_enabled]" value="1" <?php checked( ! empty( $settings['ai_rewrite_enabled'] ) ); ?> />
                                 <?php esc_html_e( 'Automatically rewrite obituaries after each collection', 'ontario-obituaries' ); ?>
                             </label>
-                            <p class="description"><?php esc_html_e( 'Requires a Groq API key below. Rewrites 25 obituaries per batch, 1 request every 6 seconds.', 'ontario-obituaries' ); ?></p>
+                            <p class="description"><?php esc_html_e( 'Requires a Groq API key below. Processes 5 obituaries per batch, 1 request every 8 seconds. Runs automatically via cron every 5 minutes.', 'ontario-obituaries' ); ?></p>
                         </td>
                     </tr>
                     <tr valign="top">
@@ -577,7 +577,7 @@ class Ontario_Obituaries {
                                     esc_html( number_format_i18n( $stats['pending'] ) ),
                                     esc_html( number_format_i18n( $stats['percent_complete'], 1 ) )
                                 );
-                                echo '<br><small style="color:#666;">Pipeline: Scrape &rarr; AI Rewrite &rarr; Validate &rarr; Publish. Obituaries only appear on site after passing all stages.</small>';
+                                echo '<br><small style="color:#666;">Pipeline: Scrape &rarr; Groq JSON Extraction + Rewrite &rarr; Validate &rarr; Publish. Corrects dates, age, and location before publishing. Runs automatically every 5 minutes via server cron.</small>';
                             } else {
                                 esc_html_e( 'AI Rewriter class not loaded.', 'ontario-obituaries' );
                             }
