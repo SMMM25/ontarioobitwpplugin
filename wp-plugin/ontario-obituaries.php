@@ -1095,7 +1095,7 @@ add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled
 /**
  * v4.1.0: AI Rewrite batch cron handler.
  *
- * Processes up to 5 obituaries per run (1 every 8 seconds).
+ * Processes up to 3 obituaries per run (1 every 15 seconds).
  * Self-reschedules if more remain.
  */
 function ontario_obituaries_ai_rewrite_batch() {
