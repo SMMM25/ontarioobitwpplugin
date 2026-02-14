@@ -68,6 +68,7 @@ class Ontario_Obituaries_GoFundMe_Linker {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
+        // v4.6.0: Only check published obituaries (already AI-rewritten & validated).
         $obituaries = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, name, date_of_birth, date_of_death, age, location, city_normalized, funeral_home
              FROM `{$table}`
@@ -76,6 +77,7 @@ class Ontario_Obituaries_GoFundMe_Linker {
                AND name IS NOT NULL AND name != ''
                AND date_of_death IS NOT NULL AND date_of_death != '' AND date_of_death != '0000-00-00'
                AND suppressed_at IS NULL
+               AND status = 'published'
              ORDER BY created_at DESC
              LIMIT %d",
             $this->batch_size
@@ -490,16 +492,17 @@ class Ontario_Obituaries_GoFundMe_Linker {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
+        // v4.6.0: Only count published records.
         $total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL AND name != '' AND date_of_death != '' AND date_of_death != '0000-00-00'"
+            "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL AND status = 'published' AND name != '' AND date_of_death != '' AND date_of_death != '0000-00-00'"
         );
 
         $checked = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE gofundme_checked_at IS NOT NULL AND suppressed_at IS NULL"
+            "SELECT COUNT(*) FROM `{$table}` WHERE gofundme_checked_at IS NOT NULL AND suppressed_at IS NULL AND status = 'published'"
         );
 
         $matched = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE gofundme_url IS NOT NULL AND gofundme_url != '' AND suppressed_at IS NULL"
+            "SELECT COUNT(*) FROM `{$table}` WHERE gofundme_url IS NOT NULL AND gofundme_url != '' AND suppressed_at IS NULL AND status = 'published'"
         );
 
         return array(

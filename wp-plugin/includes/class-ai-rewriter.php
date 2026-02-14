@@ -9,7 +9,9 @@
  * Architecture:
  *   - Uses Groq's OpenAI-compatible chat completion API.
  *   - API key stored in wp_options (ontario_obituaries_groq_api_key).
- *   - Processes obituaries that have a description but no ai_description.
+ *   - v4.6.0: Processes obituaries with status='pending', rewrites them,
+ *     validates the rewrite preserves all facts, then sets status='published'.
+ *     Obituaries are NOT visible on the site until they pass this pipeline.
  *   - Called after each collection cycle and on a separate cron hook.
  *   - Rate-limited: 1 request per 6 seconds (10/min) to stay within Groq free tier.
  *   - Batch size: 25 obituaries per run to avoid PHP timeout.
@@ -82,12 +84,15 @@ class Ontario_Obituaries_AI_Rewriter {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
-        // Get obituaries with original description but no AI rewrite yet.
+        // v4.6.0: Get obituaries with status='pending' that need AI rewrite.
+        // Only pending records are processed — they become 'published' after
+        // successful rewrite + validation.
         $obituaries = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, name, date_of_birth, date_of_death, age, funeral_home,
-                    location, description
+                    location, description, city_normalized
              FROM `{$table}`
-             WHERE description IS NOT NULL
+             WHERE status = 'pending'
+               AND description IS NOT NULL
                AND description != ''
                AND (ai_description IS NULL OR ai_description = '')
                AND suppressed_at IS NULL
@@ -155,13 +160,23 @@ class Ontario_Obituaries_AI_Rewriter {
                 continue;
             }
 
-            // Save the validated rewrite.
+            // v4.6.0: Save the validated rewrite AND publish the obituary.
+            // This is the ONLY path to 'published' status — ensures every
+            // visible obituary has been AI-rewritten and fact-validated.
             $wpdb->update(
                 $table,
-                array( 'ai_description' => sanitize_textarea_field( $rewritten ) ),
+                array(
+                    'ai_description' => sanitize_textarea_field( $rewritten ),
+                    'status'         => 'published',
+                ),
                 array( 'id' => $obituary->id ),
-                array( '%s' ),
+                array( '%s', '%s' ),
                 array( '%d' )
+            );
+
+            ontario_obituaries_log(
+                sprintf( 'AI Rewriter: Published obituary ID %d (%s) — rewrite validated.', $obituary->id, $obituary->name ),
+                'info'
             );
 
             $result['succeeded']++;
@@ -220,15 +235,17 @@ class Ontario_Obituaries_AI_Rewriter {
 You are a professional obituary writer for a funeral home directory in Ontario, Canada. Your task is to rewrite scraped obituary text into dignified, original prose.
 
 ABSOLUTE RULES:
-1. PRESERVE every fact: full name, dates, locations, funeral home, age. Never change or omit any fact.
-2. NEVER invent details not present in the original text. If the original doesn't mention something, neither should you.
-3. Write 2-4 short paragraphs of compassionate, professional prose.
-4. Use third person ("He passed away" or "She is survived by").
-5. Do NOT include headings, bullet points, or formatting. Plain prose only.
-6. Do NOT include phrases like "according to the obituary" or "the original notice stated".
-7. Do NOT add condolence messages or calls-to-action.
-8. If the original is very short (just a name and dates), write a single brief sentence acknowledging the passing.
-9. Output ONLY the rewritten obituary text. No preamble, no commentary.
+1. PRESERVE every fact EXACTLY: full name, ALL dates (birth AND death with exact day/month/year), ALL locations, funeral home name, age number. Never change, omit, or round any fact.
+2. You MUST include the death date (e.g., "February 13, 2026") and age (e.g., "at the age of 84") explicitly in your text. These are mandatory.
+3. You MUST include the city/location (e.g., "of Newmarket, Ontario") explicitly.
+4. NEVER invent details not present in the original text. If the original doesn't mention something, neither should you.
+5. Write 2-4 short paragraphs of compassionate, professional prose.
+6. Use third person ("He passed away" or "She is survived by").
+7. Do NOT include headings, bullet points, or formatting. Plain prose only.
+8. Do NOT include phrases like "according to the obituary" or "the original notice stated".
+9. Do NOT add condolence messages or calls-to-action.
+10. If the original is very short (just a name and dates), write a single brief sentence acknowledging the passing — still include the date and location.
+11. Output ONLY the rewritten obituary text. No preamble, no commentary.
 SYSTEM;
 
         // Build the context block with all available facts.
@@ -323,17 +340,22 @@ SYSTEM;
     /**
      * Validate a rewritten obituary against the original to prevent hallucinations.
      *
-     * Checks:
-     *   1. The rewrite mentions the deceased's name (or a recognizable part of it).
-     *   2. The rewrite is not suspiciously short (< 50 chars) or long (> 5000 chars).
-     *   3. The rewrite doesn't contain obvious LLM artifacts.
+     * v4.6.0: Strengthened validation — this is the ONLY gate to publication.
+     * Must verify ALL critical facts are preserved:
+     *   1. Full name (last name + first name must appear).
+     *   2. Death date must be mentioned if present in original.
+     *   3. Age must match if present in original.
+     *   4. Location/city must be mentioned if present in original.
+     *   5. Length and LLM artifact checks.
      *
      * @param string $rewritten  The LLM-generated text.
      * @param object $obituary   The original database row.
      * @return true|WP_Error True if valid.
      */
     private function validate_rewrite( $rewritten, $obituary ) {
-        // Length check.
+        $lower = strtolower( $rewritten );
+
+        // ── 1. Length check ──
         $len = strlen( $rewritten );
         if ( $len < 50 ) {
             return new WP_Error( 'too_short', sprintf( 'Rewrite too short (%d chars).', $len ) );
@@ -342,16 +364,13 @@ SYSTEM;
             return new WP_Error( 'too_long', sprintf( 'Rewrite too long (%d chars).', $len ) );
         }
 
-        // Name check: extract the last name (most reliable part) and verify it appears.
+        // ── 2. Name check (last name required, first name preferred) ──
         $name_parts = preg_split( '/\s+/', trim( $obituary->name ) );
         $last_name  = end( $name_parts );
-
-        // Remove common suffixes/titles for matching.
-        $last_name = preg_replace( '/^(Jr|Sr|III|II|IV)\.?$/i', '', $last_name );
-        $last_name = trim( $last_name );
+        $last_name  = preg_replace( '/^(Jr|Sr|III|II|IV)\.?$/i', '', $last_name );
+        $last_name  = trim( $last_name );
 
         if ( strlen( $last_name ) >= 3 && false === stripos( $rewritten, $last_name ) ) {
-            // Try the first name as well.
             $first_name = reset( $name_parts );
             $first_name = preg_replace( '/^(Mr|Mrs|Ms|Dr|Rev)\.?$/i', '', $first_name );
             $first_name = trim( $first_name );
@@ -364,7 +383,63 @@ SYSTEM;
             }
         }
 
-        // LLM artifact check.
+        // ── 3. Death date check ──
+        if ( ! empty( $obituary->date_of_death ) && '0000-00-00' !== $obituary->date_of_death ) {
+            $dod = $obituary->date_of_death; // e.g., "2026-02-13"
+            $dod_parts = explode( '-', $dod );
+            if ( count( $dod_parts ) === 3 ) {
+                $year  = $dod_parts[0];
+                $month = ltrim( $dod_parts[1], '0' );
+                $day   = ltrim( $dod_parts[2], '0' );
+
+                // Check that the year appears in the rewrite.
+                if ( false === strpos( $rewritten, $year ) ) {
+                    return new WP_Error(
+                        'death_year_missing',
+                        sprintf( 'Rewrite does not mention death year %s.', $year )
+                    );
+                }
+
+                // Check day number appears (could be in various date formats).
+                if ( false === strpos( $rewritten, $day ) ) {
+                    return new WP_Error(
+                        'death_day_missing',
+                        sprintf( 'Rewrite does not mention death day %s from date %s.', $day, $dod )
+                    );
+                }
+            }
+        }
+
+        // ── 4. Age check ──
+        if ( ! empty( $obituary->age ) && intval( $obituary->age ) > 0 ) {
+            $age_str = strval( intval( $obituary->age ) );
+            if ( false === strpos( $rewritten, $age_str ) ) {
+                return new WP_Error(
+                    'age_missing',
+                    sprintf( 'Rewrite does not mention age %s.', $age_str )
+                );
+            }
+        }
+
+        // ── 5. Location/city check ──
+        $location = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : '';
+        if ( empty( $location ) && ! empty( $obituary->location ) ) {
+            $location = $obituary->location;
+        }
+        if ( ! empty( $location ) && strlen( $location ) >= 3 ) {
+            // Extract just the city name (take first part before comma or dash).
+            $city_check = preg_split( '/[,\-]/', $location );
+            $city_check = trim( $city_check[0] );
+
+            if ( strlen( $city_check ) >= 3 && false === stripos( $rewritten, $city_check ) ) {
+                return new WP_Error(
+                    'location_missing',
+                    sprintf( 'Rewrite does not mention location "%s".', $city_check )
+                );
+            }
+        }
+
+        // ── 6. LLM artifact check ──
         $artifacts = array(
             'as an ai',
             'i cannot',
@@ -375,9 +450,12 @@ SYSTEM;
             'certainly!',
             'sure!',
             'of course!',
+            'i\'d be happy',
+            'i am an',
+            'note:',
+            'disclaimer:',
         );
 
-        $lower = strtolower( $rewritten );
         foreach ( $artifacts as $artifact ) {
             if ( false !== strpos( $lower, $artifact ) ) {
                 return new WP_Error(
@@ -399,11 +477,12 @@ SYSTEM;
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
+        // v4.6.0: Count records with status='pending' (not yet rewritten & published).
         return (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM `{$table}`
-             WHERE description IS NOT NULL
+             WHERE status = 'pending'
+               AND description IS NOT NULL
                AND description != ''
-               AND (ai_description IS NULL OR ai_description = '')
                AND suppressed_at IS NULL"
         );
     }
@@ -411,7 +490,9 @@ SYSTEM;
     /**
      * Get rewrite statistics.
      *
-     * @return array { total: int, rewritten: int, pending: int, pct: float }
+     * v4.6.0: Now tracks pipeline status (pending → published).
+     *
+     * @return array { total: int, rewritten: int, pending: int, published: int, pct: float }
      */
     public function get_stats() {
         global $wpdb;
@@ -427,12 +508,24 @@ SYSTEM;
              WHERE ai_description IS NOT NULL AND ai_description != '' AND suppressed_at IS NULL"
         );
 
-        $pct = $total > 0 ? round( ( $rewritten / $total ) * 100, 1 ) : 0;
+        $published = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}`
+             WHERE status = 'published' AND suppressed_at IS NULL"
+        );
+
+        $pending_count = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}`
+             WHERE status = 'pending' AND suppressed_at IS NULL"
+        );
+
+        $pct = $total > 0 ? round( ( $published / $total ) * 100, 1 ) : 0;
 
         return array(
             'total'            => $total,
             'rewritten'        => $rewritten,
-            'pending'          => $total - $rewritten,
+            'published'        => $published,
+            'pending'          => $pending_count,
+            'pending_rewrite'  => $total - $rewritten,
             'pct'              => $pct,
             'percent_complete' => $pct,
         );

@@ -20,9 +20,20 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 
 global $wpdb;
 
-// 1. Drop all custom tables
+// v4.6.0 FIX: Do NOT drop the obituary data table on uninstall.
+// The table contains hundreds/thousands of scraped + AI-rewritten obituaries
+// that take hours to rebuild. Dropping it on a simple delete-and-reinstall
+// cycle causes catastrophic data loss.
+//
+// Only drop helper tables (sources registry & suppressions) which are
+// lightweight and auto-rebuilt on activation.
+//
+// To fully remove ALL data, manually run:
+//   DROP TABLE wp_ontario_obituaries;
+//   DROP TABLE wp_ontario_obituaries_sources;
+//   DROP TABLE wp_ontario_obituaries_suppressions;
 $tables = array(
-    $wpdb->prefix . 'ontario_obituaries',
+    // $wpdb->prefix . 'ontario_obituaries',  // PRESERVED — contains obituary data
     $wpdb->prefix . 'ontario_obituaries_sources',
     $wpdb->prefix . 'ontario_obituaries_suppressions',
 );

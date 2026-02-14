@@ -82,7 +82,7 @@ class Ontario_Obituaries_IndexNow {
 
         foreach ( $obituary_ids as $id ) {
             $obit = $wpdb->get_row( $wpdb->prepare(
-                "SELECT id, name, city_normalized, location FROM `{$table}` WHERE id = %d",
+                "SELECT id, name, city_normalized, location FROM `{$table}` WHERE id = %d AND status = 'published'",
                 intval( $id )
             ) );
 
