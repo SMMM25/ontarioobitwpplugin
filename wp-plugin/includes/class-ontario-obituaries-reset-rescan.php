@@ -279,6 +279,59 @@ class Ontario_Obituaries_Reset_Rescan {
                     <?php endif; ?>
                     <?php endif; ?>
                 </div>
+
+                <!-- v4.6.3: AI Rewriter Manual Trigger -->
+                <div class="card" style="margin-top:15px;">
+                    <h2 style="color:#2271b1;"><?php esc_html_e( 'AI Rewriter', 'ontario-obituaries' ); ?></h2>
+                    <p><?php esc_html_e( 'Manually process pending obituaries through the AI rewrite pipeline. Each click processes up to 10 records (~60 seconds). Records are published after successful rewrite + validation.', 'ontario-obituaries' ); ?></p>
+                    <?php
+                    // Show pending/published counts.
+                    $rw_pending = 0;
+                    $rw_published = 0;
+                    $rw_total = 0;
+                    $rw_configured = false;
+                    if ( class_exists( 'Ontario_Obituaries_AI_Rewriter' ) || ( defined( 'ONTARIO_OBITUARIES_PLUGIN_DIR' ) && file_exists( ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php' ) ) ) {
+                        if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+                            require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+                        }
+                        $rw_instance = new Ontario_Obituaries_AI_Rewriter();
+                        $rw_configured = $rw_instance->is_configured();
+                        if ( $rw_configured ) {
+                            $rw_stats = $rw_instance->get_stats();
+                            $rw_pending   = $rw_stats['pending'];
+                            $rw_published = $rw_stats['published'];
+                            $rw_total     = $rw_stats['total'];
+                        }
+                    }
+                    ?>
+                    <div id="rewriter-stats" style="margin-bottom:12px;">
+                        <strong style="color:orange;"><?php echo intval( $rw_pending ); ?></strong> <?php esc_html_e( 'pending', 'ontario-obituaries' ); ?>
+                        &nbsp;|&nbsp;
+                        <strong style="color:green;"><?php echo intval( $rw_published ); ?></strong> <?php esc_html_e( 'published', 'ontario-obituaries' ); ?>
+                        &nbsp;|&nbsp;
+                        <strong><?php echo intval( $rw_total ); ?></strong> <?php esc_html_e( 'total', 'ontario-obituaries' ); ?>
+                        <?php if ( ! $rw_configured ) : ?>
+                            <br><span style="color:#d63638;"><strong><?php esc_html_e( 'Groq API key not configured.', 'ontario-obituaries' ); ?></strong> <?php esc_html_e( 'Go to Settings → AI Rewrite Engine to add your key.', 'ontario-obituaries' ); ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <p>
+                        <button type="button" class="button button-primary" id="btn-run-rewriter" <?php echo ! $rw_configured || $rw_pending < 1 ? 'disabled' : ''; ?>>
+                            <?php esc_html_e( 'Run AI Rewriter Now', 'ontario-obituaries' ); ?>
+                        </button>
+                        <button type="button" class="button" id="btn-stop-rewriter" style="display:none;">
+                            <?php esc_html_e( 'Stop', 'ontario-obituaries' ); ?>
+                        </button>
+                        <span id="rewriter-status" style="margin-left:10px;"></span>
+                    </p>
+                    <div id="rewriter-progress" style="display:none; margin-top:10px;">
+                        <div style="background:#f0f0f0; border-radius:4px; height:20px; width:100%; max-width:400px;">
+                            <div id="rewriter-progress-bar" style="background:#2271b1; height:100%; border-radius:4px; width:0%; transition:width 0.3s;"></div>
+                        </div>
+                        <p id="rewriter-progress-text" style="font-size:12px; color:#666; margin-top:4px;"></p>
+                    </div>
+                    <div id="rewriter-log" style="display:none; margin-top:10px; max-height:200px; overflow-y:auto; background:#f9f9f9; padding:8px; border:1px solid #ddd; font-family:monospace; font-size:12px;"></div>
+                </div>
+
             </div>
 
             <!-- Main panel (hidden while lock is active) -->
@@ -616,15 +669,14 @@ class Ontario_Obituaries_Reset_Rescan {
             ontario_obituaries_purge_litespeed( 'ontario_obits' );
         }
 
-        // v4.6.0: Schedule AI rewrite batch after rescan (same as cron handler).
-        if ( function_exists( 'ontario_obituaries_get_settings' ) ) {
-            $rescan_settings = ontario_obituaries_get_settings();
-            if ( ! empty( $rescan_settings['ai_rewrite_enabled'] ) ) {
-                if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-                    wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
-                    if ( function_exists( 'ontario_obituaries_log' ) ) {
-                        ontario_obituaries_log( 'v4.6.0: Scheduled AI rewrite batch (30s after reset-rescan).', 'info' );
-                    }
+        // v4.6.3: Schedule AI rewrite batch if Groq API key is configured.
+        // No longer gated behind 'ai_rewrite_enabled' checkbox — having a key IS the intent.
+        $groq_key_check = get_option( 'ontario_obituaries_groq_api_key', '' );
+        if ( ! empty( $groq_key_check ) ) {
+            if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+                wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
+                if ( function_exists( 'ontario_obituaries_log' ) ) {
+                    ontario_obituaries_log( 'v4.6.3: Scheduled AI rewrite batch (30s after reset-rescan).', 'info' );
                 }
             }
         }
@@ -833,15 +885,13 @@ class Ontario_Obituaries_Reset_Rescan {
                 ontario_obituaries_cleanup_duplicates();
             }
 
-            // Schedule AI rewrite batch.
-            if ( function_exists( 'ontario_obituaries_get_settings' ) ) {
-                $rescan_settings = ontario_obituaries_get_settings();
-                if ( ! empty( $rescan_settings['ai_rewrite_enabled'] ) ) {
-                    if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-                        wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
-                        if ( function_exists( 'ontario_obituaries_log' ) ) {
-                            ontario_obituaries_log( 'v4.6.2: Scheduled AI rewrite batch (30s after rescan-only).', 'info' );
-                        }
+            // v4.6.3: Schedule AI rewrite batch if Groq API key is configured.
+            $groq_key_check = get_option( 'ontario_obituaries_groq_api_key', '' );
+            if ( ! empty( $groq_key_check ) ) {
+                if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+                    wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
+                    if ( function_exists( 'ontario_obituaries_log' ) ) {
+                        ontario_obituaries_log( 'v4.6.3: Scheduled AI rewrite batch (30s after rescan-only).', 'info' );
                     }
                 }
             }
