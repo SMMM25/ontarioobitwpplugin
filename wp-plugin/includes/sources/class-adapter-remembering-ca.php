@@ -235,10 +235,11 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         $month_pattern = '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
         $weekday = '(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)';
         $death_phrases = array(
-            // v4.6.5: "passed away [up to 12 words] [on [weekday,]] Month Day, Year"
-            // Handles: "passed away peacefully at Southlake Hospital on Thursday, Nov 20, 2025"
-            // Increased word limit from 5→12 and added optional weekday before date.
-            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\S+){0,12}?\s+(?:on\s+)?(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "passed away [up to 18 words] [on [weekday,]] Month Day, Year"
+            // v4.6.5 had {0,12} but real obituaries like Burton have 14 words between
+            // "passed away" and the date (e.g., "surrounded by the love and comfort of
+            // family at Southlake Regional Health Centre on February 10, 2026").
+            '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\S+){0,18}?\s+(?:on\s+)?(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // "peaceful passing of...on/at...Month Day, Year"
             '/(?:peaceful\s+)?passing\s+of(?:\s+\S+){0,10}?(?:\s+on|\s+at)(?:\s+\S+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // v4.6.5: "[her/his/their] passing on Month Day, Year"
@@ -252,18 +253,30 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             '/[Pp]assing\s+(?:gently|peacefully|quietly|softly)(?:\s+\S+){0,8}?\s+on\s+(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // "left us [peacefully] [on] Month Day, Year"
             '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-            // "entered into rest [on] Month Day, Year"
-            '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-            // "died [words] [on] Month Day, Year" — up to 8 words between
-            '/died(?:\s+\S+){0,8}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-            // "went to be with the Lord on Month Day, Year" / "called home on ..."
-            '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\S+){0,4}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
-            // v3.15.2: "On [weekday,] Month Day, Year [Name] passed away" (date before phrase)
-            '/[Oo]n\s+(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s+(?:\S+\s+){0,3}(?:passed\s+away|passed|died)/iu',
+            // v4.6.6: "entered into rest" / "called to [her/his] [eternal] rest" on Month Day, Year
+            // v4.6.5 only had "entered into rest"; obituaries also say "called to her eternal rest".
+            '/(?:entered\s+into|called\s+to(?:\s+\S+){0,3}?)\s+rest(?:\s+on)?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "died [up to 15 words] [on] Month Day, Year"
+            // v4.6.5 had {0,8} but Horsman has 11 words: "died peacefully, in her sleep,
+            // surrounded by the love of her family on February 11, 2026".
+            '/died(?:\s+\S+){0,15}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "went [home] to be with" / "called home" — up to 6 words.
+            // v4.6.5 missed "went home to be with" (had "went to be with" without "home").
+            '/(?:went\s+(?:home\s+)?to\s+be\s+with|called\s+home)(?:\s+\S+){0,6}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "On [weekday,] Month Day, Year [0-5 words] passed away/peacefully/died"
+            // v4.6.5 had {0,3} and missed "passed peacefully". Expanded word gap and variants.
+            '/[Oo]n\s+(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s*,?\s+(?:\S+\s+){0,5}(?:passed\s+away|passed\s+peacefully|passed|died)/iu',
             // Date range in parens: (Month Day, Year - Month Day, Year)
             '/\(' . $month_pattern . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\)/u',
-            // v4.6.5: "announce the passing of [Name] on Month Day, Year" (no "peaceful" prefix)
+            // v4.6.5: "announce the passing of [Name] on Month Day, Year"
             '/announce\s+the\s+(?:sudden\s+)?passing\s+of(?:\s+\S+){0,10}?\s+(?:on|at)\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "announce the death of [Name] on Month Day, Year"
+            // Handles: "we announce the death of our beloved mother on February 11, 2026"
+            '/announce\s+the\s+(?:sudden\s+)?death\s+of(?:\s+\S+){0,10}?\s+(?:on|at)\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "the death of ... on Month Day, Year" (broad fallback)
+            '/(?:the\s+)?death\s+of(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.6: "left this world [peacefully] on Month Day, Year"
+            '/left\s+this\s+world(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
         );
         foreach ( $death_phrases as $pattern ) {
             if ( preg_match( $pattern, $full_text, $death_m ) ) {
@@ -559,8 +572,9 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             // handling, and new patterns. See extract_card() for full explanation.
             $weekday_p = '(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)';
             $death_patterns = array(
-                // "passed away [up to 12 words] [on [weekday,]] Month Day, Year"
-                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\S+){0,12}?\s+(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "passed away [up to 18 words] [on [weekday,]] Month Day, Year"
+                // Increased from {0,12} to {0,18} — see extract_card() for explanation.
+                '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\S+){0,18}?\s+(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "peaceful passing of...on/at...Month Day, Year" (Betty Cudmore pattern)
                 '/(?:peaceful\s+)?passing\s+of(?:\s+\S+){0,10}?(?:\s+on|\s+at)(?:\s+\S+){0,3}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "[her/his/their] passing on Month Day, Year"
@@ -571,22 +585,29 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
                 '/[Pp]assing\s+(?:gently|peacefully|quietly|softly)(?:\s+\S+){0,8}?\s+on\s+(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "left us peacefully on Month Day, Year"
                 '/left\s+us\s+(?:peacefully\s+)?(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
-                // "entered into rest [on] Month Day, Year"
-                '/entered\s+into\s+rest(?:\s+on)?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
-                // "died [peacefully] [at/in/on words] Month Day, Year" — up to 8 words
-                '/died(?:\s+\S+){0,8}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
-                // "went to be with the Lord on Month Day, Year" / "called home on ..."
-                '/(?:went\s+to\s+be\s+with|called\s+home)(?:\s+\S+){0,4}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "entered into rest" / "called to [her/his] [eternal] rest"
+                '/(?:entered\s+into|called\s+to(?:\s+\S+){0,3}?)\s+rest(?:\s+on)?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "died [up to 15 words] [on] Month Day, Year"
+                // Increased from {0,8} — see extract_card() for explanation.
+                '/died(?:\s+\S+){0,15}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "went [home] to be with" / "called home" — up to 6 words
+                '/(?:went\s+(?:home\s+)?to\s+be\s+with|called\s+home)(?:\s+\S+){0,6}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "on Friday, Month Day, Year, in his/her Nth year"
                 '/on\s+\S+,?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her)/isu',
-                // "On [weekday,] Month Day, Year [Name] passed away" (date before phrase)
-                '/[Oo]n\s+(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})\s+(?:\S+\s+){0,3}(?:passed\s+away|passed|died)/isu',
+                // v4.6.6: "On [weekday,] Month Day, Year [0-5 words] passed away/peacefully/died"
+                '/[Oo]n\s+(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})\s*,?\s+(?:\S+\s+){0,5}(?:passed\s+away|passed\s+peacefully|passed|died)/isu',
                 // Date range in parens: (Month Day, Year - Month Day, Year)
                 '/\(' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})\)/us',
                 // Date range without parens: "Month Day, Year - Month Day, Year"
                 '/' . $month_p . '\s+\d{1,2},?\s+\d{4}\s*[-\x{2013}\x{2014}]\s*(' . $month_p . '\s+\d{1,2},?\s+\d{4})/us',
                 // "announce the passing of [Name] on Month Day, Year"
                 '/announce\s+the\s+(?:sudden\s+)?passing\s+of(?:\s+\S+){0,10}?\s+(?:on|at)\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "announce the death of [Name] on Month Day, Year"
+                '/announce\s+the\s+(?:sudden\s+)?death\s+of(?:\s+\S+){0,10}?\s+(?:on|at)\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "the death of ... on Month Day, Year"
+                '/(?:the\s+)?death\s+of(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.6: "left this world [peacefully] on Month Day, Year"
+                '/left\s+this\s+world(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
             );
             foreach ( $death_patterns as $dp ) {
                 if ( preg_match( $dp, $desc_text, $dm ) ) {
