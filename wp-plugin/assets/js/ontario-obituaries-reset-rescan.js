@@ -103,7 +103,7 @@
             }
 
             $btn.prop('disabled', true);
-            $status.text('Running\u2026 Scanning all pages of each source. This may take 1\u20133 minutes.').css('color', '#826200');
+            $status.text('Running\u2026 Scanning listing pages from each source. This typically takes 1\u20132 minutes.').css('color', '#826200');
 
             // Remove any previous inline result
             $('#rescan-only-inline-result').remove();
@@ -164,7 +164,7 @@
                     $.ajax({
                         url: ajaxUrl,
                         type: 'POST',
-                        timeout: 180000, // 3 minutes per source (v4.6.4: multi-page scraping)
+                        timeout: 60000, // v4.6.5: 60s per source (listing pages only, no detail fetches)
                         data: {
                             action:    'ontario_obituaries_rescan_one_source',
                             nonce:     nonce,
@@ -513,6 +513,8 @@
         var rewriterTotalProcessed = 0;
         var rewriterTotalSucceeded = 0;
         var rewriterTotalFailed    = 0;
+        var rewriterConsecutiveFailures = 0; // v4.6.5: Track consecutive total-failure batches.
+        var rewriterBackoffDelay = 2000;     // v4.6.5: Adaptive delay between batches (ms).
 
         $('#btn-run-rewriter').on('click', function() {
             var $btn     = $(this);
@@ -531,6 +533,8 @@
             rewriterTotalProcessed = 0;
             rewriterTotalSucceeded = 0;
             rewriterTotalFailed    = 0;
+            rewriterConsecutiveFailures = 0;
+            rewriterBackoffDelay = 2000;
 
             $btn.prop('disabled', true);
             $stopBtn.show();
@@ -558,7 +562,7 @@
                 $.ajax({
                     url: ajaxUrl,
                     type: 'POST',
-                    timeout: 90000, // 90 seconds — 5 records × 6s + margin
+                    timeout: 120000, // v4.6.5: 120s — 5 records × (6s + up to 15s backoff) + margin
                     data: {
                         action: 'ontario_obituaries_run_rewriter',
                         nonce:  nonce
@@ -621,9 +625,35 @@
                         return;
                     }
 
-                    // Short pause then next batch.
-                    logRewriter('Pausing 2s before next batch\u2026');
-                    setTimeout(runRewriterBatch, 2000);
+                    // v4.6.5: Adaptive backoff based on rate-limit status.
+                    if (d.rate_limited) {
+                        // Server hit rate limits — wait longer before next batch.
+                        rewriterBackoffDelay = Math.min(rewriterBackoffDelay * 2, 30000);
+                        logRewriter('Rate limited by Groq API. Waiting ' + (rewriterBackoffDelay / 1000) + 's before next batch\u2026');
+                    } else if (d.succeeded > 0) {
+                        // Success — reset backoff to normal pace.
+                        rewriterBackoffDelay = 2000;
+                        rewriterConsecutiveFailures = 0;
+                    }
+
+                    // v4.6.5: Track consecutive all-fail batches.
+                    if (d.processed > 0 && d.succeeded === 0) {
+                        rewriterConsecutiveFailures++;
+                        if (rewriterConsecutiveFailures >= 5) {
+                            logRewriter('\u26A0\uFE0F 5 consecutive batches with 0 published. Stopping to avoid wasting API calls.');
+                            finishRewriter(
+                                'Paused after 5 failed batches. ' + rewriterTotalSucceeded + ' published, '
+                                + d.pending + ' still pending. Try again in a few minutes.',
+                                d.pending
+                            );
+                            return;
+                        }
+                    } else if (d.succeeded > 0) {
+                        rewriterConsecutiveFailures = 0;
+                    }
+
+                    logRewriter('Pausing ' + (rewriterBackoffDelay / 1000) + 's before next batch\u2026');
+                    setTimeout(runRewriterBatch, rewriterBackoffDelay);
 
                 }).fail(function(jqXHR, textStatus, errorThrown) {
                     var errMsg = '';
@@ -644,7 +674,18 @@
                         }
                     } catch(e) {}
                     logRewriter('\u274C ' + errMsg);
-                    finishRewriter(errMsg + ' ' + rewriterTotalSucceeded + ' published so far.', -1);
+
+                    // v4.6.5: On timeout/network error, retry up to 3 times with backoff
+                    // instead of immediately giving up (LiteSpeed may have killed the request
+                    // but the rewriter still has pending records).
+                    rewriterConsecutiveFailures++;
+                    if (rewriterConsecutiveFailures < 3 && !rewriterStopped) {
+                        var retryDelay = 10000 * rewriterConsecutiveFailures;
+                        logRewriter('Will retry in ' + (retryDelay / 1000) + 's (' + rewriterConsecutiveFailures + '/3)\u2026');
+                        setTimeout(runRewriterBatch, retryDelay);
+                    } else {
+                        finishRewriter(errMsg + ' ' + rewriterTotalSucceeded + ' published so far.', -1);
+                    }
                 });
             }
 

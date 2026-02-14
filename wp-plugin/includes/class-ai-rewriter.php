@@ -50,6 +50,15 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var string|null Cached API key. */
     private $api_key = null;
 
+    /** @var int Maximum retries for rate-limited requests. */
+    private $max_rate_limit_retries = 2;
+
+    /** @var bool Whether any rate-limiting was encountered during this batch. */
+    private $was_rate_limited = false;
+
+    /** @var int Number of consecutive rate-limit hits in this batch. */
+    private $consecutive_rate_limits = 0;
+
     /**
      * Constructor.
      *
@@ -139,12 +148,26 @@ class Ontario_Obituaries_AI_Rewriter {
             'info'
         );
 
+        // v4.6.5: Track rate-limit state for this batch.
+        $this->was_rate_limited      = false;
+        $this->consecutive_rate_limits = 0;
+
         foreach ( $obituaries as $obituary ) {
             $result['processed']++;
 
-            // Rate limiting between requests.
+            // v4.6.5: Adaptive rate limiting — increase delay after rate-limit hits.
             if ( $result['processed'] > 1 ) {
-                usleep( $this->request_delay );
+                $delay = $this->request_delay;
+                if ( $this->consecutive_rate_limits > 0 ) {
+                    // Exponential backoff: 12s, 24s, 48s after consecutive rate-limits.
+                    $delay = $this->request_delay * pow( 2, $this->consecutive_rate_limits );
+                    $delay = min( $delay, 60000000 ); // Cap at 60 seconds.
+                    ontario_obituaries_log(
+                        sprintf( 'AI Rewriter: Rate-limit backoff — waiting %ds before next request.', $delay / 1000000 ),
+                        'info'
+                    );
+                }
+                usleep( $delay );
             }
 
             $rewritten = $this->rewrite_obituary( $obituary );
@@ -158,14 +181,37 @@ class Ontario_Obituaries_AI_Rewriter {
                     $rewritten->get_error_message()
                 );
 
-                // If rate-limited, stop the batch to avoid wasting requests.
+                // v4.6.5 FIX: On rate-limit, DON'T break the loop. Instead, track
+                // consecutive rate-limits and let the backoff delay handle pacing.
+                // Only break if we've hit 3+ consecutive rate-limits with no successes
+                // in between — that means the quota is fully exhausted for this window.
                 if ( 'rate_limited' === $rewritten->get_error_code() ) {
-                    ontario_obituaries_log( 'AI Rewriter: Rate limited — stopping batch.', 'warning' );
-                    break;
+                    $this->was_rate_limited = true;
+                    $this->consecutive_rate_limits++;
+
+                    if ( $this->consecutive_rate_limits >= 3 ) {
+                        ontario_obituaries_log(
+                            'AI Rewriter: 3 consecutive rate-limits — pausing batch. Will resume on next AJAX call.',
+                            'warning'
+                        );
+                        break;
+                    }
+
+                    ontario_obituaries_log(
+                        sprintf(
+                            'AI Rewriter: Rate limited (consecutive: %d/%d) — will retry with backoff.',
+                            $this->consecutive_rate_limits,
+                            3
+                        ),
+                        'info'
+                    );
                 }
 
                 continue;
             }
+
+            // Success — reset consecutive rate-limit counter.
+            $this->consecutive_rate_limits = 0;
 
             // Validate the rewrite before saving.
             $validation = $this->validate_rewrite( $rewritten, $obituary );
@@ -205,19 +251,26 @@ class Ontario_Obituaries_AI_Rewriter {
 
         ontario_obituaries_log(
             sprintf(
-                'AI Rewriter: Batch complete — %d processed, %d succeeded, %d failed.',
+                'AI Rewriter: Batch complete — %d processed, %d succeeded, %d failed.%s',
                 $result['processed'],
                 $result['succeeded'],
-                $result['failed']
+                $result['failed'],
+                $this->was_rate_limited ? ' (rate-limited)' : ''
             ),
             'info'
         );
+
+        // v4.6.5: Include rate-limit status so the AJAX handler can tell JS to slow down.
+        $result['rate_limited'] = $this->was_rate_limited;
 
         return $result;
     }
 
     /**
      * Rewrite a single obituary via the Groq LLM API.
+     *
+     * v4.6.5: Improved retry logic with exponential backoff.
+     * On rate-limit: tries fallback model, then waits and retries primary.
      *
      * @param object $obituary Database row with name, dates, description, etc.
      * @return string|WP_Error The rewritten description, or error.
@@ -227,12 +280,17 @@ class Ontario_Obituaries_AI_Rewriter {
 
         $response = $this->call_api( $prompt );
 
-        if ( is_wp_error( $response ) ) {
-            // If primary model fails with rate limit, try fallback.
-            if ( 'rate_limited' === $response->get_error_code() ) {
-                ontario_obituaries_log( 'AI Rewriter: Primary model rate-limited, trying fallback.', 'info' );
-                usleep( 2000000 ); // Wait 2 seconds.
-                $response = $this->call_api( $prompt, $this->fallback_model );
+        if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
+            // Try 1: Fallback model (different quota bucket on some plans).
+            ontario_obituaries_log( 'AI Rewriter: Primary model rate-limited, trying fallback.', 'info' );
+            usleep( 3000000 ); // Wait 3 seconds.
+            $response = $this->call_api( $prompt, $this->fallback_model );
+
+            if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
+                // Try 2: Wait longer and retry primary model (rate-limit window may have shifted).
+                ontario_obituaries_log( 'AI Rewriter: Fallback also rate-limited, waiting 15s and retrying.', 'info' );
+                usleep( 15000000 ); // Wait 15 seconds for rate-limit window to shift.
+                $response = $this->call_api( $prompt );
             }
         }
 

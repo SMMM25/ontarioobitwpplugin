@@ -30,11 +30,42 @@ class Ontario_Obituaries_Source_Collector {
     private $results;
 
     /**
-     * Constructor.
+     * v4.6.5: Skip detail page fetches to stay within server timeouts.
+     *
+     * When true, process_source() will NOT fetch individual obituary detail
+     * pages. Listing-page data (name, dates, description snippet, published
+     * date, image) is sufficient for initial ingest — records are created
+     * with status='pending' and the AI rewriter enriches them later.
+     *
+     * This is the fix for the "22-minute rescan → 0 results" bug:
+     *   - 7 sources × 5 pages × 25 cards = 875 detail page fetches
+     *   - Each fetch ~1-3s + 2s rate limit = 375+ seconds per source
+     *   - LiteSpeed kills PHP at 120s → every source AJAX request dies
+     *   - JS has 180s timeout → 7 × 3 min = 21 min of waiting, 0 results
+     *
+     * With skip_detail_fetch = true:
+     *   - 7 sources × 5 listing pages × 2s = ~70s total
+     *   - Each source finishes in ~10-20s (well within timeout)
+     *
+     * @var bool
      */
-    public function __construct() {
+    private $skip_detail_fetch = false;
+
+    /**
+     * Constructor.
+     *
+     * @param array $options {
+     *     Optional. Configuration options.
+     *     @type bool $skip_detail_fetch Skip detail page fetches (default false).
+     * }
+     */
+    public function __construct( $options = array() ) {
         $settings      = function_exists( 'ontario_obituaries_get_settings' ) ? ontario_obituaries_get_settings() : array();
         $this->max_age = isset( $settings['max_age'] ) ? intval( $settings['max_age'] ) : 7;
+
+        if ( ! empty( $options['skip_detail_fetch'] ) ) {
+            $this->skip_detail_fetch = true;
+        }
     }
 
     /**
@@ -274,7 +305,11 @@ class Ontario_Obituaries_Source_Collector {
 
                 foreach ( $cards as $card ) {
                     // 5b. Optional detail fetch
-                    if ( ! empty( $card['detail_url'] ) ) {
+                    // v4.6.5: Skip detail fetches during interactive rescans.
+                    // Detail pages are ~328KB each; 125 cards × 3s = 375s per source,
+                    // which exceeds LiteSpeed's 120s timeout. Listing data is sufficient
+                    // for initial ingest (name, dates, description snippet, published date).
+                    if ( ! $this->skip_detail_fetch && ! empty( $card['detail_url'] ) ) {
                         // Rate limit between detail fetches
                         if ( $request_interval > 0 ) {
                             usleep( (int) ( $request_interval * 1000000 ) );

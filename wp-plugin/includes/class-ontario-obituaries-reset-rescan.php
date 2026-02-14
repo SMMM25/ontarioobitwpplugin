@@ -641,10 +641,12 @@ class Ontario_Obituaries_Reset_Rescan {
         // button. The 1-page cap was the original cause of the 175-obit limit.
         // Timeout safety: set_time_limit(300) above gives 5 minutes for all sources.
 
+        // v4.6.5 FIX: Skip detail page fetches during interactive rescan
+        // (same fix as ajax_rescan_one_source — see comments there for full explanation).
         $rescan_error = null;
         $results      = array();
         try {
-            $collector = new Ontario_Obituaries_Source_Collector();
+            $collector = new Ontario_Obituaries_Source_Collector( array( 'skip_detail_fetch' => true ) );
             $results   = $collector->collect();
         } catch ( Exception $e ) {
             $rescan_error = $e->getMessage();
@@ -839,11 +841,32 @@ class Ontario_Obituaries_Reset_Rescan {
         // v4.6.4: No page cap. Let the source registry's max_pages_per_run (default 5)
         // control pagination naturally. Each source request is isolated, so timeouts
         // are per-source, not cumulative.
+        //
+        // v4.6.5 FIX: Skip detail page fetches during interactive rescan.
+        //
+        // ROOT CAUSE of "22-minute rescan → 0 results" bug:
+        //   Each source has ~125 obituary cards (5 pages × 25 cards).
+        //   Each card triggered a detail page fetch (~328KB, 1-3 seconds)
+        //   plus a 2-second rate-limit delay = 375+ seconds per source.
+        //   LiteSpeed kills PHP processes at 120 seconds, so every source
+        //   AJAX request was dying mid-execution. The JS had a 180-second
+        //   timeout per source → 7 sources × 3 minutes = 21 minutes of
+        //   waiting, zero results.
+        //
+        // FIX: Pass skip_detail_fetch=true to the collector. Listing-page
+        // data (name, dates, description snippet, published date, image)
+        // is sufficient for initial ingest. Records are created as 'pending'
+        // and the AI rewriter processes them later. The cron job can still
+        // do detail fetches at its leisure (no timeout pressure).
+        //
+        // With this fix:
+        //   5 listing pages × ~2.5s each = ~12 seconds per source
+        //   7 sources × 12s = ~84 seconds total (vs. 22 minutes before)
 
         $error   = null;
         $results = array();
         try {
-            $collector = new Ontario_Obituaries_Source_Collector();
+            $collector = new Ontario_Obituaries_Source_Collector( array( 'skip_detail_fetch' => true ) );
             $results   = $collector->collect_source( $source_id );
         } catch ( Exception $e ) {
             $error = $e->getMessage();
