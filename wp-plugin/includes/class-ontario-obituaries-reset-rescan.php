@@ -283,7 +283,7 @@ class Ontario_Obituaries_Reset_Rescan {
                 <!-- v4.6.3: AI Rewriter Manual Trigger -->
                 <div class="card" style="margin-top:15px;">
                     <h2 style="color:#2271b1;"><?php esc_html_e( 'AI Rewriter', 'ontario-obituaries' ); ?></h2>
-                    <p><?php esc_html_e( 'Manually process pending obituaries through the AI rewrite pipeline. Each batch processes up to 5 records (~30 seconds). The button auto-continues until all records are processed. Records are published after successful rewrite + validation.', 'ontario-obituaries' ); ?></p>
+                    <p><?php esc_html_e( 'Manually process pending obituaries through the Groq AI pipeline. Each batch extracts structured data (dates, age, location) and rewrites up to 5 obituaries (~60 seconds). The button auto-continues until all records are processed. Records are published after successful extraction + validation. Also runs automatically every 5 minutes via server cron.', 'ontario-obituaries' ); ?></p>
                     <?php
                     // Show pending/published counts.
                     $rw_pending = 0;
