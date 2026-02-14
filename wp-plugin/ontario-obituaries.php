@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.6.4
+ * Version: 4.6.5
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.6.4' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.6.5' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1372,12 +1372,13 @@ function ontario_obituaries_ajax_run_rewriter() {
             $result['failed'],
             $pending_after
         ),
-        'processed' => $result['processed'],
-        'succeeded' => $result['succeeded'],
-        'failed'    => $result['failed'],
-        'errors'    => $safe_errors,
-        'pending'   => $pending_after,
-        'done'      => ( $pending_after < 1 ),
+        'processed'    => $result['processed'],
+        'succeeded'    => $result['succeeded'],
+        'failed'       => $result['failed'],
+        'errors'       => $safe_errors,
+        'pending'      => $pending_after,
+        'done'         => ( $pending_after < 1 ),
+        'rate_limited' => ! empty( $result['rate_limited'] ), // v4.6.5: Tell JS to slow down.
     ) );
 }
 add_action( 'wp_ajax_ontario_obituaries_run_rewriter', 'ontario_obituaries_ajax_run_rewriter' );
