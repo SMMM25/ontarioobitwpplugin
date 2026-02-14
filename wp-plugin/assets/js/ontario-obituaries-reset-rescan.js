@@ -614,6 +614,14 @@
                         + '</strong> published'
                     );
 
+                    // v4.6.7: Abort immediately on auth errors — no point retrying.
+                    if (d.auth_error) {
+                        logRewriter('\u274C API key or model permission error. Fix the API key before retrying.');
+                        logRewriter('Go to https://console.groq.com/keys to generate a new key.');
+                        finishRewriter('API key or model permission error. Fix the key and try again.', d.pending || -1);
+                        return;
+                    }
+
                     if (d.done || d.pending < 1) {
                         logRewriter('\u2705 All obituaries processed!');
                         finishRewriter('Complete! ' + rewriterTotalSucceeded + ' published, ' + rewriterTotalFailed + ' failed.', 0);
@@ -714,6 +722,39 @@
         $('#btn-stop-rewriter').on('click', function() {
             rewriterStopped = true;
             $(this).prop('disabled', true).text('Stopping\u2026');
+        });
+
+        // v4.6.7: Test API Key button handler.
+        $('#btn-test-api-key').on('click', function() {
+            var $btn = $(this);
+            var $status = $('#api-key-status');
+
+            $btn.prop('disabled', true).text('Testing\u2026');
+            $status.text('Connecting to Groq API\u2026').css('color', '#826200');
+
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                timeout: 30000,
+                data: {
+                    action: 'ontario_obituaries_validate_api_key',
+                    nonce: nonce
+                }
+            }).done(function(response) {
+                if (response.success) {
+                    var status = response.data.status || 'ok';
+                    var color = status === 'ok' ? '#00a32a' : '#826200';
+                    var icon = status === 'ok' ? '\u2705' : '\u26A0\uFE0F';
+                    $status.html(icon + ' ' + escHtml(response.data.message)).css('color', color);
+                } else {
+                    var msg = (response.data && response.data.message) || 'Unknown error.';
+                    $status.html('\u274C ' + escHtml(msg)).css('color', '#d63638');
+                }
+            }).fail(function(jqXHR, textStatus) {
+                $status.html('\u274C Connection failed: ' + escHtml(textStatus)).css('color', '#d63638');
+            }).always(function() {
+                $btn.prop('disabled', false).text('Test API Key');
+            });
         });
 
     });

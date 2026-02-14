@@ -321,7 +321,11 @@ class Ontario_Obituaries_Reset_Rescan {
                         <button type="button" class="button" id="btn-stop-rewriter" style="display:none;">
                             <?php esc_html_e( 'Stop', 'ontario-obituaries' ); ?>
                         </button>
+                        <button type="button" class="button" id="btn-test-api-key" <?php echo ! $rw_configured ? 'disabled' : ''; ?> style="margin-left:6px;">
+                            <?php esc_html_e( 'Test API Key', 'ontario-obituaries' ); ?>
+                        </button>
                         <span id="rewriter-status" style="margin-left:10px;"></span>
+                        <span id="api-key-status" style="margin-left:10px;"></span>
                     </p>
                     <div id="rewriter-progress" style="display:none; margin-top:10px;">
                         <div style="background:#f0f0f0; border-radius:4px; height:20px; width:100%; max-width:400px;">

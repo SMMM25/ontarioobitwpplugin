@@ -32,8 +32,14 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var string Model to use. Llama 3.3 70B for quality; falls back to 3.1 8B for speed. */
     private $model = 'llama-3.3-70b-versatile';
 
-    /** @var string Fallback model if primary is rate-limited. */
+    /** @var string Fallback model if primary is rate-limited or permission-blocked. */
     private $fallback_model = 'llama-3.1-8b-instant';
+
+    /** @var array Additional fallback models to try on 403 permission errors. */
+    private $fallback_models = array(
+        'llama-3.1-8b-instant',
+        'meta-llama/llama-4-scout-17b-16e-instruct',
+    );
 
     /** @var int Maximum obituaries to process per batch run. */
     private $batch_size = 25;
@@ -78,6 +84,105 @@ class Ontario_Obituaries_AI_Rewriter {
      */
     public function is_configured() {
         return ! empty( $this->api_key );
+    }
+
+    /**
+     * v4.6.7: Validate the Groq API key by making a minimal test request.
+     *
+     * Uses the cheapest possible request (max_tokens=1) to verify:
+     *   - The API key is valid (not 401)
+     *   - The model is accessible (not 403)
+     *   - The account has quota (not 429)
+     *
+     * @return true|WP_Error True if valid, WP_Error with details if not.
+     */
+    public function validate_api_key() {
+        if ( ! $this->is_configured() ) {
+            return new WP_Error( 'not_configured', 'No Groq API key is set.' );
+        }
+
+        $test_messages = array(
+            array( 'role' => 'user', 'content' => 'Say "OK".' ),
+        );
+
+        $body = wp_json_encode( array(
+            'model'      => $this->model,
+            'messages'   => $test_messages,
+            'max_tokens' => 1,
+        ) );
+
+        $response = wp_remote_post( $this->api_url, array(
+            'timeout' => 15,
+            'headers' => array(
+                'Content-Type'  => 'application/json',
+                'Authorization' => 'Bearer ' . $this->api_key,
+            ),
+            'body' => $body,
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            return new WP_Error( 'connection_error', 'Cannot reach Groq API: ' . $response->get_error_message() );
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        $resp_body = wp_remote_retrieve_body( $response );
+        $decoded = json_decode( $resp_body, true );
+        $error_msg = ! empty( $decoded['error']['message'] ) ? $decoded['error']['message'] : '';
+
+        if ( 401 === $code ) {
+            return new WP_Error( 'api_key_invalid', 'API key is invalid, expired, or revoked. ' . $error_msg );
+        }
+
+        if ( 403 === $code ) {
+            // Model may be blocked — try fallback models.
+            $working_model = null;
+            foreach ( $this->fallback_models as $fallback ) {
+                $fb_body = wp_json_encode( array(
+                    'model'      => $fallback,
+                    'messages'   => $test_messages,
+                    'max_tokens' => 1,
+                ) );
+                $fb_resp = wp_remote_post( $this->api_url, array(
+                    'timeout' => 15,
+                    'headers' => array(
+                        'Content-Type'  => 'application/json',
+                        'Authorization' => 'Bearer ' . $this->api_key,
+                    ),
+                    'body' => $fb_body,
+                ) );
+                if ( ! is_wp_error( $fb_resp ) ) {
+                    $fb_code = wp_remote_retrieve_response_code( $fb_resp );
+                    if ( $fb_code >= 200 && $fb_code < 300 ) {
+                        $working_model = $fallback;
+                        break;
+                    }
+                }
+            }
+
+            if ( $working_model ) {
+                return new WP_Error(
+                    'model_blocked_but_fallback_ok',
+                    sprintf(
+                        'Primary model "%s" is blocked (403), but fallback model "%s" works. The rewriter will automatically use the fallback. %s',
+                        $this->model,
+                        $working_model,
+                        $error_msg
+                    )
+                );
+            }
+
+            return new WP_Error( 'model_permission_blocked', 'All models returned 403. Check permissions at https://console.groq.com/settings/limits. ' . $error_msg );
+        }
+
+        if ( 429 === $code ) {
+            return new WP_Error( 'rate_limited', 'API key is valid but rate-limited. Try again in a few minutes.' );
+        }
+
+        if ( $code >= 200 && $code < 300 ) {
+            return true;
+        }
+
+        return new WP_Error( 'unknown_error', sprintf( 'Groq API returned HTTP %d. %s', $code, $error_msg ) );
     }
 
     /**
@@ -181,6 +286,17 @@ class Ontario_Obituaries_AI_Rewriter {
                     $rewritten->get_error_message()
                 );
 
+                // v4.6.7: On auth errors (401/403), break immediately — no point retrying
+                // when the API key is invalid or all models are permission-blocked.
+                if ( in_array( $rewritten->get_error_code(), array( 'api_key_invalid', 'model_permission_blocked' ), true ) ) {
+                    ontario_obituaries_log(
+                        sprintf( 'AI Rewriter: Auth error (%s) — aborting batch. Fix the API key or model permissions before retrying.', $rewritten->get_error_code() ),
+                        'error'
+                    );
+                    $result['auth_error'] = true;
+                    break;
+                }
+
                 // v4.6.5 FIX: On rate-limit, DON'T break the loop. Instead, track
                 // consecutive rate-limits and let the backoff delay handle pacing.
                 // Only break if we've hit 3+ consecutive rate-limits with no successes
@@ -279,6 +395,28 @@ class Ontario_Obituaries_AI_Rewriter {
         $prompt = $this->build_prompt( $obituary );
 
         $response = $this->call_api( $prompt );
+
+        // v4.6.7: Handle 403 model permission blocked — try each fallback model.
+        // Groq returns 403 when a specific model is blocked at the org/project level.
+        // Different models may have different permission settings.
+        if ( is_wp_error( $response ) && 'model_permission_blocked' === $response->get_error_code() ) {
+            foreach ( $this->fallback_models as $fallback ) {
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Model permission blocked, trying fallback "%s".', $fallback ),
+                    'info'
+                );
+                usleep( 2000000 ); // Wait 2 seconds.
+                $response = $this->call_api( $prompt, $fallback );
+                if ( ! is_wp_error( $response ) || 'model_permission_blocked' !== $response->get_error_code() ) {
+                    break; // Success or a different error — stop trying.
+                }
+            }
+        }
+
+        // v4.6.7: On 401 (invalid key), don't retry — the key is simply wrong.
+        if ( is_wp_error( $response ) && 'api_key_invalid' === $response->get_error_code() ) {
+            return $response;
+        }
 
         if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
             // Try 1: Fallback model (different quota bucket on some plans).
@@ -398,6 +536,53 @@ SYSTEM;
         // Handle rate limiting.
         if ( 429 === $code ) {
             return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded.' );
+        }
+
+        // v4.6.7: Handle 401 Unauthorized — API key is invalid, expired, or revoked.
+        if ( 401 === $code ) {
+            $error_detail = '';
+            $decoded = json_decode( $body, true );
+            if ( ! empty( $decoded['error']['message'] ) ) {
+                $error_detail = $decoded['error']['message'];
+            }
+            ontario_obituaries_log(
+                sprintf( 'AI Rewriter: Groq API key is INVALID (HTTP 401). Detail: %s. Go to Settings → Ontario Obituaries → AI Rewrite Engine and enter a valid key from https://console.groq.com/keys', $error_detail ),
+                'error'
+            );
+            return new WP_Error(
+                'api_key_invalid',
+                sprintf(
+                    'Groq API key is invalid or expired (HTTP 401). %s. Please generate a new key at https://console.groq.com/keys and update it in Settings → Ontario Obituaries.',
+                    $error_detail
+                )
+            );
+        }
+
+        // v4.6.7: Handle 403 Forbidden — model permission blocked or firewall issue.
+        // Groq returns 403 with type "permissions_error" when a model is blocked at
+        // the organization or project level.
+        if ( 403 === $code ) {
+            $error_detail = '';
+            $error_code   = '';
+            $decoded = json_decode( $body, true );
+            if ( ! empty( $decoded['error']['message'] ) ) {
+                $error_detail = $decoded['error']['message'];
+            }
+            if ( ! empty( $decoded['error']['code'] ) ) {
+                $error_code = $decoded['error']['code'];
+            }
+            ontario_obituaries_log(
+                sprintf( 'AI Rewriter: Groq API returned HTTP 403 for model "%s". Code: %s. Detail: %s', $model, $error_code, $error_detail ),
+                'error'
+            );
+            return new WP_Error(
+                'model_permission_blocked',
+                sprintf(
+                    'Groq API returned 403 (Permission Denied) for model "%s". %s. Check your model permissions at https://console.groq.com/settings/limits or try a different model.',
+                    $model,
+                    $error_detail
+                )
+            );
         }
 
         if ( $code < 200 || $code >= 300 ) {

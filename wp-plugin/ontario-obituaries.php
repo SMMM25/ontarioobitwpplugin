@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.6.6
+ * Version: 4.6.7
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.6.6' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.6.7' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1379,9 +1379,61 @@ function ontario_obituaries_ajax_run_rewriter() {
         'pending'      => $pending_after,
         'done'         => ( $pending_after < 1 ),
         'rate_limited' => ! empty( $result['rate_limited'] ), // v4.6.5: Tell JS to slow down.
+        'auth_error'   => ! empty( $result['auth_error'] ),   // v4.6.7: Tell JS the key/model is broken.
     ) );
 }
 add_action( 'wp_ajax_ontario_obituaries_run_rewriter', 'ontario_obituaries_ajax_run_rewriter' );
+
+/**
+ * v4.6.7: AJAX endpoint to validate the Groq API key.
+ *
+ * Makes a minimal test request to Groq to verify the key is valid,
+ * the primary model is accessible, and falls back to alternative models
+ * if the primary is permission-blocked. Returns clear, actionable
+ * error messages the user can act on.
+ */
+function ontario_obituaries_ajax_validate_api_key() {
+    check_ajax_referer( 'ontario_obituaries_reset_rescan', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+    }
+
+    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+    }
+
+    $rewriter = new Ontario_Obituaries_AI_Rewriter();
+
+    if ( ! $rewriter->is_configured() ) {
+        wp_send_json_error( array(
+            'message' => 'No Groq API key is set. Go to Settings → Ontario Obituaries and enter your key.',
+            'status'  => 'not_configured',
+        ) );
+    }
+
+    $result = $rewriter->validate_api_key();
+
+    if ( true === $result ) {
+        wp_send_json_success( array(
+            'message' => 'API key is valid and the primary model is accessible. The AI Rewriter is ready to go.',
+            'status'  => 'ok',
+        ) );
+    }
+
+    // Special case: primary model blocked but fallback works.
+    if ( is_wp_error( $result ) && 'model_blocked_but_fallback_ok' === $result->get_error_code() ) {
+        wp_send_json_success( array(
+            'message' => $result->get_error_message(),
+            'status'  => 'fallback_ok',
+        ) );
+    }
+
+    wp_send_json_error( array(
+        'message' => $result->get_error_message(),
+        'status'  => $result->get_error_code(),
+    ) );
+}
+add_action( 'wp_ajax_ontario_obituaries_validate_api_key', 'ontario_obituaries_ajax_validate_api_key' );
 
 /**
  * v4.3.0: GoFundMe Auto-Linker batch.
