@@ -19,8 +19,8 @@
  *     validates the rewrite preserves all facts, then sets status='published'.
  *     Obituaries are NOT visible on the site until they pass this pipeline.
  *   - Called after each collection cycle and on a separate cron hook.
- *   - Rate-limited: 1 request per 8 seconds (~7/min) to stay within Groq free tier.
- *   - Batch size: 5 obituaries per run to fit within 90s AJAX timeout.
+ *   - Rate-limited: 1 request per 15 seconds (~4/min) to stay within Groq free tier.
+ *   - Batch size: 3 obituaries per run to fit within 90s AJAX timeout.
  *
  * @package Ontario_Obituaries
  * @since   4.1.0
@@ -35,23 +35,23 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var string Groq API endpoint (OpenAI-compatible). */
     private $api_url = 'https://api.groq.com/openai/v1/chat/completions';
 
-    /** @var string Model to use. Llama 3.3 70B for quality; falls back to 3.1 8B for speed. */
-    private $model = 'llama-3.3-70b-versatile';
+    /** @var string Model to use. Llama 3.1 8B for speed + lower token usage on free tier. */
+    private $model = 'llama-3.1-8b-instant';
 
     /** @var string Fallback model if primary is rate-limited or permission-blocked. */
-    private $fallback_model = 'llama-3.1-8b-instant';
+    private $fallback_model = 'llama-3.3-70b-versatile';
 
     /** @var array Additional fallback models to try on 403 permission errors. */
     private $fallback_models = array(
-        'llama-3.1-8b-instant',
+        'llama-3.3-70b-versatile',
         'meta-llama/llama-4-scout-17b-16e-instruct',
     );
 
     /** @var int Maximum obituaries to process per batch run. */
-    private $batch_size = 5;
+    private $batch_size = 3;
 
-    /** @var int Delay between API requests in microseconds (8 seconds = 8,000,000). */
-    private $request_delay = 8000000;
+    /** @var int Delay between API requests in microseconds (15 seconds = 15,000,000). */
+    private $request_delay = 15000000;
 
     /** @var int API timeout in seconds. */
     private $api_timeout = 45;
