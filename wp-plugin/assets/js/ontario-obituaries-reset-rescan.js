@@ -505,5 +505,146 @@
         function escAttr(str) {
             return escHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
+
+        /* ───────── AI Rewriter Manual Trigger (v4.6.3) ───────── */
+
+        var rewriterRunning = false;
+        var rewriterStopped = false;
+        var rewriterTotalProcessed = 0;
+        var rewriterTotalSucceeded = 0;
+        var rewriterTotalFailed    = 0;
+
+        $('#btn-run-rewriter').on('click', function() {
+            var $btn     = $(this);
+            var $stopBtn = $('#btn-stop-rewriter');
+            var $status  = $('#rewriter-status');
+            var $prog    = $('#rewriter-progress');
+            var $bar     = $('#rewriter-progress-bar');
+            var $text    = $('#rewriter-progress-text');
+            var $log     = $('#rewriter-log');
+            var $stats   = $('#rewriter-stats');
+
+            if (rewriterRunning) return;
+
+            rewriterRunning = true;
+            rewriterStopped = false;
+            rewriterTotalProcessed = 0;
+            rewriterTotalSucceeded = 0;
+            rewriterTotalFailed    = 0;
+
+            $btn.prop('disabled', true);
+            $stopBtn.show();
+            $status.text('Starting AI rewriter\u2026').css('color', '#826200');
+            $prog.show();
+            $log.show().empty();
+            $bar.css('width', '0%');
+
+            runRewriterBatch();
+
+            function logRewriter(msg) {
+                var time = new Date().toLocaleTimeString();
+                $log.append('<div>[' + time + '] ' + escHtml(msg) + '</div>');
+                $log.scrollTop($log[0].scrollHeight);
+            }
+
+            function runRewriterBatch() {
+                if (rewriterStopped) {
+                    finishRewriter('Stopped by user.');
+                    return;
+                }
+
+                logRewriter('Processing batch\u2026 (up to 10 obituaries, ~60s)');
+
+                $.ajax({
+                    url: ajaxUrl,
+                    type: 'POST',
+                    timeout: 180000, // 3 minutes max per batch
+                    data: {
+                        action: 'ontario_obituaries_run_rewriter',
+                        nonce:  nonce
+                    }
+                }).done(function(response) {
+                    if (!response.success) {
+                        var errMsg = (response.data && response.data.message) || 'Unknown error.';
+                        logRewriter('\u274C Error: ' + errMsg);
+                        finishRewriter('Error: ' + errMsg);
+                        return;
+                    }
+
+                    var d = response.data;
+                    rewriterTotalProcessed += (d.processed || 0);
+                    rewriterTotalSucceeded += (d.succeeded || 0);
+                    rewriterTotalFailed    += (d.failed || 0);
+
+                    logRewriter(
+                        'Batch: ' + d.processed + ' processed, '
+                        + d.succeeded + ' published, '
+                        + d.failed + ' failed. '
+                        + d.pending + ' still pending.'
+                    );
+
+                    // Log any errors from this batch.
+                    if (d.errors && d.errors.length > 0) {
+                        for (var i = 0; i < d.errors.length; i++) {
+                            logRewriter('  \u26A0\uFE0F ' + d.errors[i]);
+                        }
+                    }
+
+                    // Update progress bar.
+                    var totalEst = rewriterTotalProcessed + (d.pending || 0);
+                    var pct = totalEst > 0 ? Math.round((rewriterTotalSucceeded / totalEst) * 100) : 0;
+                    $bar.css('width', pct + '%');
+                    $text.text(
+                        rewriterTotalSucceeded + ' published / '
+                        + rewriterTotalProcessed + ' processed. '
+                        + d.pending + ' remaining.'
+                    );
+
+                    // Update the stats display.
+                    $stats.html(
+                        '<strong style="color:orange;">' + d.pending + '</strong> pending'
+                        + ' &nbsp;|&nbsp; <strong style="color:green;">'
+                        + (parseInt($stats.find('strong:eq(1)').text()) || 0 + rewriterTotalSucceeded)
+                        + '</strong> published'
+                    );
+
+                    if (d.done || d.pending < 1) {
+                        logRewriter('\u2705 All obituaries processed!');
+                        finishRewriter('Complete! ' + rewriterTotalSucceeded + ' published, ' + rewriterTotalFailed + ' failed.');
+                        return;
+                    }
+
+                    if (rewriterStopped) {
+                        finishRewriter('Stopped. ' + d.pending + ' still pending.');
+                        return;
+                    }
+
+                    // Short pause then next batch.
+                    logRewriter('Pausing 2s before next batch\u2026');
+                    setTimeout(runRewriterBatch, 2000);
+
+                }).fail(function(jqXHR, textStatus) {
+                    var errMsg = textStatus === 'timeout' ? 'Request timed out (\u003E3 min).' : 'Network error.';
+                    logRewriter('\u274C ' + errMsg);
+                    finishRewriter(errMsg + ' ' + rewriterTotalSucceeded + ' published so far.');
+                });
+            }
+
+            function finishRewriter(msg) {
+                rewriterRunning = false;
+                $btn.prop('disabled', false);
+                $stopBtn.hide();
+                var color = rewriterTotalFailed > 0 ? '#d63638' : '#00a32a';
+                $status.html('\u2705 ' + escHtml(msg)).css('color', color);
+                // Refresh the page stats after a short delay.
+                setTimeout(function() { location.reload(); }, 3000);
+            }
+        });
+
+        $('#btn-stop-rewriter').on('click', function() {
+            rewriterStopped = true;
+            $(this).prop('disabled', true).text('Stopping\u2026');
+        });
+
     });
 })(jQuery);

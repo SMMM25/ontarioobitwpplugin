@@ -38,6 +38,9 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var int Maximum obituaries to process per batch run. */
     private $batch_size = 25;
 
+    /** @var int Delay between API requests in microseconds for small-batch mode. */
+    private $small_batch_delay = 3000000;
+
     /** @var int Delay between API requests in microseconds (6 seconds = 6,000,000). */
     private $request_delay = 6000000;
 
@@ -49,9 +52,14 @@ class Ontario_Obituaries_AI_Rewriter {
 
     /**
      * Constructor.
+     *
+     * @param int $batch_size Optional batch size override (default 25).
      */
-    public function __construct() {
+    public function __construct( $batch_size = 0 ) {
         $this->api_key = get_option( 'ontario_obituaries_groq_api_key', '' );
+        if ( $batch_size > 0 ) {
+            $this->batch_size = (int) $batch_size;
+        }
     }
 
     /**

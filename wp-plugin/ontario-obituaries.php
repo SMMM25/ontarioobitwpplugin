@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 4.6.2
+ * Version: 4.6.3
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '4.6.2' );
+define( 'ONTARIO_OBITUARIES_VERSION', '4.6.3' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1062,16 +1062,19 @@ function ontario_obituaries_scheduled_collection() {
     // not after scraping. Pending records should NOT be submitted to search engines.
     // See ontario_obituaries_ai_rewrite_batch() for the IndexNow trigger.
 
-    // v4.1.0: After collection, schedule AI rewrite batch if enabled.
-    $settings_for_rewrite = ontario_obituaries_get_settings();
-    if ( ! empty( $settings_for_rewrite['ai_rewrite_enabled'] ) ) {
+    // v4.6.3: After collection, schedule AI rewrite batch if Groq key is configured.
+    // No longer gated behind 'ai_rewrite_enabled' checkbox — the v4.6.0 pipeline
+    // requires AI rewrites for ANY record to become published. Having a key IS the intent.
+    $groq_key_for_rewrite = get_option( 'ontario_obituaries_groq_api_key', '' );
+    if ( ! empty( $groq_key_for_rewrite ) ) {
         if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
             wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
-            ontario_obituaries_log( 'v4.6.0: Scheduled AI rewrite batch (30s after collection).', 'info' );
+            ontario_obituaries_log( 'v4.6.3: Scheduled AI rewrite batch (30s after collection).', 'info' );
         }
     }
 
     // v4.3.0: After collection, schedule GoFundMe linker batch if enabled.
+    $settings_for_rewrite = ontario_obituaries_get_settings();
     if ( ! empty( $settings_for_rewrite['gofundme_enabled'] ) ) {
         if ( ! wp_next_scheduled( 'ontario_obituaries_gofundme_batch' ) ) {
             wp_schedule_single_event( time() + 180, 'ontario_obituaries_gofundme_batch' );
@@ -1144,6 +1147,173 @@ function ontario_obituaries_ai_rewrite_batch() {
     }
 }
 add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrite_batch' );
+
+/**
+ * v4.6.3: Piggyback AI rewriter on admin page loads.
+ *
+ * WP cron is unreliable on LiteSpeed hosting (cron events don't fire).
+ * This hook runs on every admin page load, throttled to once per 3 minutes
+ * via a transient. Processes a SMALL batch (3 records = ~18 seconds max)
+ * to avoid blocking the admin dashboard.
+ *
+ * v4.6.3 FIX: The previous version gated this behind 'ai_rewrite_enabled'
+ * which defaults to false. Since the entire v4.6.0 pipeline requires AI
+ * rewrites (pending→published), having a configured Groq API key IS the
+ * intent signal. We now only require: (a) API key exists, (b) pending
+ * records exist. The checkbox controls the CRON path, not this safety net.
+ */
+function ontario_obituaries_maybe_run_rewriter() {
+    // Throttle: only run once per 3 minutes.
+    if ( get_transient( 'ontario_obituaries_rewriter_throttle' ) ) {
+        return;
+    }
+
+    // Only run on authorized domain.
+    if ( function_exists( 'ontario_obituaries_is_authorized_domain' ) && ! ontario_obituaries_is_authorized_domain() ) {
+        return;
+    }
+
+    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        if ( defined( 'ONTARIO_OBITUARIES_PLUGIN_DIR' ) ) {
+            require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+        } else {
+            return;
+        }
+    }
+
+    // v4.6.3: Use small batch (3 records). 3 × 6s delay = 18s max.
+    // This won't block the admin page noticeably.
+    $rewriter = new Ontario_Obituaries_AI_Rewriter( 3 );
+    if ( ! $rewriter->is_configured() ) {
+        return;
+    }
+
+    // Check if there are pending records.
+    $pending = $rewriter->get_pending_count();
+    if ( $pending < 1 ) {
+        return;
+    }
+
+    // Set throttle lock BEFORE processing (3 minutes).
+    set_transient( 'ontario_obituaries_rewriter_throttle', 1, 180 );
+
+    // Extend PHP timeout for this request.
+    @set_time_limit( 120 );
+
+    $result = $rewriter->process_batch();
+
+    if ( function_exists( 'ontario_obituaries_log' ) ) {
+        ontario_obituaries_log(
+            sprintf(
+                'v4.6.3 Piggyback rewriter: %d processed, %d succeeded, %d failed. %d still pending.',
+                $result['processed'],
+                $result['succeeded'],
+                $result['failed'],
+                $rewriter->get_pending_count()
+            ),
+            'info'
+        );
+    }
+
+    // Purge cache if any records were published.
+    if ( $result['succeeded'] > 0 && function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+    }
+}
+add_action( 'admin_init', 'ontario_obituaries_maybe_run_rewriter' );
+
+/**
+ * v4.6.3: Also piggyback on front-end page loads.
+ * Ensures the pipeline moves even if no admin visits the dashboard.
+ * Same throttle transient prevents double-running.
+ */
+add_action( 'wp_loaded', 'ontario_obituaries_maybe_run_rewriter' );
+
+/**
+ * v4.6.3: AJAX endpoint to manually trigger AI rewriter from admin UI.
+ *
+ * Processes a batch of 10 obituaries (60s max) and returns progress.
+ * The front-end calls this sequentially to chew through the backlog.
+ * No dependency on WP-cron, no dependency on ai_rewrite_enabled checkbox.
+ */
+function ontario_obituaries_ajax_run_rewriter() {
+    // Verify nonce and permissions.
+    check_ajax_referer( 'ontario_obituaries_rescan', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+    }
+
+    @set_time_limit( 300 );
+
+    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+    }
+
+    // Process 10 records per AJAX call (10 × 6s = 60s max).
+    $rewriter = new Ontario_Obituaries_AI_Rewriter( 10 );
+
+    if ( ! $rewriter->is_configured() ) {
+        wp_send_json_error( array(
+            'message' => 'Groq API key not configured. Go to Settings → AI Rewrite Engine and enter your key.',
+        ) );
+    }
+
+    $pending_before = $rewriter->get_pending_count();
+
+    if ( $pending_before < 1 ) {
+        wp_send_json_success( array(
+            'message'   => 'No pending obituaries to process.',
+            'processed' => 0,
+            'succeeded' => 0,
+            'failed'    => 0,
+            'pending'   => 0,
+            'done'      => true,
+        ) );
+    }
+
+    // Clear the piggyback throttle so it doesn't conflict.
+    delete_transient( 'ontario_obituaries_rewriter_throttle' );
+
+    $result = $rewriter->process_batch();
+
+    $pending_after = $rewriter->get_pending_count();
+
+    // Purge cache if any records were published.
+    if ( $result['succeeded'] > 0 && function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+    }
+
+    if ( function_exists( 'ontario_obituaries_log' ) ) {
+        ontario_obituaries_log(
+            sprintf(
+                'v4.6.3 Manual rewriter: %d processed, %d succeeded, %d failed. %d → %d pending.',
+                $result['processed'],
+                $result['succeeded'],
+                $result['failed'],
+                $pending_before,
+                $pending_after
+            ),
+            'info'
+        );
+    }
+
+    wp_send_json_success( array(
+        'message'   => sprintf(
+            'Processed %d: %d published, %d failed. %d still pending.',
+            $result['processed'],
+            $result['succeeded'],
+            $result['failed'],
+            $pending_after
+        ),
+        'processed' => $result['processed'],
+        'succeeded' => $result['succeeded'],
+        'failed'    => $result['failed'],
+        'errors'    => $result['errors'],
+        'pending'   => $pending_after,
+        'done'      => ( $pending_after < 1 ),
+    ) );
+}
+add_action( 'wp_ajax_ontario_obituaries_run_rewriter', 'ontario_obituaries_ajax_run_rewriter' );
 
 /**
  * v4.3.0: GoFundMe Auto-Linker batch.
