@@ -92,6 +92,19 @@ class Ontario_Obituaries_AI_Rewriter {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
+        // v4.6.4 FIX: Defensive check — ensure 'ai_description' column exists.
+        // If the v4.6.0 migration failed or the column was never created,
+        // the SELECT below would produce a MySQL error and return NULL.
+        $col_check = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = 'ai_description'",
+            $table
+        ) );
+        if ( intval( $col_check ) < 1 ) {
+            // Column missing — create it now.
+            $wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
+            ontario_obituaries_log( 'AI Rewriter: Created missing ai_description column.', 'warning' );
+        }
+
         // v4.6.0: Get obituaries with status='pending' that need AI rewrite.
         // Only pending records are processed — they become 'published' after
         // successful rewrite + validation.
@@ -485,12 +498,16 @@ SYSTEM;
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
-        // v4.6.0: Count records with status='pending' (not yet rewritten & published).
+        // v4.6.4 FIX: Query must EXACTLY match the process_batch() WHERE clause.
+        // Previously this counted all status='pending' records, but process_batch()
+        // also filters on (ai_description IS NULL OR ai_description = ''). Mismatch
+        // caused the UI to show "X pending" while the batch processed 0 records.
         return (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM `{$table}`
              WHERE status = 'pending'
                AND description IS NOT NULL
                AND description != ''
+               AND (ai_description IS NULL OR ai_description = '')
                AND suppressed_at IS NULL"
         );
     }

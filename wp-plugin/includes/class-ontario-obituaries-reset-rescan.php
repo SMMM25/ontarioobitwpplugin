@@ -178,7 +178,7 @@ class Ontario_Obituaries_Reset_Rescan {
             <div id="rescan-only-panel" style="max-width:800px;">
                 <div class="card">
                     <h2 style="color:#2271b1;"><?php esc_html_e( 'Rescan Only (No Deletion)', 'ontario-obituaries' ); ?></h2>
-                    <p><?php esc_html_e( 'Run the Source Collector against the first page of each active source without deleting any existing obituary data. New records will be added; existing records are preserved.', 'ontario-obituaries' ); ?></p>
+                    <p><?php esc_html_e( 'Run the Source Collector against all pages of each active source without deleting any existing obituary data. New records will be added; existing records are preserved. Each source processes up to 5 pages (~25 obituaries per page).', 'ontario-obituaries' ); ?></p>
                     <?php
                     // v3.13.0: Show source registry summary.
                     // v3.13.1: Defensive — guard against missing sources table during first activation
@@ -283,7 +283,7 @@ class Ontario_Obituaries_Reset_Rescan {
                 <!-- v4.6.3: AI Rewriter Manual Trigger -->
                 <div class="card" style="margin-top:15px;">
                     <h2 style="color:#2271b1;"><?php esc_html_e( 'AI Rewriter', 'ontario-obituaries' ); ?></h2>
-                    <p><?php esc_html_e( 'Manually process pending obituaries through the AI rewrite pipeline. Each click processes up to 10 records (~60 seconds). Records are published after successful rewrite + validation.', 'ontario-obituaries' ); ?></p>
+                    <p><?php esc_html_e( 'Manually process pending obituaries through the AI rewrite pipeline. Each batch processes up to 5 records (~30 seconds). The button auto-continues until all records are processed. Records are published after successful rewrite + validation.', 'ontario-obituaries' ); ?></p>
                     <?php
                     // Show pending/published counts.
                     $rw_pending = 0;
@@ -636,11 +636,10 @@ class Ontario_Obituaries_Reset_Rescan {
             wp_send_json_error( array( 'message' => __( 'Source Collector is not available. Cannot rescan.', 'ontario-obituaries' ) ) );
         }
 
-        // Cap each source to 1 listing URL (first-page safety)
-        $cap_pages = function( $urls ) {
-            return array_slice( (array) $urls, 0, 1 );
-        };
-        add_filter( 'ontario_obituaries_discovered_urls', $cap_pages, 10, 1 );
+        // v4.6.4 FIX: Removed 1-page cap. The Full Reset & Rescan should also
+        // scrape all pages (up to max_pages_per_run default 5) like the Rescan Only
+        // button. The 1-page cap was the original cause of the 175-obit limit.
+        // Timeout safety: set_time_limit(300) above gives 5 minutes for all sources.
 
         $rescan_error = null;
         $results      = array();
@@ -649,8 +648,6 @@ class Ontario_Obituaries_Reset_Rescan {
             $results   = $collector->collect();
         } catch ( Exception $e ) {
             $rescan_error = $e->getMessage();
-        } finally {
-            remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
         }
 
         // Persist last collection (same format as cron/manual scrape)
@@ -809,7 +806,17 @@ class Ontario_Obituaries_Reset_Rescan {
      * v4.6.2: AJAX: Process a single source by ID.
      *
      * Called by the JS in a loop — one source per request.
-     * Each request takes ~5-20 seconds, well within LiteSpeed's gateway timeout.
+     * Each request takes ~5-60 seconds depending on page count.
+     *
+     * v4.6.4 FIX: Removed 1-page cap. The source registry's max_pages_per_run
+     * (default 5) controls pagination. Capping to 1 page was the reason the
+     * scraper only found 175 obits instead of 700+ — each source only scraped
+     * its first listing page (~25 records). With 5 pages per source × 7 active
+     * sources = ~875 records (matching pre-4.6.0 counts).
+     *
+     * LiteSpeed timeout safety: Each source is processed in its own AJAX request
+     * (source-by-source pattern), so even 5 pages × 2s per page = ~10s per source
+     * is well within the 120s timeout.
      *
      * @since 4.6.2
      */
@@ -829,11 +836,9 @@ class Ontario_Obituaries_Reset_Rescan {
             wp_send_json_error( array( 'message' => 'Source Collector not available.' ) );
         }
 
-        // Cap to 1 listing URL per source (first-page safety).
-        $cap_pages = function( $urls ) {
-            return array_slice( (array) $urls, 0, 1 );
-        };
-        add_filter( 'ontario_obituaries_discovered_urls', $cap_pages, 10, 1 );
+        // v4.6.4: No page cap. Let the source registry's max_pages_per_run (default 5)
+        // control pagination naturally. Each source request is isolated, so timeouts
+        // are per-source, not cumulative.
 
         $error   = null;
         $results = array();
@@ -842,8 +847,6 @@ class Ontario_Obituaries_Reset_Rescan {
             $results   = $collector->collect_source( $source_id );
         } catch ( Exception $e ) {
             $error = $e->getMessage();
-        } finally {
-            remove_filter( 'ontario_obituaries_discovered_urls', $cap_pages );
         }
 
         $found = isset( $results['obituaries_found'] ) ? intval( $results['obituaries_found'] ) : 0;
