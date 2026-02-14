@@ -338,10 +338,19 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
      * @return int Age or 0.
      */
     protected function extract_age_from_text( $text ) {
-        if ( preg_match( '/\bage[d]?\s+(\d{1,3})\b/i', $text, $m ) ) {
-            return intval( $m[1] );
+        // v5.0.0: "in his/her Nth year" means age N-1 (they completed N-1 years).
+        // This pattern MUST come first because "aged 93" might also appear in text
+        // that says "in her 93rd year" — the Nth year form is more precise.
+        if ( preg_match( '/(?:in|into|lived\s+into)\s+(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $text, $m ) ) {
+            return intval( $m[1] ) - 1;
+        }
+        if ( preg_match( '/(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $text, $m ) ) {
+            return intval( $m[1] ) - 1;
         }
         if ( preg_match( '/\bat\s+the\s+age\s+of\s+(\d{1,3})\b/i', $text, $m ) ) {
+            return intval( $m[1] );
+        }
+        if ( preg_match( '/\bage[d]?\s+(\d{1,3})\b/i', $text, $m ) ) {
             return intval( $m[1] );
         }
         return 0;

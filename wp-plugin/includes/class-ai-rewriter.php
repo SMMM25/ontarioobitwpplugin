@@ -6,9 +6,15 @@
  * using a free LLM API (Groq / Llama). Preserves all facts — names, dates,
  * locations, funeral homes — while creating original content.
  *
- * Architecture:
+ * Architecture (v5.0.0 — Groq Structured Extraction):
  *   - Uses Groq's OpenAI-compatible chat completion API.
  *   - API key stored in wp_options (ontario_obituaries_groq_api_key).
+ *   - v5.0.0: SINGLE-CALL structured extraction + rewrite.
+ *     Groq reads the FULL original obituary text and returns a JSON object:
+ *       { date_of_death, date_of_birth, age, location, funeral_home, rewritten_text }
+ *     The extracted fields OVERWRITE the regex-scraped DB columns when they
+ *     pass sanity checks. This eliminates regex extraction errors as the
+ *     root cause of wrong dates, ages, and locations on the frontend.
  *   - v4.6.0: Processes obituaries with status='pending', rewrites them,
  *     validates the rewrite preserves all facts, then sets status='published'.
  *     Obituaries are NOT visible on the site until they pass this pipeline.
@@ -43,9 +49,6 @@ class Ontario_Obituaries_AI_Rewriter {
 
     /** @var int Maximum obituaries to process per batch run. */
     private $batch_size = 25;
-
-    /** @var int Delay between API requests in microseconds for small-batch mode. */
-    private $small_batch_delay = 3000000;
 
     /** @var int Delay between API requests in microseconds (6 seconds = 6,000,000). */
     private $request_delay = 6000000;
@@ -329,8 +332,11 @@ class Ontario_Obituaries_AI_Rewriter {
             // Success — reset consecutive rate-limit counter.
             $this->consecutive_rate_limits = 0;
 
-            // Validate the rewrite before saving.
-            $validation = $this->validate_rewrite( $rewritten, $obituary );
+            // v5.0.0: $rewritten is now an array with extracted fields + rewritten_text.
+            $rewrite_text = $rewritten['rewritten_text'];
+
+            // Validate the rewritten prose.
+            $validation = $this->validate_rewrite( $rewrite_text, $obituary, $rewritten );
 
             if ( is_wp_error( $validation ) ) {
                 $result['failed']++;
@@ -343,22 +349,60 @@ class Ontario_Obituaries_AI_Rewriter {
                 continue;
             }
 
-            // v4.6.0: Save the validated rewrite AND publish the obituary.
-            // This is the ONLY path to 'published' status — ensures every
-            // visible obituary has been AI-rewritten and fact-validated.
+            // v5.0.0: Build the DB update — rewritten text + corrected structured fields.
+            $update_data = array(
+                'ai_description' => sanitize_textarea_field( $rewrite_text ),
+                'status'         => 'published',
+            );
+
+            // Apply Groq-extracted fields — only overwrite when Groq returned a value
+            // AND the value passed sanity checks in parse_structured_response().
+            // NEVER overwrite a populated field with an empty value.
+            if ( ! empty( $rewritten['date_of_death'] ) ) {
+                $update_data['date_of_death'] = $rewritten['date_of_death'];
+            }
+            if ( ! empty( $rewritten['date_of_birth'] ) ) {
+                $update_data['date_of_birth'] = $rewritten['date_of_birth'];
+            }
+            if ( ! empty( $rewritten['age'] ) && intval( $rewritten['age'] ) > 0 ) {
+                $update_data['age'] = intval( $rewritten['age'] );
+            }
+            if ( ! empty( $rewritten['location'] ) ) {
+                $update_data['location'] = sanitize_text_field( $rewritten['location'] );
+                // Only update city_normalized if it was previously empty.
+                // The scraper's normalize_city() handles Toronto-area mergers
+                // (North York → Toronto, etc.) at ingest time. We don't want
+                // to overwrite that with the raw Groq value.
+                if ( empty( $obituary->city_normalized ) ) {
+                    $update_data['city_normalized'] = sanitize_text_field( $rewritten['location'] );
+                }
+            }
+            if ( ! empty( $rewritten['funeral_home'] ) ) {
+                $update_data['funeral_home'] = sanitize_text_field( $rewritten['funeral_home'] );
+            }
+
+            // v5.0.0: Single atomic DB update — prose + corrected fields + status.
+            // Build explicit format array so WordPress uses correct types
+            // (especially %d for age, %s for everything else).
+            $update_formats = array();
+            foreach ( $update_data as $col => $val ) {
+                $update_formats[] = ( 'age' === $col ) ? '%d' : '%s';
+            }
+
             $wpdb->update(
                 $table,
-                array(
-                    'ai_description' => sanitize_textarea_field( $rewritten ),
-                    'status'         => 'published',
-                ),
+                $update_data,
                 array( 'id' => $obituary->id ),
-                array( '%s', '%s' ),
+                $update_formats,
                 array( '%d' )
             );
 
+            $corrections_msg = ! empty( $rewritten['corrections'] )
+                ? ' Corrections: ' . implode( '; ', $rewritten['corrections'] )
+                : '';
+
             ontario_obituaries_log(
-                sprintf( 'AI Rewriter: Published obituary ID %d (%s) — rewrite validated.', $obituary->id, $obituary->name ),
+                sprintf( 'AI Rewriter: Published obituary ID %d (%s).%s', $obituary->id, $obituary->name, $corrections_msg ),
                 'info'
             );
 
@@ -385,11 +429,13 @@ class Ontario_Obituaries_AI_Rewriter {
     /**
      * Rewrite a single obituary via the Groq LLM API.
      *
-     * v4.6.5: Improved retry logic with exponential backoff.
-     * On rate-limit: tries fallback model, then waits and retries primary.
+     * v5.0.0: Returns a parsed associative array with extracted fields + rewritten text,
+     * or a WP_Error on failure. The caller (process_batch) uses the extracted fields
+     * to correct DB columns.
      *
      * @param object $obituary Database row with name, dates, description, etc.
-     * @return string|WP_Error The rewritten description, or error.
+     * @return array|WP_Error Parsed JSON array with keys: date_of_death, date_of_birth,
+     *                        age, location, funeral_home, rewritten_text. Or WP_Error.
      */
     public function rewrite_obituary( $obituary ) {
         $prompt = $this->build_prompt( $obituary );
@@ -397,99 +443,273 @@ class Ontario_Obituaries_AI_Rewriter {
         $response = $this->call_api( $prompt );
 
         // v4.6.7: Handle 403 model permission blocked — try each fallback model.
-        // Groq returns 403 when a specific model is blocked at the org/project level.
-        // Different models may have different permission settings.
         if ( is_wp_error( $response ) && 'model_permission_blocked' === $response->get_error_code() ) {
             foreach ( $this->fallback_models as $fallback ) {
                 ontario_obituaries_log(
                     sprintf( 'AI Rewriter: Model permission blocked, trying fallback "%s".', $fallback ),
                     'info'
                 );
-                usleep( 2000000 ); // Wait 2 seconds.
+                usleep( 2000000 );
                 $response = $this->call_api( $prompt, $fallback );
                 if ( ! is_wp_error( $response ) || 'model_permission_blocked' !== $response->get_error_code() ) {
-                    break; // Success or a different error — stop trying.
+                    break;
                 }
             }
         }
 
-        // v4.6.7: On 401 (invalid key), don't retry — the key is simply wrong.
+        // On 401 (invalid key), don't retry.
         if ( is_wp_error( $response ) && 'api_key_invalid' === $response->get_error_code() ) {
             return $response;
         }
 
         if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
-            // Try 1: Fallback model (different quota bucket on some plans).
             ontario_obituaries_log( 'AI Rewriter: Primary model rate-limited, trying fallback.', 'info' );
-            usleep( 3000000 ); // Wait 3 seconds.
+            usleep( 3000000 );
             $response = $this->call_api( $prompt, $this->fallback_model );
 
             if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
-                // Try 2: Wait longer and retry primary model (rate-limit window may have shifted).
                 ontario_obituaries_log( 'AI Rewriter: Fallback also rate-limited, waiting 15s and retrying.', 'info' );
-                usleep( 15000000 ); // Wait 15 seconds for rate-limit window to shift.
+                usleep( 15000000 );
                 $response = $this->call_api( $prompt );
             }
         }
 
-        return $response;
+        if ( is_wp_error( $response ) ) {
+            return $response;
+        }
+
+        // v5.0.0: Parse the structured JSON response.
+        return $this->parse_structured_response( $response, $obituary );
     }
 
     /**
-     * Build the system + user prompt for the LLM.
+     * Parse and validate the structured JSON response from Groq.
      *
-     * The prompt is designed to:
-     *   1. Preserve ALL factual information (names, dates, places, funeral home).
-     *   2. Never invent or hallucinate details not in the original.
-     *   3. Produce professional, compassionate, unique prose.
-     *   4. Keep the output concise (2-4 paragraphs).
+     * v5.0.0: Extracts the JSON fields, runs sanity checks on each,
+     * and falls back to original DB values when Groq's extraction is
+     * empty or implausible.
+     *
+     * @param string $raw_json  Raw JSON string from Groq.
+     * @param object $obituary  Original DB row (fallback values).
+     * @return array|WP_Error   Validated array or error.
+     */
+    private function parse_structured_response( $raw_json, $obituary ) {
+        // Strip markdown code fences if the model wrapped the JSON.
+        $cleaned = trim( $raw_json );
+        $cleaned = preg_replace( '/^```(?:json)?\s*/i', '', $cleaned );
+        $cleaned = preg_replace( '/\s*```$/', '', $cleaned );
+
+        $data = json_decode( $cleaned, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
+            ontario_obituaries_log(
+                sprintf( 'AI Rewriter: JSON parse failed for ID %d — %s. Raw: %s', $obituary->id, json_last_error_msg(), substr( $raw_json, 0, 200 ) ),
+                'error'
+            );
+            return new WP_Error( 'json_parse_failed', 'Groq returned invalid JSON: ' . json_last_error_msg() );
+        }
+
+        // Require rewritten_text at minimum.
+        if ( empty( $data['rewritten_text'] ) ) {
+            return new WP_Error( 'missing_rewritten_text', 'Groq JSON missing rewritten_text field.' );
+        }
+
+        // ── Validate and sanitize each extracted field ──
+        $result = array(
+            'rewritten_text' => trim( $data['rewritten_text'] ),
+            'date_of_death'  => '',
+            'date_of_birth'  => '',
+            'age'            => null,
+            'location'       => '',
+            'funeral_home'   => '',
+            'corrections'    => array(), // Track what we corrected for logging.
+        );
+
+        // Date of death — must be valid YYYY-MM-DD, not in the future, not before 1900.
+        if ( ! empty( $data['date_of_death'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $data['date_of_death'] ) ) {
+            $dod = $data['date_of_death'];
+            $dod_ts = strtotime( $dod );
+            if ( $dod_ts && $dod <= date( 'Y-m-d' ) && $dod >= '1900-01-01' ) {
+                $result['date_of_death'] = $dod;
+                // Log correction if different from regex value.
+                if ( ! empty( $obituary->date_of_death ) && $obituary->date_of_death !== $dod ) {
+                    $result['corrections'][] = sprintf( 'date_of_death: %s → %s', $obituary->date_of_death, $dod );
+                }
+            }
+        }
+
+        // Date of birth — must be valid YYYY-MM-DD, before date of death, after 1880.
+        if ( ! empty( $data['date_of_birth'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $data['date_of_birth'] ) ) {
+            $dob = $data['date_of_birth'];
+            $dob_ts = strtotime( $dob );
+            $effective_dod = ! empty( $result['date_of_death'] ) ? $result['date_of_death'] : date( 'Y-m-d' );
+            if ( $dob_ts && $dob < $effective_dod && $dob >= '1880-01-01' ) {
+                $result['date_of_birth'] = $dob;
+                if ( ! empty( $obituary->date_of_birth ) && $obituary->date_of_birth !== '0000-00-00' && $obituary->date_of_birth !== $dob ) {
+                    $result['corrections'][] = sprintf( 'date_of_birth: %s → %s', $obituary->date_of_birth, $dob );
+                }
+            }
+        }
+
+        // Age — must be 0-130.
+        if ( isset( $data['age'] ) && is_numeric( $data['age'] ) ) {
+            $age = intval( $data['age'] );
+            if ( $age > 0 && $age <= 130 ) {
+                $result['age'] = $age;
+                if ( ! empty( $obituary->age ) && intval( $obituary->age ) > 0 && intval( $obituary->age ) !== $age ) {
+                    $result['corrections'][] = sprintf( 'age: %d → %d', intval( $obituary->age ), $age );
+                }
+            }
+        }
+
+        // Location — non-empty, reasonable length, no code/garbage.
+        if ( ! empty( $data['location'] ) && is_string( $data['location'] ) ) {
+            $loc = trim( $data['location'] );
+            if ( strlen( $loc ) >= 2 && strlen( $loc ) <= 60 && ! preg_match( '/[{}<>\[\]]/', $loc ) ) {
+                $result['location'] = $loc;
+                if ( ! empty( $obituary->location ) && strtolower( $obituary->location ) !== strtolower( $loc ) ) {
+                    $result['corrections'][] = sprintf( 'location: "%s" → "%s"', $obituary->location, $loc );
+                }
+            }
+        }
+
+        // Funeral home — non-empty, reasonable length.
+        if ( ! empty( $data['funeral_home'] ) && is_string( $data['funeral_home'] ) ) {
+            $fh = trim( $data['funeral_home'] );
+            if ( strlen( $fh ) >= 3 && strlen( $fh ) <= 150 ) {
+                $result['funeral_home'] = $fh;
+            }
+        }
+
+        // Cross-validate: if we have both birth and death dates, compute expected age.
+        if ( ! empty( $result['date_of_birth'] ) && ! empty( $result['date_of_death'] ) && ! empty( $result['age'] ) ) {
+            try {
+                $b = new DateTime( $result['date_of_birth'] );
+                $d = new DateTime( $result['date_of_death'] );
+                $computed_age = $d->diff( $b )->y;
+                // Allow ±1 year tolerance (birthday edge cases).
+                if ( abs( $computed_age - $result['age'] ) > 1 ) {
+                    ontario_obituaries_log(
+                        sprintf(
+                            'AI Rewriter: Age cross-validation mismatch for ID %d — Groq says %d, computed %d from dates %s to %s. Using computed.',
+                            $obituary->id, $result['age'], $computed_age, $result['date_of_birth'], $result['date_of_death']
+                        ),
+                        'warning'
+                    );
+                    $result['age'] = $computed_age;
+                }
+            } catch ( Exception $e ) {
+                // Date parsing failed — keep Groq's age.
+            }
+        }
+
+        // Log corrections.
+        if ( ! empty( $result['corrections'] ) ) {
+            ontario_obituaries_log(
+                sprintf(
+                    'AI Rewriter: ID %d (%s) — Groq corrected: %s',
+                    $obituary->id,
+                    $obituary->name,
+                    implode( '; ', $result['corrections'] )
+                ),
+                'info'
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * Build the system + user prompt for structured JSON extraction + rewrite.
+     *
+     * v5.0.0: Complete redesign. The LLM now performs TWO jobs in ONE call:
+     *   1. EXTRACT correct structured data from the original text (dates, age, location).
+     *   2. REWRITE the obituary into professional prose.
+     *
+     * The response is a JSON object with both the extracted fields and the rewritten text.
+     * This eliminates regex errors because the LLM reads and understands the full text.
      *
      * @param object $obituary Database row.
      * @return array Messages array for the chat completion API.
      */
     private function build_prompt( $obituary ) {
         $system = <<<'SYSTEM'
-You are a professional obituary writer for a funeral home directory in Ontario, Canada. Your task is to rewrite scraped obituary text into dignified, original prose.
+You are a professional obituary data extraction and rewriting system for a funeral home directory in Ontario, Canada.
 
-ABSOLUTE RULES:
-1. PRESERVE every fact EXACTLY: full name, ALL dates (birth AND death with exact day/month/year), ALL locations, funeral home name, age number. Never change, omit, or round any fact.
-2. You MUST include the death date (e.g., "February 13, 2026") and age (e.g., "at the age of 84") explicitly in your text. These are mandatory.
-3. You MUST include the city/location (e.g., "of Newmarket, Ontario") explicitly.
-4. NEVER invent details not present in the original text. If the original doesn't mention something, neither should you.
-5. Write 2-4 short paragraphs of compassionate, professional prose.
-6. Use third person ("He passed away" or "She is survived by").
-7. Do NOT include headings, bullet points, or formatting. Plain prose only.
-8. Do NOT include phrases like "according to the obituary" or "the original notice stated".
-9. Do NOT add condolence messages or calls-to-action.
-10. If the original is very short (just a name and dates), write a single brief sentence acknowledging the passing — still include the date and location.
-11. Output ONLY the rewritten obituary text. No preamble, no commentary.
+You have TWO jobs:
+1. EXTRACT structured facts from the original obituary text.
+2. REWRITE the obituary into dignified, original prose.
+
+Return a JSON object with EXACTLY these keys:
+{
+  "date_of_death": "YYYY-MM-DD or empty string if not found",
+  "date_of_birth": "YYYY-MM-DD or empty string if not found",
+  "age": integer or null if not found,
+  "location": "City name or empty string if not found",
+  "funeral_home": "Funeral home name or empty string if not found",
+  "rewritten_text": "The rewritten obituary prose"
+}
+
+EXTRACTION RULES:
+- Read the ORIGINAL OBITUARY TEXT carefully. Extract facts from THAT text, not from the SUGGESTIONS.
+- The SUGGESTIONS block contains regex-extracted values that MAY BE WRONG. Use them only as hints.
+  If the original text contradicts a suggestion, trust the original text.
+- date_of_death: Look for phrases like "passed away on", "died on", "on [date]", date ranges, etc.
+  Convert to YYYY-MM-DD. If only a year is found, return empty string.
+- date_of_birth: Look for "born on", birth date ranges "(Month Day, Year - Month Day, Year)".
+  Convert to YYYY-MM-DD. If only a year is found, return empty string.
+- age: Look for "aged X", "age X", "at the age of X", "in his/her Nth year" (which means age N-1).
+  Return an integer.
+- location: The city/town where the person lived or died. NOT the funeral home's city.
+  Only extract if explicitly stated in the text. Do NOT guess or default to any city.
+- funeral_home: The funeral home handling arrangements. Only if explicitly mentioned.
+
+REWRITING RULES:
+1. PRESERVE every fact EXACTLY: full name, ALL dates, ALL locations, funeral home, age.
+2. You MUST include the death date and age explicitly in your rewritten text.
+3. Include the city/location ONLY if it appears in the original text. Do NOT invent one.
+4. NEVER invent, assume, or fabricate ANY detail not in the original text:
+   - No invented family members, occupations, hobbies, or personality traits.
+   - If the original is sparse, keep the rewrite equally brief.
+5. PREDECEASED FAMILY: A year in parentheses after a name (e.g., "wife of Frank (2020)")
+   means that person DIED in that year. Write "predeceased by" — NEVER "survived by".
+6. Write 2-4 short paragraphs. Third person. Plain prose only.
+7. No headings, bullet points, or formatting.
+8. No phrases like "according to the obituary" or "the original notice stated".
+9. No condolence messages or calls-to-action.
+10. If the original is very short, write a single brief sentence. Do NOT pad with invented details.
+
+Return ONLY the JSON object. No markdown, no code fences, no commentary.
 SYSTEM;
 
-        // Build the context block with all available facts.
-        $facts = array();
-        $facts[] = 'Name: ' . $obituary->name;
+        // Build suggestions block — these are regex-extracted values that may be wrong.
+        // Groq uses them as hints but trusts the original text when they conflict.
+        $suggestions = array();
+        $suggestions[] = 'Name: ' . $obituary->name;
 
         if ( ! empty( $obituary->date_of_death ) && '0000-00-00' !== $obituary->date_of_death ) {
-            $facts[] = 'Date of Death: ' . $obituary->date_of_death;
+            $suggestions[] = 'Date of Death (regex-extracted, may be wrong): ' . $obituary->date_of_death;
         }
 
         if ( ! empty( $obituary->date_of_birth ) && '0000-00-00' !== $obituary->date_of_birth ) {
-            $facts[] = 'Date of Birth: ' . $obituary->date_of_birth;
+            $suggestions[] = 'Date of Birth (regex-extracted, may be wrong): ' . $obituary->date_of_birth;
         }
 
         if ( ! empty( $obituary->age ) && intval( $obituary->age ) > 0 ) {
-            $facts[] = 'Age: ' . intval( $obituary->age );
+            $suggestions[] = 'Age (regex-extracted, may be wrong): ' . intval( $obituary->age );
         }
 
         if ( ! empty( $obituary->location ) ) {
-            $facts[] = 'Location: ' . $obituary->location;
+            $suggestions[] = 'Location (regex-extracted, may be wrong): ' . $obituary->location;
         }
 
         if ( ! empty( $obituary->funeral_home ) ) {
-            $facts[] = 'Funeral Home: ' . $obituary->funeral_home;
+            $suggestions[] = 'Funeral Home: ' . $obituary->funeral_home;
         }
 
-        $user_message = "FACTS:\n" . implode( "\n", $facts ) . "\n\nORIGINAL OBITUARY TEXT:\n" . $obituary->description;
+        $user_message = "SUGGESTIONS (may contain errors — verify against the original text):\n"
+            . implode( "\n", $suggestions )
+            . "\n\nORIGINAL OBITUARY TEXT:\n" . $obituary->description;
 
         return array(
             array( 'role' => 'system', 'content' => $system ),
@@ -498,11 +718,15 @@ SYSTEM;
     }
 
     /**
-     * Call the Groq chat completion API.
+     * Call the Groq chat completion API with JSON response format.
+     *
+     * v5.0.0: temperature 0.1 for deterministic structured extraction.
+     * response_format json_object enforces valid JSON output.
+     * max_tokens 1500 to accommodate JSON wrapper + rewritten text.
      *
      * @param array  $messages Chat messages.
      * @param string $model    Optional model override.
-     * @return string|WP_Error The generated text, or error.
+     * @return string|WP_Error The raw JSON string, or error.
      */
     private function call_api( $messages, $model = '' ) {
         if ( empty( $model ) ) {
@@ -510,11 +734,12 @@ SYSTEM;
         }
 
         $body = wp_json_encode( array(
-            'model'       => $model,
-            'messages'    => $messages,
-            'temperature' => 0.7,
-            'max_tokens'  => 1024,
-            'top_p'       => 0.9,
+            'model'           => $model,
+            'messages'        => $messages,
+            'temperature'     => 0.1,
+            'max_tokens'      => 1500,
+            'top_p'           => 0.95,
+            'response_format' => array( 'type' => 'json_object' ),
         ) );
 
         $response = wp_remote_post( $this->api_url, array(
@@ -602,21 +827,18 @@ SYSTEM;
     }
 
     /**
-     * Validate a rewritten obituary against the original to prevent hallucinations.
+     * Validate the rewritten obituary text.
      *
-     * v4.6.0: Strengthened validation — this is the ONLY gate to publication.
-     * Must verify ALL critical facts are preserved:
-     *   1. Full name (last name + first name must appear).
-     *   2. Death date must be mentioned if present in original.
-     *   3. Age must match if present in original.
-     *   4. Location/city must be mentioned if present in original.
-     *   5. Length and LLM artifact checks.
+     * v5.0.0: Validation now checks the rewritten prose against BOTH the original
+     * DB values AND the Groq-extracted values. If Groq extracted a corrected date,
+     * we validate against Groq's date (not the potentially-wrong regex date).
      *
-     * @param string $rewritten  The LLM-generated text.
-     * @param object $obituary   The original database row.
+     * @param string $rewritten       The rewritten prose text.
+     * @param object $obituary        The original database row.
+     * @param array  $extracted_data  The full parsed Groq response (with extracted fields).
      * @return true|WP_Error True if valid.
      */
-    private function validate_rewrite( $rewritten, $obituary ) {
+    private function validate_rewrite( $rewritten, $obituary, $extracted_data = array() ) {
         $lower = strtolower( $rewritten );
 
         // ── 1. Length check ──
@@ -647,85 +869,62 @@ SYSTEM;
             }
         }
 
-        // ── 3. Death date check ──
-        if ( ! empty( $obituary->date_of_death ) && '0000-00-00' !== $obituary->date_of_death ) {
-            $dod = $obituary->date_of_death; // e.g., "2026-02-13"
-            $dod_parts = explode( '-', $dod );
+        // ── 3. Death date check — use Groq-extracted date if available ──
+        $check_dod = ! empty( $extracted_data['date_of_death'] ) ? $extracted_data['date_of_death'] : '';
+        if ( empty( $check_dod ) && ! empty( $obituary->date_of_death ) && '0000-00-00' !== $obituary->date_of_death ) {
+            $check_dod = $obituary->date_of_death;
+        }
+        if ( ! empty( $check_dod ) ) {
+            $dod_parts = explode( '-', $check_dod );
             if ( count( $dod_parts ) === 3 ) {
-                $year  = $dod_parts[0];
-                $month = ltrim( $dod_parts[1], '0' );
-                $day   = ltrim( $dod_parts[2], '0' );
-
-                // Check that the year appears in the rewrite.
+                $year = $dod_parts[0];
+                $day  = ltrim( $dod_parts[2], '0' );
                 if ( false === strpos( $rewritten, $year ) ) {
-                    return new WP_Error(
-                        'death_year_missing',
-                        sprintf( 'Rewrite does not mention death year %s.', $year )
-                    );
+                    return new WP_Error( 'death_year_missing', sprintf( 'Rewrite does not mention death year %s.', $year ) );
                 }
-
-                // Check day number appears (could be in various date formats).
                 if ( false === strpos( $rewritten, $day ) ) {
-                    return new WP_Error(
-                        'death_day_missing',
-                        sprintf( 'Rewrite does not mention death day %s from date %s.', $day, $dod )
-                    );
+                    return new WP_Error( 'death_day_missing', sprintf( 'Rewrite does not mention death day %s.', $day ) );
                 }
             }
         }
 
-        // ── 4. Age check ──
-        if ( ! empty( $obituary->age ) && intval( $obituary->age ) > 0 ) {
-            $age_str = strval( intval( $obituary->age ) );
+        // ── 4. Age check — use Groq-extracted age if available ──
+        $check_age = ! empty( $extracted_data['age'] ) ? intval( $extracted_data['age'] ) : 0;
+        if ( 0 === $check_age && ! empty( $obituary->age ) ) {
+            $check_age = intval( $obituary->age );
+        }
+        if ( $check_age > 0 ) {
+            $age_str = strval( $check_age );
             if ( false === strpos( $rewritten, $age_str ) ) {
-                return new WP_Error(
-                    'age_missing',
-                    sprintf( 'Rewrite does not mention age %s.', $age_str )
-                );
+                return new WP_Error( 'age_missing', sprintf( 'Rewrite does not mention age %s.', $age_str ) );
             }
         }
 
-        // ── 5. Location/city check ──
-        $location = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : '';
-        if ( empty( $location ) && ! empty( $obituary->location ) ) {
-            $location = $obituary->location;
+        // ── 5. Location check — use Groq-extracted location if available ──
+        $check_loc = ! empty( $extracted_data['location'] ) ? $extracted_data['location'] : '';
+        if ( empty( $check_loc ) ) {
+            $check_loc = ! empty( $obituary->city_normalized ) ? $obituary->city_normalized : '';
+            if ( empty( $check_loc ) && ! empty( $obituary->location ) ) {
+                $check_loc = $obituary->location;
+            }
         }
-        if ( ! empty( $location ) && strlen( $location ) >= 3 ) {
-            // Extract just the city name (take first part before comma or dash).
-            $city_check = preg_split( '/[,\-]/', $location );
+        if ( ! empty( $check_loc ) && strlen( $check_loc ) >= 3 ) {
+            $city_check = preg_split( '/[,\-]/', $check_loc );
             $city_check = trim( $city_check[0] );
-
             if ( strlen( $city_check ) >= 3 && false === stripos( $rewritten, $city_check ) ) {
-                return new WP_Error(
-                    'location_missing',
-                    sprintf( 'Rewrite does not mention location "%s".', $city_check )
-                );
+                return new WP_Error( 'location_missing', sprintf( 'Rewrite does not mention location "%s".', $city_check ) );
             }
         }
 
         // ── 6. LLM artifact check ──
         $artifacts = array(
-            'as an ai',
-            'i cannot',
-            'i\'m sorry',
-            'language model',
-            'here is',
-            'here\'s the rewritten',
-            'certainly!',
-            'sure!',
-            'of course!',
-            'i\'d be happy',
-            'i am an',
-            'note:',
-            'disclaimer:',
+            'as an ai', 'i cannot', 'i\'m sorry', 'language model',
+            'here is', 'here\'s the rewritten', 'certainly!', 'sure!',
+            'of course!', 'i\'d be happy', 'i am an', 'note:', 'disclaimer:',
         );
-
         foreach ( $artifacts as $artifact ) {
             if ( false !== strpos( $lower, $artifact ) ) {
-                return new WP_Error(
-                    'llm_artifact',
-                    sprintf( 'Rewrite contains LLM artifact: "%s".', $artifact )
-                );
+                return new WP_Error( 'llm_artifact', sprintf( 'Rewrite contains LLM artifact: "%s".', $artifact ) );
             }
         }
 
