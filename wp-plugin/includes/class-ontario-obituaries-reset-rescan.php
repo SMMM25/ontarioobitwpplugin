@@ -44,6 +44,10 @@ class Ontario_Obituaries_Reset_Rescan {
         add_action( 'wp_ajax_ontario_obituaries_reset_rescan',    array( $this, 'ajax_rescan' ) );
         add_action( 'wp_ajax_ontario_obituaries_reset_cancel',    array( $this, 'ajax_cancel' ) );
         add_action( 'wp_ajax_ontario_obituaries_rescan_only',       array( $this, 'ajax_rescan_only' ) );
+        add_action( 'wp_ajax_ontario_obituaries_rescan_only_status', array( $this, 'ajax_rescan_only_status' ) );
+
+        // v4.6.1: WP Cron hook for background rescan-only.
+        add_action( 'ontario_obituaries_rescan_only_cron', array( $this, 'cron_rescan_only' ) );
     }
 
     /* ─────────────────────── PERMISSIONS ───────────────────────── */
@@ -729,12 +733,49 @@ class Ontario_Obituaries_Reset_Rescan {
     public function ajax_rescan_only() {
         $this->verify_request();
 
-        // v4.6.0: Extend PHP timeout — scraping 7 sources can take >60s.
+        // v4.6.1: Async pattern — schedule the rescan as a WP cron event and
+        // return immediately.  This prevents LiteSpeed / proxy gateway timeouts
+        // from killing the AJAX response (the scrape takes 60-120s for 7 sources).
+        // The JS will poll ajax_rescan_only_status for completion.
+
+        // Mark rescan as in-progress.
+        update_option( 'ontario_obituaries_rescan_only_running', array(
+            'started_at' => current_time( 'mysql' ),
+            'status'     => 'running',
+        ) );
+
+        // Clear previous result so the poll can detect fresh completion.
+        delete_option( 'ontario_obituaries_rescan_only_last_result' );
+
+        // Schedule immediate one-time cron event for the actual rescan work.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_rescan_only_cron' ) ) {
+            wp_schedule_single_event( time(), 'ontario_obituaries_rescan_only_cron' );
+        }
+
+        // Trigger cron immediately (spawn a loopback request).
+        spawn_cron();
+
+        wp_send_json_success( array(
+            'message' => __( 'Rescan started. Scanning sources in the background…', 'ontario-obituaries' ),
+            'status'  => 'running',
+        ) );
+    }
+
+    /**
+     * WP Cron handler: Actually run the rescan-only collection in the background.
+     *
+     * @since 4.6.1
+     */
+    public function cron_rescan_only() {
         @set_time_limit( 300 );
 
         // Source Collector MUST be available
         if ( ! class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
-            wp_send_json_error( array( 'message' => __( 'Source Collector is not available. Cannot rescan.', 'ontario-obituaries' ) ) );
+            update_option( 'ontario_obituaries_rescan_only_running', array(
+                'status' => 'error',
+                'error'  => 'Source Collector class not available.',
+            ) );
+            return;
         }
 
         // Cap each source to 1 listing URL (first-page safety)
@@ -770,15 +811,14 @@ class Ontario_Obituaries_Reset_Rescan {
             ontario_obituaries_purge_litespeed( 'ontario_obits' );
         }
 
-        // v4.6.0: Schedule AI rewrite batch after rescan-only (same as cron handler).
-        // This was missing — caused pending obituaries to never get rewritten after manual rescan.
+        // v4.6.0: Schedule AI rewrite batch after rescan.
         if ( function_exists( 'ontario_obituaries_get_settings' ) ) {
             $rescan_settings = ontario_obituaries_get_settings();
             if ( ! empty( $rescan_settings['ai_rewrite_enabled'] ) ) {
                 if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
                     wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
                     if ( function_exists( 'ontario_obituaries_log' ) ) {
-                        ontario_obituaries_log( 'v4.6.0: Scheduled AI rewrite batch (30s after rescan-only).', 'info' );
+                        ontario_obituaries_log( 'v4.6.1: Scheduled AI rewrite batch (30s after rescan-only).', 'info' );
                     }
                 }
             }
@@ -795,13 +835,9 @@ class Ontario_Obituaries_Reset_Rescan {
         if ( ! empty( $results['per_source'] ) ) {
             foreach ( $results['per_source'] as $domain => $ps ) {
                 $err_msg = isset( $ps['error_message'] ) ? substr( $ps['error_message'], 0, 160 ) : '';
-
-                // v3.12.3: Fallback — if error_message is blank but errors[] exists,
-                // use the first errors[] string so the UI always shows something useful.
                 if ( empty( $err_msg ) && ! empty( $ps['errors'] ) && is_array( $ps['errors'] ) ) {
                     $err_msg = substr( $ps['errors'][0], 0, 160 );
                 }
-
                 $per_source[ $domain ] = array(
                     'name'          => isset( $ps['name'] )   ? $ps['name']              : $domain,
                     'found'         => isset( $ps['found'] )  ? intval( $ps['found'] )  : 0,
@@ -815,7 +851,7 @@ class Ontario_Obituaries_Reset_Rescan {
             }
         }
 
-        // Store result separately (do NOT overwrite reset history)
+        // Store result
         $last_result = array(
             'completed_at'  => current_time( 'mysql' ),
             'rescan_result' => array(
@@ -826,7 +862,16 @@ class Ontario_Obituaries_Reset_Rescan {
                 'per_source' => $per_source,
             ),
         );
+        if ( $rescan_error ) {
+            $last_result['rescan_error'] = $rescan_error;
+        }
         update_option( 'ontario_obituaries_rescan_only_last_result', $last_result );
+
+        // Mark as complete.
+        update_option( 'ontario_obituaries_rescan_only_running', array(
+            'status'       => $rescan_error ? 'error' : 'complete',
+            'completed_at' => current_time( 'mysql' ),
+        ) );
 
         ontario_obituaries_log(
             sprintf(
@@ -835,28 +880,52 @@ class Ontario_Obituaries_Reset_Rescan {
             ),
             'info'
         );
+    }
 
-        if ( $rescan_error ) {
-            wp_send_json_error( array(
-                'message'     => sprintf( __( 'Rescan encountered an error: %s', 'ontario-obituaries' ), $rescan_error ),
-                'found'       => $found,
-                'added'       => $added,
-                'skipped'     => $skipped,
-                'errors'      => $errors,
-                'per_source'  => $per_source,
+    /**
+     * AJAX: Poll for rescan-only completion status.
+     *
+     * Returns the current state (running / complete / error) and, once complete,
+     * the full result set so the JS can render it.
+     *
+     * @since 4.6.1
+     */
+    public function ajax_rescan_only_status() {
+        check_ajax_referer( 'ontario_obituaries_reset_nonce', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+        }
+
+        $running = get_option( 'ontario_obituaries_rescan_only_running', array() );
+        $status  = isset( $running['status'] ) ? $running['status'] : 'idle';
+
+        // Still running — tell the JS to keep polling.
+        if ( 'running' === $status ) {
+            wp_send_json_success( array(
+                'status'     => 'running',
+                'started_at' => isset( $running['started_at'] ) ? $running['started_at'] : '',
             ) );
         }
 
+        // Complete or error — return the stored result.
+        $last_result = get_option( 'ontario_obituaries_rescan_only_last_result', array() );
+        $rescan      = isset( $last_result['rescan_result'] ) ? $last_result['rescan_result'] : array();
+
         wp_send_json_success( array(
-            'message'     => sprintf(
-                __( 'Rescan complete. Found %d obituaries, added %d new. No data was deleted.', 'ontario-obituaries' ),
-                $found, $added
-            ),
-            'found'       => $found,
-            'added'       => $added,
-            'skipped'     => $skipped,
-            'errors'      => $errors,
-            'per_source'  => $per_source,
+            'status'      => $status,
+            'message'     => 'complete' === $status
+                ? sprintf(
+                    __( 'Rescan complete. Found %d obituaries, added %d new. No data was deleted.', 'ontario-obituaries' ),
+                    isset( $rescan['found'] ) ? intval( $rescan['found'] ) : 0,
+                    isset( $rescan['added'] ) ? intval( $rescan['added'] ) : 0
+                  )
+                : ( isset( $last_result['rescan_error'] ) ? $last_result['rescan_error'] : 'Unknown error.' ),
+            'found'       => isset( $rescan['found'] )   ? intval( $rescan['found'] )   : 0,
+            'added'       => isset( $rescan['added'] )   ? intval( $rescan['added'] )   : 0,
+            'skipped'     => isset( $rescan['skipped'] ) ? intval( $rescan['skipped'] ) : 0,
+            'errors'      => isset( $rescan['errors'] )  ? intval( $rescan['errors'] )  : 0,
+            'per_source'  => isset( $rescan['per_source'] ) ? $rescan['per_source'] : array(),
         ) );
     }
 

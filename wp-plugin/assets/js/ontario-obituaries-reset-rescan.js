@@ -108,43 +108,69 @@
             // Remove any previous inline result
             $('#rescan-only-inline-result').remove();
 
-            $.ajax({
-                url: ajaxUrl,
-                type: 'POST',
-                timeout: 300000, // 5 minutes — scraping 7 sources takes time
-                data: {
-                    action: 'ontario_obituaries_rescan_only',
-                    nonce:  nonce
-                }
-            }).done(function(response) {
-                var d = response.data || {};
-                if (response.success) {
-                    $status.html('\u2705 ' + escHtml(d.message || 'Rescan complete.')).css('color', '#00a32a');
+            // v4.6.1: Async pattern — fire the rescan, then poll for completion.
+            // This prevents LiteSpeed proxy timeouts from showing "Network error".
+            $.post(ajaxUrl, {
+                action: 'ontario_obituaries_rescan_only',
+                nonce:  nonce
+            }, function(response) {
+                if (response.success && response.data && response.data.status === 'running') {
+                    $status.text('Scanning sources in the background\u2026 (this takes 1\u20132 minutes)').css('color', '#826200');
+                    // Start polling every 5 seconds.
+                    pollRescanStatus();
                 } else {
-                    var msg = d.message || 'Rescan failed.';
+                    var msg = (response.data && response.data.message) || 'Failed to start rescan.';
                     $status.html('\u274C ' + escHtml(msg)).css('color', '#d63638');
+                    $btn.prop('disabled', false);
                 }
-
-                // Render inline per-source table regardless of success/error
-                // (partial results are still useful on error)
-                if (d.per_source && Object.keys(d.per_source).length > 0) {
-                    var summaryHtml = '<p style="margin-top:12px;"><strong>Summary:</strong> '
-                        + 'Found ' + (d.found || 0)
-                        + ', Added ' + (d.added || 0)
-                        + ', Skipped ' + (d.skipped || 0)
-                        + ', Errors ' + (d.errors || 0)
-                        + '</p>';
-                    var tableHtml = buildPerSourceTable(d.per_source, 'Per-Source Breakdown');
-                    var $result = $('<div id="rescan-only-inline-result" style="margin-top:16px;">' + summaryHtml + tableHtml + '</div>');
-                    $btn.closest('.card').append($result);
-                }
-
-                $btn.prop('disabled', false);
-
             }).fail(function() {
-                $status.html('\u274C Network error. Please try again.').css('color', '#d63638');
+                $status.html('\u274C Could not start rescan. Check your connection and try again.').css('color', '#d63638');
                 $btn.prop('disabled', false);
             });
+
+            function pollRescanStatus() {
+                setTimeout(function() {
+                    $.post(ajaxUrl, {
+                        action: 'ontario_obituaries_rescan_only_status',
+                        nonce:  nonce
+                    }, function(response) {
+                        var d = response.data || {};
+
+                        if (d.status === 'running') {
+                            // Still going — keep polling.
+                            $status.text('Scanning sources\u2026 still running.').css('color', '#826200');
+                            pollRescanStatus();
+                            return;
+                        }
+
+                        // Complete or error.
+                        if (d.status === 'complete') {
+                            $status.html('\u2705 ' + escHtml(d.message || 'Rescan complete.')).css('color', '#00a32a');
+                        } else {
+                            $status.html('\u274C ' + escHtml(d.message || 'Rescan finished with errors.')).css('color', '#d63638');
+                        }
+
+                        // Render inline per-source table
+                        if (d.per_source && Object.keys(d.per_source).length > 0) {
+                            var summaryHtml = '<p style="margin-top:12px;"><strong>Summary:</strong> '
+                                + 'Found ' + (d.found || 0)
+                                + ', Added ' + (d.added || 0)
+                                + ', Skipped ' + (d.skipped || 0)
+                                + ', Errors ' + (d.errors || 0)
+                                + '</p>';
+                            var tableHtml = buildPerSourceTable(d.per_source, 'Per-Source Breakdown');
+                            var $result = $('<div id="rescan-only-inline-result" style="margin-top:16px;">' + summaryHtml + tableHtml + '</div>');
+                            $btn.closest('.card').append($result);
+                        }
+
+                        $btn.prop('disabled', false);
+
+                    }).fail(function() {
+                        // Poll failed — try again (server might be busy).
+                        pollRescanStatus();
+                    });
+                }, 5000); // Poll every 5 seconds.
+            }
         });
 
         /* ───────── Gate validation ───────── */
