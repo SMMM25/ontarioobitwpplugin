@@ -103,7 +103,7 @@
             }
 
             $btn.prop('disabled', true);
-            $status.text('Running\u2026 This may take 30\u201390 seconds.').css('color', '#826200');
+            $status.text('Running\u2026 Scanning all pages of each source. This may take 1\u20133 minutes.').css('color', '#826200');
 
             // Remove any previous inline result
             $('#rescan-only-inline-result').remove();
@@ -164,7 +164,7 @@
                     $.ajax({
                         url: ajaxUrl,
                         type: 'POST',
-                        timeout: 120000, // 2 minutes per source
+                        timeout: 180000, // 3 minutes per source (v4.6.4: multi-page scraping)
                         data: {
                             action:    'ontario_obituaries_rescan_one_source',
                             nonce:     nonce,
@@ -549,16 +549,16 @@
 
             function runRewriterBatch() {
                 if (rewriterStopped) {
-                    finishRewriter('Stopped by user.');
+                    finishRewriter('Stopped by user.', -1);
                     return;
                 }
 
-                logRewriter('Processing batch\u2026 (up to 10 obituaries, ~60s)');
+                logRewriter('Processing batch\u2026 (up to 5 obituaries, ~30s)');
 
                 $.ajax({
                     url: ajaxUrl,
                     type: 'POST',
-                    timeout: 180000, // 3 minutes max per batch
+                    timeout: 90000, // 90 seconds — 5 records × 6s + margin
                     data: {
                         action: 'ontario_obituaries_run_rewriter',
                         nonce:  nonce
@@ -567,7 +567,7 @@
                     if (!response.success) {
                         var errMsg = (response.data && response.data.message) || 'Unknown error.';
                         logRewriter('\u274C Error: ' + errMsg);
-                        finishRewriter('Error: ' + errMsg);
+                        finishRewriter('Error: ' + errMsg, -1);
                         return;
                     }
 
@@ -601,21 +601,23 @@
                     );
 
                     // Update the stats display.
+                    // v4.6.4 FIX: Correct operator precedence and calculate published count properly.
+                    var currentPublished = (parseInt($stats.find('strong:eq(1)').text(), 10) || 0);
                     $stats.html(
                         '<strong style="color:orange;">' + d.pending + '</strong> pending'
                         + ' &nbsp;|&nbsp; <strong style="color:green;">'
-                        + (parseInt($stats.find('strong:eq(1)').text()) || 0 + rewriterTotalSucceeded)
+                        + (currentPublished + d.succeeded)
                         + '</strong> published'
                     );
 
                     if (d.done || d.pending < 1) {
                         logRewriter('\u2705 All obituaries processed!');
-                        finishRewriter('Complete! ' + rewriterTotalSucceeded + ' published, ' + rewriterTotalFailed + ' failed.');
+                        finishRewriter('Complete! ' + rewriterTotalSucceeded + ' published, ' + rewriterTotalFailed + ' failed.', 0);
                         return;
                     }
 
                     if (rewriterStopped) {
-                        finishRewriter('Stopped. ' + d.pending + ' still pending.');
+                        finishRewriter('Stopped. ' + d.pending + ' still pending.', d.pending);
                         return;
                     }
 
@@ -623,21 +625,48 @@
                     logRewriter('Pausing 2s before next batch\u2026');
                     setTimeout(runRewriterBatch, 2000);
 
-                }).fail(function(jqXHR, textStatus) {
-                    var errMsg = textStatus === 'timeout' ? 'Request timed out (\u003E3 min).' : 'Network error.';
+                }).fail(function(jqXHR, textStatus, errorThrown) {
+                    var errMsg = '';
+                    if (textStatus === 'timeout') {
+                        errMsg = 'Request timed out (>90s). The batch may still be processing server-side.';
+                    } else if (jqXHR.status === 403) {
+                        errMsg = 'Permission denied (403). Try refreshing the page to get a fresh session.';
+                    } else if (jqXHR.status === 0) {
+                        errMsg = 'Connection failed. Check your internet connection.';
+                    } else {
+                        errMsg = 'HTTP ' + jqXHR.status + ': ' + (errorThrown || textStatus);
+                    }
+                    // Try to extract WordPress error from response body.
+                    try {
+                        var body = JSON.parse(jqXHR.responseText);
+                        if (body && body.data && body.data.message) {
+                            errMsg += ' \u2014 ' + body.data.message;
+                        }
+                    } catch(e) {}
                     logRewriter('\u274C ' + errMsg);
-                    finishRewriter(errMsg + ' ' + rewriterTotalSucceeded + ' published so far.');
+                    finishRewriter(errMsg + ' ' + rewriterTotalSucceeded + ' published so far.', -1);
                 });
             }
 
-            function finishRewriter(msg) {
+            function finishRewriter(msg, pendingLeft) {
                 rewriterRunning = false;
-                $btn.prop('disabled', false);
                 $stopBtn.hide();
-                var color = rewriterTotalFailed > 0 ? '#d63638' : '#00a32a';
-                $status.html('\u2705 ' + escHtml(msg)).css('color', color);
-                // Refresh the page stats after a short delay.
-                setTimeout(function() { location.reload(); }, 3000);
+                var isDone = msg.indexOf('Complete') !== -1 || msg.indexOf('No pending') !== -1;
+                var hasErrors = rewriterTotalFailed > 0 || msg.indexOf('Error') !== -1 || msg.indexOf('error') !== -1;
+                var icon = isDone ? '\u2705' : (hasErrors ? '\u274C' : '\u26A0\uFE0F');
+                var color = isDone ? '#00a32a' : (hasErrors ? '#d63638' : '#826200');
+                $status.html(icon + ' ' + escHtml(msg)).css('color', color);
+                // v4.6.4 FIX: Disable button when all records are processed (no pending left).
+                // Re-enable only if there might be more work to do.
+                if (isDone || pendingLeft === 0) {
+                    $btn.prop('disabled', true).text('All Done \u2714');
+                } else {
+                    $btn.prop('disabled', false);
+                }
+                // Update stats display with latest counts.
+                if (rewriterTotalSucceeded > 0) {
+                    logRewriter('\u2705 Published ' + rewriterTotalSucceeded + ' obituaries. Refresh the page to see updated counts.');
+                }
             }
         });
 
