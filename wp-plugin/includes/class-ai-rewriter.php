@@ -19,8 +19,8 @@
  *     validates the rewrite preserves all facts, then sets status='published'.
  *     Obituaries are NOT visible on the site until they pass this pipeline.
  *   - Called after each collection cycle and on a separate cron hook.
- *   - Rate-limited: 1 request per 10 seconds (6/min) to stay within Groq free tier.
- *   - Batch size: 10 obituaries per run to avoid PHP timeout and rate limits.
+ *   - Rate-limited: 1 request per 8 seconds (~7/min) to stay within Groq free tier.
+ *   - Batch size: 5 obituaries per run to fit within 90s AJAX timeout.
  *
  * @package Ontario_Obituaries
  * @since   4.1.0
@@ -48,10 +48,10 @@ class Ontario_Obituaries_AI_Rewriter {
     );
 
     /** @var int Maximum obituaries to process per batch run. */
-    private $batch_size = 10;
+    private $batch_size = 5;
 
-    /** @var int Delay between API requests in microseconds (10 seconds = 10,000,000). */
-    private $request_delay = 10000000;
+    /** @var int Delay between API requests in microseconds (8 seconds = 8,000,000). */
+    private $request_delay = 8000000;
 
     /** @var int API timeout in seconds. */
     private $api_timeout = 45;
