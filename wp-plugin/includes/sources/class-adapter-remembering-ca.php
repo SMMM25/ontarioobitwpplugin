@@ -244,7 +244,9 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             '/(?:peaceful\s+)?passing\s+of(?:\s+\S+){0,10}?(?:\s+on|\s+at)(?:\s+\S+){0,3}?\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // v4.6.5: "[her/his/their] passing on Month Day, Year"
             // Handles: "announce her passing on November 5, 2025"
-            '/(?:his|her|their)\s+passing\s+on\s+(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.8: Added optional adjective (gentle, sudden, unexpected, untimely) and weekday.
+            // Helen Biro's obit says "announce her gentle passing on Friday, January 23, 2026".
+            '/(?:his|her|their)\s+(?:gentle\s+|sudden\s+|unexpected\s+|untimely\s+)?passing\s+(?:on\s+)?(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // v4.6.5: "Peacefully [at/in place words] on [weekday,] Month Day, Year"
             // Handles: "Peacefully at home with family on Friday, July 11, 2025"
             '/[Pp]eacefully(?:\s+\S+){0,12}?\s+on\s+(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
@@ -277,6 +279,15 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             '/(?:the\s+)?death\s+of(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
             // v4.6.6: "left this world [peacefully] on Month Day, Year"
             '/left\s+this\s+world(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})/iu',
+            // v4.6.8: Broad fallback — "on [weekday,] Month Day, Year, in his/her Nth year"
+            // Catches: "at the Greater Niagara General Hospital, on January 21, 2026, in her 93rd year"
+            // where no explicit death keyword precedes the date.
+            '/(?:on\s+)?(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her|their)\s+\d+(?:st|nd|rd|th)\s+year/iu',
+            // v4.6.8: "on [weekday,] Month Day, Year, at the age of N"
+            // Catches dates followed by age statements even without a death keyword.
+            '/(?:on\s+)?(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4}),?\s+at\s+the\s+age\s+of\s+\d+/iu',
+            // v4.6.8: "on Monday, Month Day, Year at the NHS" — date before hospital
+            '/(?:on\s+)?(?:' . $weekday . ',?\s+)?(' . $month_pattern . '\s+\d{1,2},?\s+\d{4})\s+at\s+(?:the\s+)?(?:NHS|hospital|home|hospice)/iu',
         );
         foreach ( $death_phrases as $pattern ) {
             if ( preg_match( $pattern, $full_text, $death_m ) ) {
@@ -577,8 +588,9 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
                 '/(?:passed\s+away|passed\s+peacefully|passed\s+suddenly|peacefully\s+passed)(?:\s+\S+){0,18}?\s+(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "peaceful passing of...on/at...Month Day, Year" (Betty Cudmore pattern)
                 '/(?:peaceful\s+)?passing\s+of(?:\s+\S+){0,10}?(?:\s+on|\s+at)(?:\s+\S+){0,3}?\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
-                // "[her/his/their] passing on Month Day, Year"
-                '/(?:his|her|their)\s+passing\s+on\s+(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // "[her/his/their] [gentle/sudden] passing on [weekday,] Month Day, Year"
+                // v4.6.8: Added optional adjective and weekday — see extract_card() for details.
+                '/(?:his|her|their)\s+(?:gentle\s+|sudden\s+|unexpected\s+|untimely\s+)?passing\s+(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "Peacefully [at/in place words] on [weekday,] Month Day, Year"
                 '/[Pp]eacefully(?:\s+\S+){0,12}?\s+on\s+(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // "Passing gently/peacefully/quietly [at place] on [weekday,] Month Day, Year"
@@ -608,6 +620,12 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
                 '/(?:the\s+)?death\s+of(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
                 // v4.6.6: "left this world [peacefully] on Month Day, Year"
                 '/left\s+this\s+world(?:\s+\S+){0,10}?\s+(?:on\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})/isu',
+                // v4.6.8: Broad fallback — "on [weekday,] Month Day, Year, in his/her Nth year"
+                '/(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4}),?\s+in\s+(?:his|her|their)\s+\d+(?:st|nd|rd|th)\s+year/isu',
+                // v4.6.8: "on [weekday,] Month Day, Year, at the age of N"
+                '/(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4}),?\s+at\s+the\s+age\s+of\s+\d+/isu',
+                // v4.6.8: "on Monday, Month Day, Year at the NHS" — date before hospital
+                '/(?:on\s+)?(?:' . $weekday_p . ',?\s+)?(' . $month_p . '\s+\d{1,2},?\s+\d{4})\s+at\s+(?:the\s+)?(?:NHS|hospital|home|hospice)/isu',
             );
             foreach ( $death_patterns as $dp ) {
                 if ( preg_match( $dp, $desc_text, $dm ) ) {
@@ -618,15 +636,22 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             }
 
             // Age extraction — v3.15.2: expanded patterns
-            if ( preg_match( '/in\s+(?:his|her)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $desc_text, $age_m ) ) {
-                $detail['detail_age'] = intval( $age_m[1] );
+            // v4.6.8 FIX: "in his/her Nth year" means the person was N-1 years old.
+            // Example: "in her 93rd year" = she was 92 (had completed 92 years, was in the 93rd).
+            // Previously this extracted 93 as the age, which was wrong.
+            // Same fix applies to "lived into her Nth year" and "his/her Nth year" patterns.
+            if ( preg_match( '/(?:in|into|lived\s+into)\s+(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $desc_text, $age_m ) ) {
+                $detail['detail_age'] = intval( $age_m[1] ) - 1;
+            } elseif ( preg_match( '/\bat\s+the\s+age\s+of\s+(\d+)/i', $desc_text, $age_m3 ) ) {
+                $detail['detail_age'] = intval( $age_m3[1] );
             } elseif ( preg_match( '/\bage(?:d)?\s+(\d+)/i', $desc_text, $age_m2 ) ) {
                 $detail['detail_age'] = intval( $age_m2[1] );
-            } elseif ( preg_match( '/at\s+the\s+age\s+of\s+(\d+)/i', $desc_text, $age_m3 ) ) {
-                $detail['detail_age'] = intval( $age_m3[1] );
-            } elseif ( preg_match( '/(?:his|her)\s+(\d+)(?:st|nd|rd|th)\s+(?:birthday|year)/i', $desc_text, $age_m4 ) ) {
-                // "her 96th birthday" / "his 80th year"
+            } elseif ( preg_match( '/(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+birthday/i', $desc_text, $age_m4 ) ) {
+                // "her 96th birthday" — means they reached/would have reached age 96.
                 $detail['detail_age'] = intval( $age_m4[1] );
+            } elseif ( preg_match( '/(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $desc_text, $age_m5 ) ) {
+                // "his 80th year" — same as "in his 80th year" = age 79.
+                $detail['detail_age'] = intval( $age_m5[1] ) - 1;
             }
 
             // Birth date from text: "born on Month Day, Year" or "born Month Day, Year"
@@ -652,9 +677,23 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
                 if ( $yr_death > $yr_birth && $yr_death >= 2020 && $yr_death <= 2030 && $yr_birth >= 1890 ) {
                     $detail['detail_year_birth'] = $yr_range[1];
                     $detail['detail_year_death'] = $yr_range[2];
-                    // Compute age from year range if not already extracted
+                    // Compute age from year range if not already extracted.
+                    // v4.6.8: Use full birth/death dates for precise calculation when available.
                     if ( empty( $detail['detail_age'] ) ) {
-                        $detail['detail_age'] = $yr_death - $yr_birth;
+                        if ( ! empty( $detail['detail_birth_date'] ) && ! empty( $detail['detail_death_date'] ) ) {
+                            // Try precise calculation from full dates
+                            $bd_ts = strtotime( $detail['detail_birth_date'] );
+                            $dd_ts = strtotime( $detail['detail_death_date'] );
+                            if ( $bd_ts && $dd_ts && $dd_ts > $bd_ts ) {
+                                $bd_obj = new DateTime( '@' . $bd_ts );
+                                $dd_obj = new DateTime( '@' . $dd_ts );
+                                $detail['detail_age'] = $dd_obj->diff( $bd_obj )->y;
+                            } else {
+                                $detail['detail_age'] = $yr_death - $yr_birth;
+                            }
+                        } else {
+                            $detail['detail_age'] = $yr_death - $yr_birth;
+                        }
                     }
                 }
             }
@@ -831,8 +870,21 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         }
         // v3.10.2: Compute age from year_birth/year_death when full dates
         // are not available (no longer relies on fabricated -01-01 dates).
+        // v4.6.8 FIX: Year-only age calculation must account for whether the
+        // birthday has already occurred in the death year. Simple subtraction
+        // (death_year - birth_year) gives age+1 when death occurs before birthday.
+        // When we have a full birth date AND full death date, use calculate_age().
+        // When we only have years, the result is approximate — subtract 1 to avoid
+        // overstating (it's better to show 96 than 97 when the real age is 96).
         if ( 0 === $age && ! empty( $card['year_birth'] ) && ! empty( $card['year_death'] ) ) {
             $year_age = intval( $card['year_death'] ) - intval( $card['year_birth'] );
+            // If we have full birth and death dates, compute precisely
+            if ( ! empty( $date_of_birth ) && ! empty( $date_of_death ) ) {
+                $precise_age = $this->calculate_age( $date_of_birth, $date_of_death );
+                if ( $precise_age > 0 ) {
+                    $year_age = $precise_age;
+                }
+            }
             if ( $year_age > 0 && $year_age <= 130 ) {
                 $age = $year_age;
             }
@@ -840,6 +892,13 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // v3.15.2: Also use detail page year range when listing card didn't have years
         if ( 0 === $age && ! empty( $card['detail_year_birth'] ) && ! empty( $card['detail_year_death'] ) ) {
             $year_age = intval( $card['detail_year_death'] ) - intval( $card['detail_year_birth'] );
+            // If we have full birth and death dates, compute precisely
+            if ( ! empty( $date_of_birth ) && ! empty( $date_of_death ) ) {
+                $precise_age = $this->calculate_age( $date_of_birth, $date_of_death );
+                if ( $precise_age > 0 ) {
+                    $year_age = $precise_age;
+                }
+            }
             if ( $year_age > 0 && $year_age <= 130 ) {
                 $age = $year_age;
             }

@@ -202,7 +202,14 @@ class Ontario_Obituaries_Adapter_Tribute_Archive extends Ontario_Obituaries_Sour
             $n = $xpath->query( $sel )->item( 0 );
             if ( $n && strlen( trim( $n->textContent ) ) > 50 ) {
                 $full_text = $this->node_text( $n );
-                $enriched['description'] = $this->create_factual_summary( $full_text, $card );
+                // v5.0.0: Preserve the FULL obituary text for the AI rewriter.
+                // Previously used create_factual_summary() which reduced the text
+                // to a single sentence, losing all detail. The Groq rewriter needs
+                // the complete text to extract accurate dates, ages, and locations.
+                if ( strlen( $full_text ) > 2000 ) {
+                    $full_text = substr( $full_text, 0, 1997 ) . '...';
+                }
+                $enriched['description'] = $full_text;
                 break;
             }
         }
