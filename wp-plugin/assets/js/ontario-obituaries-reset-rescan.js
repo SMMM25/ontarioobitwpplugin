@@ -108,10 +108,15 @@
             // Remove any previous inline result
             $('#rescan-only-inline-result').remove();
 
-            $.post(ajaxUrl, {
-                action: 'ontario_obituaries_rescan_only',
-                nonce:  nonce
-            }, function(response) {
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                timeout: 300000, // 5 minutes — scraping 7 sources takes time
+                data: {
+                    action: 'ontario_obituaries_rescan_only',
+                    nonce:  nonce
+                }
+            }).done(function(response) {
                 var d = response.data || {};
                 if (response.success) {
                     $status.html('\u2705 ' + escHtml(d.message || 'Rescan complete.')).css('color', '#00a32a');
@@ -325,11 +330,16 @@
             updateProgress(100); // Purge done, rescan is indeterminate
             updateDetail('Scanning active sources… This may take 30–90 seconds.');
 
-            $.post(ajaxUrl, {
-                action:     'ontario_obituaries_reset_rescan',
-                nonce:      nonce,
-                session_id: sessionId
-            }, function(response) {
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                timeout: 300000, // 5 minutes — scraping 7 sources takes time
+                data: {
+                    action:     'ontario_obituaries_reset_rescan',
+                    nonce:      nonce,
+                    session_id: sessionId
+                }
+            }).done(function(response) {
                 if (!response.success) {
                     updatePhase('⚠️ Rescan had issues');
                     logMsg('Rescan error: ' + (response.data && response.data.message ? response.data.message : 'Unknown'));

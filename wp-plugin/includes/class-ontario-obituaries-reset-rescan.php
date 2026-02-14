@@ -558,6 +558,9 @@ class Ontario_Obituaries_Reset_Rescan {
     public function ajax_rescan() {
         $this->verify_request();
 
+        // v4.6.0: Extend PHP timeout — scraping 7 sources can take >60s.
+        @set_time_limit( 300 );
+
         $session_id = isset( $_POST['session_id'] ) ? sanitize_text_field( wp_unslash( $_POST['session_id'] ) ) : '';
         $session    = get_option( 'ontario_obituaries_reset_session', array() );
 
@@ -609,6 +612,19 @@ class Ontario_Obituaries_Reset_Rescan {
         // Purge LiteSpeed
         if ( function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
             ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        }
+
+        // v4.6.0: Schedule AI rewrite batch after rescan (same as cron handler).
+        if ( function_exists( 'ontario_obituaries_get_settings' ) ) {
+            $rescan_settings = ontario_obituaries_get_settings();
+            if ( ! empty( $rescan_settings['ai_rewrite_enabled'] ) ) {
+                if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+                    wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
+                    if ( function_exists( 'ontario_obituaries_log' ) ) {
+                        ontario_obituaries_log( 'v4.6.0: Scheduled AI rewrite batch (30s after reset-rescan).', 'info' );
+                    }
+                }
+            }
         }
 
         // Build structured result
@@ -713,6 +729,9 @@ class Ontario_Obituaries_Reset_Rescan {
     public function ajax_rescan_only() {
         $this->verify_request();
 
+        // v4.6.0: Extend PHP timeout — scraping 7 sources can take >60s.
+        @set_time_limit( 300 );
+
         // Source Collector MUST be available
         if ( ! class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
             wp_send_json_error( array( 'message' => __( 'Source Collector is not available. Cannot rescan.', 'ontario-obituaries' ) ) );
@@ -749,6 +768,20 @@ class Ontario_Obituaries_Reset_Rescan {
         // Purge LiteSpeed
         if ( function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
             ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        }
+
+        // v4.6.0: Schedule AI rewrite batch after rescan-only (same as cron handler).
+        // This was missing — caused pending obituaries to never get rewritten after manual rescan.
+        if ( function_exists( 'ontario_obituaries_get_settings' ) ) {
+            $rescan_settings = ontario_obituaries_get_settings();
+            if ( ! empty( $rescan_settings['ai_rewrite_enabled'] ) ) {
+                if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+                    wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
+                    if ( function_exists( 'ontario_obituaries_log' ) ) {
+                        ontario_obituaries_log( 'v4.6.0: Scheduled AI rewrite batch (30s after rescan-only).', 'info' );
+                    }
+                }
+            }
         }
 
         // Build structured result
