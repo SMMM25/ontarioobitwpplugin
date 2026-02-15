@@ -19,8 +19,8 @@
  *     validates the rewrite preserves all facts, then sets status='published'.
  *     Obituaries are NOT visible on the site until they pass this pipeline.
  *   - Called after each collection cycle and on a separate cron hook.
- *   - Rate-limited: 1 request per 15 seconds (~4/min) to stay within Groq free tier.
- *   - Batch size: 3 obituaries per run to fit within 90s AJAX timeout.
+ *   - Rate-limited: CLI mode uses 6s delay (~10/min); AJAX mode uses 15s delay (~4/min).
+ *   - Batch size: CLI mode uses 10; AJAX mode uses 3 (fits within 90s timeout).
  *
  * @package Ontario_Obituaries
  * @since   4.1.0
@@ -35,7 +35,7 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var string Groq API endpoint (OpenAI-compatible). */
     private $api_url = 'https://api.groq.com/openai/v1/chat/completions';
 
-    /** @var string Model to use. Llama 3.1 8B for speed + lower token usage on free tier. */
+    /** @var string Primary model. Llama 3.1 8B for speed + lower token usage on free tier. */
     private $model = 'llama-3.1-8b-instant';
 
     /** @var string Fallback model if primary is rate-limited or permission-blocked. */
@@ -50,7 +50,11 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var int Maximum obituaries to process per batch run. */
     private $batch_size = 3;
 
-    /** @var int Delay between API requests in microseconds (15 seconds = 15,000,000). */
+    /**
+     * Delay between API requests in microseconds.
+     * - CLI mode (cron-rewriter.php):  6 seconds  = 6,000,000  — no browser timeout.
+     * - AJAX/web mode:                15 seconds = 15,000,000 — safe for 90s timeout.
+     */
     private $request_delay = 15000000;
 
     /** @var int API timeout in seconds. */
@@ -68,15 +72,32 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var int Number of consecutive rate-limit hits in this batch. */
     private $consecutive_rate_limits = 0;
 
+    /** @var bool Whether we're running in CLI mode (standalone cron). */
+    private $is_cli = false;
+
     /**
      * Constructor.
      *
-     * @param int $batch_size Optional batch size override (default 25).
+     * @param int $batch_size Optional batch size override.
      */
     public function __construct( $batch_size = 0 ) {
         $this->api_key = get_option( 'ontario_obituaries_groq_api_key', '' );
+
+        // Detect CLI mode — set by cron-rewriter.php via ONTARIO_CLI_REWRITER constant.
+        $this->is_cli = defined( 'ONTARIO_CLI_REWRITER' ) && ONTARIO_CLI_REWRITER;
+
         if ( $batch_size > 0 ) {
             $this->batch_size = (int) $batch_size;
+        } elseif ( $this->is_cli ) {
+            // CLI has no browser timeout — use larger batches.
+            $this->batch_size = 10;
+        }
+
+        if ( $this->is_cli ) {
+            // CLI mode: 6-second delay (10 req/min, well within Groq's 30 req/min free tier).
+            $this->request_delay = 6000000;
+            // CLI mode: longer API timeout is fine (no AJAX timeout to worry about).
+            $this->api_timeout = 60;
         }
     }
 
@@ -267,7 +288,8 @@ class Ontario_Obituaries_AI_Rewriter {
             if ( $result['processed'] > 1 ) {
                 $delay = $this->request_delay;
                 if ( $this->consecutive_rate_limits > 0 ) {
-                    // Exponential backoff: 12s, 24s, 48s after consecutive rate-limits.
+                    // Exponential backoff: double the base delay after each consecutive rate-limit.
+                    // CLI: 12s, 24s, 48s.  AJAX: 30s, 60s.
                     $delay = $this->request_delay * pow( 2, $this->consecutive_rate_limits );
                     $delay = min( $delay, 60000000 ); // Cap at 60 seconds.
                     ontario_obituaries_log(

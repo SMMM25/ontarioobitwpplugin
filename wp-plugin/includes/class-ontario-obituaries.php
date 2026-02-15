@@ -537,7 +537,7 @@ class Ontario_Obituaries {
                                 <input type="checkbox" name="ontario_obituaries_settings[ai_rewrite_enabled]" value="1" <?php checked( ! empty( $settings['ai_rewrite_enabled'] ) ); ?> />
                                 <?php esc_html_e( 'Automatically rewrite obituaries after each collection', 'ontario-obituaries' ); ?>
                             </label>
-                            <p class="description"><?php esc_html_e( 'Requires a Groq API key below. Processes 3 obituaries per batch, 1 request every 15 seconds. Runs automatically via cron every 5 minutes.', 'ontario-obituaries' ); ?></p>
+                            <p class="description"><?php esc_html_e( 'Requires a Groq API key below. Server cron processes ~10 obituaries per batch (6s apart, ~250/hour). AJAX fallback uses 3 per batch (15s apart). Runs automatically via cPanel cron every 5 minutes.', 'ontario-obituaries' ); ?></p>
                         </td>
                     </tr>
                     <tr valign="top">
