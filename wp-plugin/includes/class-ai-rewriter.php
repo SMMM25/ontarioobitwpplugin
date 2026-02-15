@@ -19,7 +19,7 @@
  *     validates the rewrite preserves all facts, then sets status='published'.
  *     Obituaries are NOT visible on the site until they pass this pipeline.
  *   - Called after each collection cycle and on a separate cron hook.
- *   - Rate-limited: 6s delay everywhere (~10 req/min, within Groq's 30 req/min free tier).
+ *   - Rate-limited: 12s delay everywhere (~5 req/min, within Groq's 6,000 TPM free tier).
  *   - Batch size: 1 by default everywhere. Callers can override for CLI loops.
  *
  * @package Ontario_Obituaries
@@ -52,11 +52,15 @@ class Ontario_Obituaries_AI_Rewriter {
 
     /**
      * Delay between API requests in microseconds.
-     * 6 seconds = 6,000,000 µs — ~10 requests per minute.
-     * Groq free tier allows 30 req/min, so 6s is safe everywhere.
-     * This is the SAME for CLI and AJAX — no reason to penalize AJAX with 15s.
+     * 12 seconds = 12,000,000 µs — max ~5 requests per minute.
+     *
+     * WHY 12s? Groq free tier limit is 6,000 TOKENS per minute (TPM),
+     * NOT just 30 requests per minute. Each obituary rewrite uses
+     * ~1,000-1,200 total tokens (prompt + response). At 12s intervals:
+     *   5 requests/min × 1,200 tokens = 6,000 TPM (the exact limit).
+     * At 6s intervals we'd hit 10 req/min × 1,200 = 12,000 TPM → instant 429.
      */
-    private $request_delay = 6000000;
+    private $request_delay = 12000000;
 
     /** @var int API timeout in seconds. */
     private $api_timeout = 45;
@@ -327,9 +331,19 @@ class Ontario_Obituaries_AI_Rewriter {
                     $this->was_rate_limited = true;
                     $this->consecutive_rate_limits++;
 
+                    // v5.0.2: Use Groq's retry-after header if available.
+                    $retry_secs = $rewritten->get_error_data();
+                    if ( ! empty( $retry_secs ) && is_numeric( $retry_secs ) && $retry_secs > 0 ) {
+                        ontario_obituaries_log(
+                            sprintf( 'AI Rewriter: Groq says wait %ds. Sleeping...', $retry_secs ),
+                            'info'
+                        );
+                        sleep( (int) $retry_secs + 1 ); // +1s safety margin.
+                    }
+
                     if ( $this->consecutive_rate_limits >= 3 ) {
                         ontario_obituaries_log(
-                            'AI Rewriter: 3 consecutive rate-limits — pausing batch. Will resume on next AJAX call.',
+                            'AI Rewriter: 3 consecutive rate-limits — TPM quota exhausted. Pausing batch.',
                             'warning'
                         );
                         break;
@@ -337,7 +351,7 @@ class Ontario_Obituaries_AI_Rewriter {
 
                     ontario_obituaries_log(
                         sprintf(
-                            'AI Rewriter: Rate limited (consecutive: %d/%d) — will retry with backoff.',
+                            'AI Rewriter: Rate limited (consecutive: %d/%d) — will retry after delay.',
                             $this->consecutive_rate_limits,
                             3
                         ),
@@ -482,15 +496,20 @@ class Ontario_Obituaries_AI_Rewriter {
         }
 
         if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
-            ontario_obituaries_log( 'AI Rewriter: Primary model rate-limited, trying fallback.', 'info' );
-            usleep( 3000000 );
-            $response = $this->call_api( $prompt, $this->fallback_model );
-
-            if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
-                ontario_obituaries_log( 'AI Rewriter: Fallback also rate-limited, waiting 15s and retrying.', 'info' );
-                usleep( 15000000 );
-                $response = $this->call_api( $prompt );
+            // v5.0.2: Do NOT retry with fallback models on 429. Groq rate limits are
+            // ORG-level (6,000 TPM free tier), so switching models wastes MORE tokens
+            // against the same quota. Just return the error — the batch loop's backoff
+            // will handle pacing.
+            $retry_after = $response->get_error_data();
+            if ( ! empty( $retry_after ) && is_numeric( $retry_after ) ) {
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Rate-limited. Groq says retry after %ds.', $retry_after ),
+                    'info'
+                );
+            } else {
+                ontario_obituaries_log( 'AI Rewriter: Rate-limited (TPM quota exhausted). Will retry after backoff.', 'info' );
             }
+            return $response;
         }
 
         if ( is_wp_error( $response ) ) {
@@ -777,9 +796,11 @@ SYSTEM;
         $code = wp_remote_retrieve_response_code( $response );
         $body = wp_remote_retrieve_body( $response );
 
-        // Handle rate limiting.
+        // Handle rate limiting — extract retry-after header for smarter backoff.
         if ( 429 === $code ) {
-            return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded.' );
+            $retry_after = wp_remote_retrieve_header( $response, 'retry-after' );
+            $retry_secs  = is_numeric( $retry_after ) ? intval( $retry_after ) : 0;
+            return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded (likely TPM).', $retry_secs );
         }
 
         // v4.6.7: Handle 401 Unauthorized — API key is invalid, expired, or revoked.
