@@ -1,0 +1,233 @@
+<?php
+/**
+ * Standalone Cron Rewriter — runs via server cron, NOT WordPress AJAX.
+ *
+ * Usage (cPanel Cron Job — every 5 minutes):
+ *   /usr/local/bin/php /home/monaylnf/html/wp-content/plugins/ontario-obituaries/cron-rewriter.php >/dev/null 2>&1
+ *
+ * This script:
+ *   1. Bootstraps WordPress (no browser, no AJAX timeout, no visitor needed)
+ *   2. Processes up to 10 obituaries per batch with 6-second delays
+ *   3. Loops for up to 4 minutes, processing multiple batches
+ *   4. Manages rate limits (pause + retry + exponential backoff)
+ *   5. File-based locking — only one instance runs at a time
+ *   6. Logs everything to WP debug log + CLI stdout
+ *
+ * Performance (Groq free tier):
+ *   - 6s delay × 10 obituaries = ~80s per batch (including API time)
+ *   - 4-minute runtime ≈ 3 batches ≈ 20-30 obituaries per cron run
+ *   - Cron every 5 min = ~240-360 obituaries per hour
+ *   - 720 pending ≈ 2-3 hours to clear
+ *
+ * Why not use WP-Cron or the AJAX button?
+ *   - WP-Cron requires site visitors to trigger — unreliable with low traffic.
+ *   - AJAX button has 90-second browser timeout — too short for large batches.
+ *   - This script runs server-side with a 5-minute execution window.
+ *
+ * @package Ontario_Obituaries
+ * @since   5.0.0
+ */
+
+// ── SECURITY: Block ALL web access. CLI only. ──────────────────────────────
+if ( php_sapi_name() !== 'cli' && ! defined( 'STDIN' ) ) {
+    http_response_code( 403 );
+    die( 'CLI only.' );
+}
+
+// ── Tell WordPress this is a cron/CLI context BEFORE loading ───────────────
+define( 'DOING_CRON', true );
+define( 'ONTARIO_CLI_REWRITER', true ); // Flag for class-ai-rewriter to use CLI-optimized settings.
+
+// ── CLI-safe resource limits ───────────────────────────────────────────────
+@set_time_limit( 300 );         // 5 minutes hard limit.
+@ini_set( 'memory_limit', '256M' );
+
+// ── Find and load WordPress ────────────────────────────────────────────────
+$wp_load = dirname( dirname( dirname( dirname( __FILE__ ) ) ) ) . '/wp-load.php';
+if ( ! file_exists( $wp_load ) ) {
+    fwrite( STDERR, "FATAL: wp-load.php not found at: {$wp_load}\n" );
+    exit( 1 );
+}
+
+// Suppress any HTML output from WordPress loading.
+ob_start();
+require_once $wp_load;
+ob_end_clean();
+
+// ── Helper: timestamped log + flush ────────────────────────────────────────
+function cron_log( $msg ) {
+    $ts = gmdate( 'Y-m-d H:i:s' );
+    $line = "[{$ts}] {$msg}\n";
+    fwrite( STDOUT, $line );
+    // Also write to WP debug log if available.
+    if ( function_exists( 'ontario_obituaries_log' ) ) {
+        ontario_obituaries_log( 'CLI-Rewriter: ' . $msg, 'info' );
+    }
+}
+
+// ── FILE-BASED LOCK (no DB dependency) ─────────────────────────────────────
+$lock_file = sys_get_temp_dir() . '/ontario_rewriter.lock';
+
+if ( file_exists( $lock_file ) ) {
+    $lock_age = time() - (int) filemtime( $lock_file );
+    if ( $lock_age < 270 ) {
+        // Another instance started less than 4.5 minutes ago — still running.
+        cron_log( "SKIP: Another instance running ({$lock_age}s ago). Exiting." );
+        exit( 0 );
+    }
+    // Stale lock (process crashed). Override.
+    cron_log( "WARNING: Stale lock ({$lock_age}s old). Overriding." );
+}
+
+// Write lock with current PID so we can detect stale locks.
+file_put_contents( $lock_file, getmypid() . "\n" . time() );
+
+// Always clean up the lock on exit (even on fatal errors).
+register_shutdown_function( function() use ( $lock_file ) {
+    @unlink( $lock_file );
+} );
+
+// ── Load the rewriter class ────────────────────────────────────────────────
+if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+    $rewriter_file = __DIR__ . '/includes/class-ai-rewriter.php';
+    if ( ! file_exists( $rewriter_file ) ) {
+        cron_log( 'FATAL: includes/class-ai-rewriter.php not found.' );
+        exit( 1 );
+    }
+    require_once $rewriter_file;
+}
+
+// Instantiate with CLI-optimized batch size (10 instead of AJAX-safe 3).
+$rewriter = new Ontario_Obituaries_AI_Rewriter( 10 );
+
+// ── Pre-flight checks ──────────────────────────────────────────────────────
+if ( ! $rewriter->is_configured() ) {
+    cron_log( 'ABORT: Groq API key not configured. Set it in Settings > Ontario Obituaries.' );
+    exit( 0 );
+}
+
+$pending = $rewriter->get_pending_count();
+if ( $pending < 1 ) {
+    cron_log( 'Nothing to do: 0 obituaries pending.' );
+    exit( 0 );
+}
+
+cron_log( "START: {$pending} obituaries pending." );
+
+// ── MAIN PROCESSING LOOP ──────────────────────────────────────────────────
+$start_time           = time();
+$max_runtime          = 240;  // 4 minutes — 60s buffer before next 5-min cron.
+$total_ok             = 0;
+$total_fail           = 0;
+$total_processed      = 0;
+$batch_num            = 0;
+$consecutive_failures = 0;
+$max_consecutive_fail = 3;    // Stop after 3 batches with zero successes.
+
+while ( true ) {
+    $elapsed = time() - $start_time;
+
+    // ── Time guard: stop if <60s remaining (next batch needs ~80s) ──
+    if ( $elapsed >= $max_runtime || ( $max_runtime - $elapsed ) < 60 ) {
+        cron_log( sprintf( 'TIME: %ds elapsed, stopping to avoid overlap.', $elapsed ) );
+        break;
+    }
+
+    // ── Check for remaining work ──
+    $remaining = $rewriter->get_pending_count();
+    if ( $remaining < 1 ) {
+        cron_log( 'DONE: All obituaries processed!' );
+        break;
+    }
+
+    $batch_num++;
+
+    // ── Process one batch ──
+    // The class uses CLI-aware delays internally (6s in CLI vs 15s in AJAX).
+    $result = $rewriter->process_batch();
+
+    $batch_ok   = isset( $result['succeeded'] ) ? (int) $result['succeeded'] : 0;
+    $batch_fail = isset( $result['failed'] )    ? (int) $result['failed']    : 0;
+    $batch_proc = isset( $result['processed'] ) ? (int) $result['processed'] : 0;
+
+    $total_ok        += $batch_ok;
+    $total_fail      += $batch_fail;
+    $total_processed += $batch_proc;
+    $elapsed          = time() - $start_time;
+    $remaining_now    = $rewriter->get_pending_count();
+
+    cron_log( sprintf(
+        'BATCH #%d: %d ok, %d fail (total: %d published, %d failed, %d remaining) [%ds]',
+        $batch_num, $batch_ok, $batch_fail, $total_ok, $total_fail, $remaining_now, $elapsed
+    ) );
+
+    // ── Auth error — stop immediately ──
+    if ( ! empty( $result['auth_error'] ) ) {
+        cron_log( 'FATAL: API key invalid or all models blocked. Fix before next run.' );
+        break;
+    }
+
+    // ── Track consecutive zero-success batches ──
+    if ( $batch_ok === 0 ) {
+        $consecutive_failures++;
+        if ( $consecutive_failures >= $max_consecutive_fail ) {
+            cron_log( sprintf(
+                'ABORT: %d consecutive batches with 0 successes. Groq may be down or rate-limiting. Will retry next cron run.',
+                $consecutive_failures
+            ) );
+            break;
+        }
+        // Back off: 20s, 40s, 60s (capped).
+        $wait = min( 20 * $consecutive_failures, 60 );
+        cron_log( "BACKOFF: Waiting {$wait}s after failed batch..." );
+        sleep( $wait );
+    } else {
+        $consecutive_failures = 0;
+        // Brief pause between successful batches.
+        sleep( 2 );
+    }
+}
+
+// ── Post-processing: cache purge + IndexNow ────────────────────────────────
+if ( $total_ok > 0 ) {
+    // Purge LiteSpeed cache.
+    if ( function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
+        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+        cron_log( 'LiteSpeed cache purged.' );
+    }
+
+    // Submit newly published obituaries to IndexNow.
+    if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $recent_ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT id FROM `{$table}`
+             WHERE status = 'published'
+               AND ai_description IS NOT NULL AND ai_description != ''
+               AND created_at >= %s
+               AND suppressed_at IS NULL
+             ORDER BY id DESC
+             LIMIT 100",
+            gmdate( 'Y-m-d H:i:s', strtotime( '-10 minutes' ) )
+        ) );
+        if ( ! empty( $recent_ids ) ) {
+            $indexnow = new Ontario_Obituaries_IndexNow();
+            $indexnow->submit_urls( $recent_ids );
+            cron_log( sprintf( 'IndexNow: submitted %d URLs.', count( $recent_ids ) ) );
+        }
+    }
+}
+
+// ── Summary ────────────────────────────────────────────────────────────────
+$runtime = time() - $start_time;
+$rate    = $runtime > 0 ? round( $total_ok / ( $runtime / 60 ), 1 ) : 0;
+cron_log( sprintf(
+    'FINISHED: %d published, %d failed, %ds runtime (~%.0f/hour). %d remaining.',
+    $total_ok,
+    $total_fail,
+    $runtime,
+    $rate * 60 / max( $runtime, 1 ) * 3600 / 60,
+    $rewriter->get_pending_count()
+) );
+
+exit( 0 );
