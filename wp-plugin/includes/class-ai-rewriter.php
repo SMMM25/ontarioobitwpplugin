@@ -19,8 +19,8 @@
  *     validates the rewrite preserves all facts, then sets status='published'.
  *     Obituaries are NOT visible on the site until they pass this pipeline.
  *   - Called after each collection cycle and on a separate cron hook.
- *   - Rate-limited: CLI mode uses 6s delay (~10/min); AJAX mode uses 15s delay (~4/min).
- *   - Batch size: CLI mode uses 10; AJAX mode uses 3 (fits within 90s timeout).
+ *   - Rate-limited: 6s delay everywhere (~10 req/min, within Groq's 30 req/min free tier).
+ *   - Batch size: 1 by default everywhere. Callers can override for CLI loops.
  *
  * @package Ontario_Obituaries
  * @since   4.1.0
@@ -48,14 +48,15 @@ class Ontario_Obituaries_AI_Rewriter {
     );
 
     /** @var int Maximum obituaries to process per batch run. */
-    private $batch_size = 3;
+    private $batch_size = 1;
 
     /**
      * Delay between API requests in microseconds.
-     * - CLI mode (cron-rewriter.php):  6 seconds  = 6,000,000  — no browser timeout.
-     * - AJAX/web mode:                15 seconds = 15,000,000 — safe for 90s timeout.
+     * 6 seconds = 6,000,000 µs — ~10 requests per minute.
+     * Groq free tier allows 30 req/min, so 6s is safe everywhere.
+     * This is the SAME for CLI and AJAX — no reason to penalize AJAX with 15s.
      */
-    private $request_delay = 15000000;
+    private $request_delay = 6000000;
 
     /** @var int API timeout in seconds. */
     private $api_timeout = 45;
@@ -88,14 +89,10 @@ class Ontario_Obituaries_AI_Rewriter {
 
         if ( $batch_size > 0 ) {
             $this->batch_size = (int) $batch_size;
-        } elseif ( $this->is_cli ) {
-            // CLI has no browser timeout — use larger batches.
-            $this->batch_size = 10;
         }
+        // Note: default batch_size is 1 everywhere. Callers can override.
 
         if ( $this->is_cli ) {
-            // CLI mode: 6-second delay (10 req/min, well within Groq's 30 req/min free tier).
-            $this->request_delay = 6000000;
             // CLI mode: longer API timeout is fine (no AJAX timeout to worry about).
             $this->api_timeout = 60;
         }

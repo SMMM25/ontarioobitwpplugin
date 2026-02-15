@@ -557,7 +557,7 @@
                     return;
                 }
 
-                logRewriter('Processing batch\u2026 (up to 5 obituaries, ~30s)');
+                logRewriter('Processing 1 obituary\u2026');
 
                 $.ajax({
                     url: ajaxUrl,

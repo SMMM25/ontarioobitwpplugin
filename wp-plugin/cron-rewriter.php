@@ -7,17 +7,17 @@
  *
  * This script:
  *   1. Bootstraps WordPress (no browser, no AJAX timeout, no visitor needed)
- *   2. Processes up to 10 obituaries per batch with 6-second delays
+ *   2. Processes 1 obituary at a time with 6-second delays
  *   3. Loops for up to 4 minutes, processing multiple batches
  *   4. Manages rate limits (pause + retry + exponential backoff)
  *   5. File-based locking — only one instance runs at a time
  *   6. Logs everything to WP debug log + CLI stdout
  *
  * Performance (Groq free tier):
- *   - 6s delay × 10 obituaries = ~80s per batch (including API time)
- *   - 4-minute runtime ≈ 3 batches ≈ 20-30 obituaries per cron run
- *   - Cron every 5 min = ~240-360 obituaries per hour
- *   - 720 pending ≈ 2-3 hours to clear
+ *   - 1 obituary at a time with 6s delay between requests
+ *   - 4-minute runtime ≈ ~30 obituaries per cron run
+ *   - Cron every 5 min = ~360 obituaries per hour
+ *   - 720 pending ≈ 2 hours to clear
  *
  * Why not use WP-Cron or the AJAX button?
  *   - WP-Cron requires site visitors to trigger — unreliable with low traffic.
@@ -97,8 +97,8 @@ if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
     require_once $rewriter_file;
 }
 
-// Instantiate with CLI-optimized batch size (10 instead of AJAX-safe 3).
-$rewriter = new Ontario_Obituaries_AI_Rewriter( 10 );
+// Process 1 obituary at a time — simple, predictable, no rate-limit surprises.
+$rewriter = new Ontario_Obituaries_AI_Rewriter( 1 );
 
 // ── Pre-flight checks ──────────────────────────────────────────────────────
 if ( ! $rewriter->is_configured() ) {
@@ -142,23 +142,22 @@ while ( true ) {
 
     $batch_num++;
 
-    // ── Process one batch ──
-    // The class uses CLI-aware delays internally (6s in CLI vs 15s in AJAX).
+    // ── Process ONE obituary ──
     $result = $rewriter->process_batch();
 
     $batch_ok   = isset( $result['succeeded'] ) ? (int) $result['succeeded'] : 0;
     $batch_fail = isset( $result['failed'] )    ? (int) $result['failed']    : 0;
-    $batch_proc = isset( $result['processed'] ) ? (int) $result['processed'] : 0;
 
     $total_ok        += $batch_ok;
     $total_fail      += $batch_fail;
-    $total_processed += $batch_proc;
+    $total_processed += $batch_ok + $batch_fail;
     $elapsed          = time() - $start_time;
     $remaining_now    = $rewriter->get_pending_count();
 
     cron_log( sprintf(
-        'BATCH #%d: %d ok, %d fail (total: %d published, %d failed, %d remaining) [%ds]',
-        $batch_num, $batch_ok, $batch_fail, $total_ok, $total_fail, $remaining_now, $elapsed
+        '#%d: %s (total: %d published, %d failed, %d remaining) [%ds]',
+        $batch_num, $batch_ok > 0 ? 'PUBLISHED' : 'FAILED',
+        $total_ok, $total_fail, $remaining_now, $elapsed
     ) );
 
     // ── Auth error — stop immediately ──
@@ -167,24 +166,20 @@ while ( true ) {
         break;
     }
 
-    // ── Track consecutive zero-success batches ──
+    // ── Track consecutive failures ──
     if ( $batch_ok === 0 ) {
         $consecutive_failures++;
         if ( $consecutive_failures >= $max_consecutive_fail ) {
             cron_log( sprintf(
-                'ABORT: %d consecutive batches with 0 successes. Groq may be down or rate-limiting. Will retry next cron run.',
+                'ABORT: %d consecutive failures. Groq may be down or rate-limiting. Will retry next cron run.',
                 $consecutive_failures
             ) );
             break;
         }
-        // Back off: 20s, 40s, 60s (capped).
-        $wait = min( 20 * $consecutive_failures, 60 );
-        cron_log( "BACKOFF: Waiting {$wait}s after failed batch..." );
-        sleep( $wait );
+        sleep( 10 ); // Brief backoff after failure.
     } else {
         $consecutive_failures = 0;
-        // Brief pause between successful batches.
-        sleep( 2 );
+        sleep( 6 ); // 6s pause = ~10 req/min.
     }
 }
 

@@ -45,7 +45,7 @@ foreach ( $tables as $table ) {
 // 2. Delete all plugin options
 $option_keys = array(
     'ontario_obituaries_settings',
-    'ontario_obituaries_db_version',
+    // 'ontario_obituaries_db_version',  // PRESERVED — prevents migration re-run on reinstall
     'ontario_obituaries_last_collection',
     'ontario_obituaries_last_scrape',
     'ontario_obituaries_last_scrape_errors',

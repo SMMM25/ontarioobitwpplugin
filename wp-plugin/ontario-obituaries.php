@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.0.0
+ * Version: 5.0.1
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.0.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.0.1' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -449,11 +449,12 @@ function ontario_obituaries_activate() {
             $wpdb->query( "ALTER TABLE `{$table_name}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
         }
 
-        // Fresh start: wipe all existing obituaries so the new pipeline
-        // (scrape → AI rewrite → validate → publish) starts clean.
-        // Suppression records are kept so do-not-republish rules survive.
-        $wpdb->query( "TRUNCATE TABLE `{$table_name}`" );
-        ontario_obituaries_log( 'v4.6.0: Fresh start — truncated obituaries table for new scrape→rewrite→publish pipeline.', 'info' );
+        // v5.0.0 FIX: REMOVED the TRUNCATE that was here. It wiped all obituaries
+        // on every delete-and-reinstall cycle because uninstall.php deletes the
+        // db_version option, causing this migration to re-run.
+        // Instead, set any existing records without a status to 'pending'.
+        $wpdb->query( "UPDATE `{$table_name}` SET status = 'pending' WHERE status = '' OR status IS NULL" );
+        ontario_obituaries_log( 'v4.6.0 migration: Added status/ai_description columns. Existing records set to pending.', 'info' );
 
         // Clear cached data.
         delete_transient( 'ontario_obituaries_locations_cache' );
@@ -1095,30 +1096,100 @@ add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled
 /**
  * v4.1.0: AI Rewrite batch cron handler.
  *
- * WP-Cron fallback: 3 obituaries per run (15s apart). Main processing via cron-rewriter.php CLI.
+ * v5.0.1: Simplified — processes ONE obituary at a time in a loop.
+ *
+ * When triggered by cPanel cron (php wp-cron.php every 5 min), this runs
+ * server-side. It processes 1 obituary per iteration with 6s delays,
+ * looping for up to 4 minutes = ~30 obituaries per run (~360/hour).
+ *
+ * Uses a transient lock so it won’t overlap with the shutdown hook or AJAX.
  * Self-reschedules if more remain.
  */
 function ontario_obituaries_ai_rewrite_batch() {
+    @set_time_limit( 300 ); // Allow up to 5 minutes.
+
+    // ── MUTUAL EXCLUSION: Prevent overlap with shutdown hook / AJAX ──
+    if ( get_transient( 'ontario_obituaries_rewriter_running' ) ) {
+        ontario_obituaries_log( 'AI Rewriter WP-Cron: Another instance running (transient lock). Skipping.', 'info' );
+        return;
+    }
+    set_transient( 'ontario_obituaries_rewriter_running', 'wp-cron', 300 ); // 5-min TTL.
+
     if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
         require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
     }
 
-    $rewriter = new Ontario_Obituaries_AI_Rewriter();
+    // Process 1 obituary at a time — simple, predictable, no rate-limit surprises.
+    $rewriter = new Ontario_Obituaries_AI_Rewriter( 1 );
 
     if ( ! $rewriter->is_configured() ) {
         ontario_obituaries_log( 'AI Rewriter: Skipping batch — Groq API key not configured.', 'info' );
+        delete_transient( 'ontario_obituaries_rewriter_running' );
         return;
     }
 
-    $result = $rewriter->process_batch();
+    $start_time        = time();
+    $max_runtime       = 240; // 4 minutes.
+    $total_ok          = 0;
+    $total_fail        = 0;
+    $consecutive_fails = 0;
+    $iteration         = 0;
 
-    // Log results.
+    while ( ( time() - $start_time ) < $max_runtime ) {
+
+        $remaining = $rewriter->get_pending_count();
+        if ( $remaining < 1 ) {
+            ontario_obituaries_log( 'AI Rewriter WP-Cron: All obituaries processed!', 'info' );
+            break;
+        }
+
+        // Time guard: need at least 15s for one API call.
+        if ( ( $max_runtime - ( time() - $start_time ) ) < 15 ) {
+            break;
+        }
+
+        $iteration++;
+        $result = $rewriter->process_batch(); // Processes 1 obituary.
+        $total_ok   += $result['succeeded'];
+        $total_fail += $result['failed'];
+
+        ontario_obituaries_log(
+            sprintf(
+                'AI Rewriter WP-Cron #%d: %s (total: %d ok, %d fail, %d remaining) [%ds]',
+                $iteration,
+                $result['succeeded'] > 0 ? 'PUBLISHED' : 'FAILED',
+                $total_ok, $total_fail, $remaining - 1,
+                time() - $start_time
+            ),
+            'info'
+        );
+
+        // Auth error — stop immediately.
+        if ( ! empty( $result['auth_error'] ) ) {
+            ontario_obituaries_log( 'AI Rewriter WP-Cron: Auth error, stopping.', 'error' );
+            break;
+        }
+
+        // Track consecutive failures.
+        if ( $result['succeeded'] === 0 ) {
+            $consecutive_fails++;
+            if ( $consecutive_fails >= 3 ) {
+                ontario_obituaries_log( 'AI Rewriter WP-Cron: 3 consecutive failures, stopping.', 'warning' );
+                break;
+            }
+            sleep( 10 ); // Brief backoff after failure.
+        } else {
+            $consecutive_fails = 0;
+            sleep( 6 ); // 6s pause before next — ~10 req/min.
+        }
+    }
+
+    delete_transient( 'ontario_obituaries_rewriter_running' );
+
     ontario_obituaries_log(
         sprintf(
-            'AI Rewriter batch: %d processed, %d succeeded, %d failed.',
-            $result['processed'],
-            $result['succeeded'],
-            $result['failed']
+            'AI Rewriter WP-Cron: FINISHED — %d published, %d failed in %ds (%d iterations). %d remaining.',
+            $total_ok, $total_fail, time() - $start_time, $iteration, $rewriter->get_pending_count()
         ),
         'info'
     );
@@ -1167,7 +1238,7 @@ add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrit
  *   - admin_init: lightweight check — only sets a flag if work is needed.
  *   - shutdown: does the actual API calls, only if the flag was set.
  *   - Throttled to once per 5 minutes via a transient.
- *   - Processes 2 records per run (2 × 6s = 12s background work).
+ *   - Processes 1 record per admin page load (~8s background work).
  *   - Only runs on admin pages (not frontend — no visitor impact).
  *
  * v4.6.3 FIX: No longer gated behind 'ai_rewrite_enabled' checkbox.
@@ -1213,26 +1284,30 @@ add_action( 'admin_init', 'ontario_obituaries_check_rewriter_needed' );
 /**
  * Runs AFTER the response is sent to the browser (shutdown hook).
  * Does the actual Groq API calls without blocking the admin UI.
+ *
+ * v5.0.1: Processes ONE obituary per admin page load. Respects the
+ * mutual exclusion transient so it won’t overlap with WP-Cron or AJAX.
  */
 function ontario_obituaries_shutdown_rewriter() {
     // v4.6.4 FIX: Set the real throttle lock HERE, not in the check function.
-    // This guarantees the lock is only set when work actually starts.
     set_transient( 'ontario_obituaries_rewriter_throttle', 1, 300 );
 
+    // ── MUTUAL EXCLUSION: Don’t run if WP-Cron or AJAX is already processing ──
+    if ( get_transient( 'ontario_obituaries_rewriter_running' ) ) {
+        return; // Another handler is active — skip silently.
+    }
+    set_transient( 'ontario_obituaries_rewriter_running', 'shutdown', 60 ); // 1-min TTL.
+
     // Flush output buffers and close the connection first.
-    // Try LiteSpeed/FastCGI first, then fall back to HTTP connection-close.
     if ( function_exists( 'litespeed_finish_request' ) ) {
         litespeed_finish_request();
     } elseif ( function_exists( 'fastcgi_finish_request' ) ) {
         fastcgi_finish_request();
     } else {
-        // v4.6.4: Apache/mod_php fallback — close the HTTP connection so the
-        // browser renders the page while PHP continues in the background.
         if ( ! headers_sent() ) {
             header( 'Connection: close' );
             header( 'Content-Length: 0' );
         }
-        // Flush all output buffers.
         while ( ob_get_level() > 0 ) {
             ob_end_flush();
         }
@@ -1240,43 +1315,45 @@ function ontario_obituaries_shutdown_rewriter() {
     }
 
     ignore_user_abort( true );
-    @set_time_limit( 120 );
+    @set_time_limit( 30 ); // Only need ~10s for 1 obituary.
 
     if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
         if ( defined( 'ONTARIO_OBITUARIES_PLUGIN_DIR' ) ) {
             require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
         } else {
+            delete_transient( 'ontario_obituaries_rewriter_running' );
             return;
         }
     }
 
-    // Process 2 records (2 × 6s = 12s max). Safe for background shutdown.
-    $rewriter = new Ontario_Obituaries_AI_Rewriter( 2 );
+    // Process 1 record only. Quick and safe.
+    $rewriter = new Ontario_Obituaries_AI_Rewriter( 1 );
     if ( ! $rewriter->is_configured() ) {
+        delete_transient( 'ontario_obituaries_rewriter_running' );
         return;
     }
 
     $pending = $rewriter->get_pending_count();
     if ( $pending < 1 ) {
+        delete_transient( 'ontario_obituaries_rewriter_running' );
         return;
     }
 
     $result = $rewriter->process_batch();
 
+    delete_transient( 'ontario_obituaries_rewriter_running' );
+
     if ( function_exists( 'ontario_obituaries_log' ) ) {
         ontario_obituaries_log(
             sprintf(
-                'v4.6.4 Shutdown rewriter: %d processed, %d succeeded, %d failed. %d still pending.',
-                $result['processed'],
-                $result['succeeded'],
-                $result['failed'],
+                'Shutdown rewriter: %s. %d still pending.',
+                $result['succeeded'] > 0 ? 'PUBLISHED 1' : 'FAILED',
                 $rewriter->get_pending_count()
             ),
             'info'
         );
     }
 
-    // Purge cache if any records were published.
     if ( $result['succeeded'] > 0 && function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
         ontario_obituaries_purge_litespeed( 'ontario_obits' );
     }
@@ -1285,8 +1362,8 @@ function ontario_obituaries_shutdown_rewriter() {
 /**
  * v4.6.3: AJAX endpoint to manually trigger AI rewriter from admin UI.
  *
- * Processes a batch of 10 obituaries (60s max) and returns progress.
- * The front-end calls this sequentially to chew through the backlog.
+ * Processes 1 obituary per call and returns progress.
+ * The front-end auto-repeats to chew through the backlog.
  * No dependency on WP-cron, no dependency on ai_rewrite_enabled checkbox.
  */
 function ontario_obituaries_ajax_run_rewriter() {
@@ -1303,11 +1380,15 @@ function ontario_obituaries_ajax_run_rewriter() {
         require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
     }
 
-    // Process 5 records per AJAX call (5 × 6s = 30s max).
-    // Kept under LiteSpeed's ~60s gateway timeout with margin.
-    $rewriter = new Ontario_Obituaries_AI_Rewriter( 5 );
+    // v5.0.1: Process 1 record per AJAX call — prevents browser timeout.
+    // The JS auto-repeats, so all records get processed sequentially.
+    // MUTUAL EXCLUSION: Claim the lock so WP-Cron / shutdown don’t overlap.
+    set_transient( 'ontario_obituaries_rewriter_running', 'ajax', 120 ); // 2-min TTL.
+
+    $rewriter = new Ontario_Obituaries_AI_Rewriter( 1 );
 
     if ( ! $rewriter->is_configured() ) {
+        delete_transient( 'ontario_obituaries_rewriter_running' );
         wp_send_json_error( array(
             'message' => 'Groq API key not configured. Go to Settings → AI Rewrite Engine and enter your key.',
         ) );
@@ -1316,6 +1397,7 @@ function ontario_obituaries_ajax_run_rewriter() {
     $pending_before = $rewriter->get_pending_count();
 
     if ( $pending_before < 1 ) {
+        delete_transient( 'ontario_obituaries_rewriter_running' );
         wp_send_json_success( array(
             'message'   => 'No pending obituaries to process.',
             'processed' => 0,
@@ -1363,6 +1445,9 @@ function ontario_obituaries_ajax_run_rewriter() {
             $safe_errors[] = sanitize_text_field( $err );
         }
     }
+
+    // Release the lock after processing.
+    delete_transient( 'ontario_obituaries_rewriter_running' );
 
     wp_send_json_success( array(
         'message'   => sprintf(
