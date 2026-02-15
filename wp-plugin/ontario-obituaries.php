@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.0.1
+ * Version: 5.0.2
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.0.1' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.0.2' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -1180,7 +1180,7 @@ function ontario_obituaries_ai_rewrite_batch() {
             sleep( 10 ); // Brief backoff after failure.
         } else {
             $consecutive_fails = 0;
-            sleep( 6 ); // 6s pause before next — ~10 req/min.
+            sleep( 12 ); // 12s pause before next — ~5 req/min, within 6,000 TPM.
         }
     }
 

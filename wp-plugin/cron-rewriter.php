@@ -14,10 +14,10 @@
  *   6. Logs everything to WP debug log + CLI stdout
  *
  * Performance (Groq free tier):
- *   - 1 obituary at a time with 6s delay between requests
- *   - 4-minute runtime ≈ ~30 obituaries per cron run
- *   - Cron every 5 min = ~360 obituaries per hour
- *   - 720 pending ≈ 2 hours to clear
+ *   - 1 obituary at a time with 12s delay between requests
+ *   - 4-minute runtime ≈ ~18 obituaries per cron run
+ *   - Cron every 5 min = ~200 obituaries per hour
+ *   - 47 pending ≈ ~15 minutes to clear
  *
  * Why not use WP-Cron or the AJAX button?
  *   - WP-Cron requires site visitors to trigger — unreliable with low traffic.
@@ -179,7 +179,7 @@ while ( true ) {
         sleep( 10 ); // Brief backoff after failure.
     } else {
         $consecutive_failures = 0;
-        sleep( 6 ); // 6s pause = ~10 req/min.
+        sleep( 12 ); // 12s pause = ~5 req/min, within 6,000 TPM.
     }
 }
 
