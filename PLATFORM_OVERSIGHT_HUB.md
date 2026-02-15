@@ -31,15 +31,22 @@ to prevent further breakage.
 - **Hosting**: Shared hosting with cPanel, no SSH access, no WP-CLI
 - **Deployment**: Manual upload via cPanel File Manager (WP Pusher can't do private repos)
 
-### Current Versions (as of 2026-02-13, evening)
+### Current Versions (as of 2026-02-15)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 4.5.0 | monacomonuments.ca — deployed via WordPress Upload Plugin |
-| **Main branch** | 4.5.0 | PR #58 merged |
-| **Sandbox** | 4.5.0 | All caught up — no pending PRs |
+| **Live site** | 5.0.2 | monacomonuments.ca — deployed via WordPress Upload Plugin |
+| **Main branch** | 5.0.2 | PR #80 merged |
+| **Sandbox** | 5.0.2 | All caught up — no pending PRs |
 
-### Live Site Stats (verified 2026-02-13 post-deploy)
-- **725 obituaries** displayed across 37 pagination pages
+### PROJECT STATUS: PAUSED (2026-02-15)
+> **Owner decision**: AI Rewriter development paused after v5.0.2 still hits Groq free-tier
+> rate limits (6,000 TPM) after ~15 obituaries. The plugin is stable and all other features
+> work correctly. The AI Rewriter issue is a Groq free-tier limitation, not a code bug.
+> See Section 25 for full details.
+
+### Live Site Stats (verified 2026-02-15)
+- **725+ obituaries** displayed across 37+ pagination pages
+- **~15 obituaries AI-rewritten** via v5.0.2 before Groq TPM limit hit
 - **7 active sources** (all Postmedia/Remembering.ca network):
   - obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com,
     obituaries.thespec.com, obituaries.simcoe.com, obituaries.niagarafallsreview.ca,
@@ -63,7 +70,7 @@ to prevent further breakage.
 | GoFundMe Auto-Linker | v4.3.0 | ✅ LIVE (2 matched, 360 pending) |
 | AI Authenticity Checker (24/7 audits) | v4.3.0 | ✅ LIVE (725 never audited — processing) |
 | Logo filter (rejects images < 15 KB) | v4.0.1 | ✅ LIVE |
-| AI rewrite engine (Groq/Llama) | v4.1.0 | ✅ LIVE (code deployed, **needs Groq API key to activate**) |
+| AI rewrite engine (Groq/Llama) | v5.0.2 | ⚠️ PAUSED — code works but Groq free-tier TPM limit (6,000) stops processing after ~15 items per run |
 | BurialEvent JSON-LD schema | v4.2.0 | ✅ LIVE |
 | IndexNow search engine notification | v4.2.0 | ✅ LIVE |
 | QR code on memorial pages | v4.2.0 | ✅ LIVE |
@@ -83,16 +90,25 @@ to prevent further breakage.
 | Future death date rejection | v4.2.4 | ✅ LIVE |
 | q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
 
-### AI Rewriter Status
-- **Code**: Complete (`class-ai-rewriter.php`)
+### AI Rewriter Status (PAUSED — 2026-02-15)
+- **Code**: Complete (`class-ai-rewriter.php`) — v5.0.2
+- **Primary model**: `llama-3.1-8b-instant` (switched from 70B in v5.0.0 to reduce token usage)
+- **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (NOT used on 429 errors as of v5.0.2)
 - **Admin UI**: Settings page section (checkbox toggle + API key input + live stats)
 - **Activation**: WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
 - **Get key**: Free at https://console.groq.com (no credit card needed)
-- **What it does**: Rewrites scraped obituary text into original prose using Llama 3.3 70B
-- **Rate**: 25 per batch, 1 request per 6 seconds, auto-reschedules until caught up
+- **What it does**: Rewrites scraped obituary text into original prose, extracts structured fields (death date, birth date, age, location, funeral home) via JSON
+- **Rate**: 1 obituary per call, 12-second delay between requests (~5 req/min)
 - **Groq API key set** (2026-02-13) — AI rewrites enabled via admin settings
-- **Progress**: 393 of 725 rewritten (54%), 332 pending — auto-processing continues
-- **v4.2.4 FIX DEPLOYED**: AI batch now triggers immediately on settings save (30s delay)
+- **Progress**: ~15 of 725+ rewritten before Groq TPM limit stops processing
+- **BLOCKER**: Groq free-tier TPM limit (6,000 tokens/min for llama-3.1-8b-instant) is exhausted after ~5-6 requests/min. Each obituary uses ~900-1,400 tokens (prompt + response). Even with a 12s delay, cumulative token usage hits the ceiling after ~15 items per 5-minute cron window.
+- **Execution paths** (all use mutual-exclusion transient lock `ontario_obituaries_rewriter_running`):
+  1. **WP-Cron handler** (`ontario_obituaries_ai_rewrite_batch`) — processes 1 obituary, 12s delay, runs up to 4 min
+  2. **Shutdown hook** (`ontario_obituaries_shutdown_rewriter`) — processes 1 obituary on admin page load, 1-min throttle
+  3. **AJAX button** (`ontario_obituaries_ajax_run_rewriter`) — processes 1 per call, JS auto-repeats
+  4. **CLI cron** (`cron-rewriter.php`) — standalone script, file-lock at `/tmp/ontario_rewriter.lock`
+- **cPanel cron command**: `/usr/local/bin/php /home/monaylnf/public_html/wp-cron.php >/dev/null 2>&1` (every 5 min)
+- **v5.0.2 fixes applied**: 12s delay (was 6s), no fallback retry on 429, retry-after header parsing
 
 ### AI Chatbot Status (v4.5.0 — NEW)
 - **Code**: `includes/class-ai-chatbot.php` (32 KB)
@@ -166,6 +182,16 @@ to prevent further breakage.
 | #56 | Merged | v4.3.0 | GoFundMe Auto-Linker + AI Authenticity Checker |
 | #57 | Merged | v4.3.0 | (merge commit) |
 | #58 | Merged | v4.5.0 | AI Customer Chatbot + Google Ads Optimizer + Enhanced SEO Schema |
+| #71 | Merged | v4.6.7 | Fix 401/403 API errors + API key diagnostic tool |
+| #72 | Merged | v5.0.0 | Groq structured JSON extraction replaces regex (97% accuracy) |
+| #73 | Merged | v5.0.0 | Groq structured JSON extraction + version bump |
+| #74 | Merged | v5.0.0 | Groq free-tier rate limit tuning |
+| #75 | Merged | v5.0.0 | Batch size 5, delay 8s to fix AJAX timeouts |
+| #76 | Merged | v5.0.0 | Update UI labels to match v5.0.0 workflow |
+| #77 | Merged | v5.0.0 | Switch to 8B model + 15s delay to eliminate rate limiting |
+| #78 | Merged | v5.0.0 | Bulletproof CLI cron — 10/batch @ 6s (~250/hour) |
+| #79 | Merged | v5.0.1 | Process 1 obituary at a time + mutual exclusion lock |
+| #80 | Merged | v5.0.2 | Respect Groq 6,000 TPM token limit — 12s delay, no fallback on 429 |
 
 ### Remaining Work (priority order)
 1. ~~**Deploy v4.2.2** to live site~~ → ✅ Done 2026-02-13
@@ -176,12 +202,13 @@ to prevent further breakage.
 6. ~~**Merge PR #58 (v4.5.0)** and deploy~~ → ✅ Done 2026-02-13 (Chatbot + Google Ads + SEO Schema)
 7. ~~**Enable AI Chatbot**~~ → ✅ Done 2026-02-13 (live on frontend, verified working)
 8. ~~**Full site backup before v4.5.0 deploy**~~ → ✅ Done via UpdraftPlus (Feb 13, 21:45)
-9. **Monitor AI Rewriter progress** — 393/725 done (54%), auto-processing continues
-10. **Enable Google Ads Optimizer** when busy season starts (spring) — toggle + enter credentials
-11. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
-12. **Schema redesign**: Handle records without death date (developer — future PR)
-13. **Out-of-province filtering** (developer — low priority)
-14. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
+9. ~~**AI Rewriter v5.0.0-v5.0.2 fixes**~~ → ✅ Done 2026-02-14/15 (PRs #71-#80 merged) — but still hits Groq TPM limit
+10. **BLOCKED: AI Rewriter Groq TPM limit** — See Section 25 for solutions
+11. **Enable Google Ads Optimizer** when busy season starts (spring) — toggle + enter credentials
+12. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
+13. **Schema redesign**: Handle records without death date (developer — future PR)
+14. **Out-of-province filtering** (developer — low priority)
+15. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
 
 ---
 
@@ -531,21 +558,23 @@ a paid license for private repos.
 
 ---
 
-## Section 13 — AI Rewriter (v4.1.0)
+## Section 13 — AI Rewriter (v5.0.2 — PAUSED)
 
 ### Architecture
 - **Module**: `includes/class-ai-rewriter.php`
 - **API**: Groq (OpenAI-compatible) — free tier, no credit card
-- **Models**: Primary `llama-3.3-70b-versatile`, fallback `llama-3.1-8b-instant`
-- **Storage**: `ai_description` column added to `wp_ontario_obituaries` table
+- **Primary model**: `llama-3.1-8b-instant` (switched from 70B in v5.0.0 for lower token usage)
+- **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (used on 403 only, NOT on 429)
+- **Storage**: `ai_description` column + extracted fields (date_of_death, date_of_birth, age, location, funeral_home) in `wp_ontario_obituaries` table
 - **Display**: Templates prefer `ai_description` over raw `description`
+- **Processing**: v5.0.0+ uses structured JSON output from Groq for field extraction (replaces regex)
 
 ### API Key Management
 - Stored in: `wp_options` → `ontario_obituaries_groq_api_key`
 - **v4.2.3+ (current live)**: Set via WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
 - **v4.2.4+**: Saving settings with AI enabled auto-schedules the first batch (30s delay)
 - Groq API key: `gsk_Ge1...7ZHT` (set 2026-02-13)
-- Both models confirmed available: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`
+- Models confirmed available: `llama-3.1-8b-instant`, `llama-3.3-70b-versatile`
 
 ### Security Audit Results (2026-02-13)
 - **SQL injection**: All user-facing queries use `$wpdb->prepare()` with placeholders ✅
@@ -553,23 +582,33 @@ a paid license for private repos.
 - **XSS**: All template outputs use `esc_html()`, `esc_attr()`, `esc_url()` or are pre-escaped ✅
 - **Route params**: IDs use `intval()`, slugs use `sanitize_title()` ✅
 
-### Rate Limits (Groq Free Tier)
-- Llama 3.3 70B: 1,000 requests/day, 12,000 tokens/minute
-- Llama 3.1 8B: 14,400 requests/day, 6,000 tokens/minute
-- Plugin rate: 1 request per 6 seconds (10/min), 25 per batch
-- At ~175 new obituaries per scrape, all can be rewritten within 1 day
+### Rate Limits (Groq Free Tier) — THE BLOCKER
+- **llama-3.1-8b-instant**: RPM 30, RPD 14,400, **TPM 6,000**, TPD 500,000
+- **llama-3.3-70b-versatile**: RPM 30, RPD 1,000, **TPM 12,000**, TPD 500,000
+- Each obituary rewrite: ~900-1,400 total tokens (prompt ~400 + obituary ~200-500 + response ~300-500)
+- At 6,000 TPM, maximum ~5 requests/min before token quota exhausted
+- **Current plugin rate**: 1 request per 12 seconds (~5 req/min) — matches RPM but TPM is the real limit
+- **Result**: Processing stops after ~15 obituaries per 5-minute cron window when cumulative tokens exceed TPM
 
 ### Validation Rules
 - Rewrite must mention the deceased's last name (or first name)
 - Length: 50–5,000 characters
 - No LLM artifacts ("as an AI", "certainly!", "here is", etc.)
+- Cross-validates extracted dates and ages
 - Failed validations are logged but do not prevent future retries
 
+### Execution Paths (v5.0.1+)
+All paths use mutual-exclusion transient `ontario_obituaries_rewriter_running`:
+1. **WP-Cron** (`ontario_obituaries_ai_rewrite_batch`) — 1 per call, loops up to 4 min, 12s delay
+2. **Shutdown hook** (`ontario_obituaries_shutdown_rewriter`) — 1 per admin page load, 1-min throttle
+3. **AJAX button** (`ontario_obituaries_ajax_run_rewriter`) — 1 per call, JS auto-repeats from frontend
+4. **CLI cron** (`cron-rewriter.php`) — standalone script with file lock at `/tmp/ontario_rewriter.lock`
+
 ### Cron Integration
-- After each collection (`ontario_obituaries_collection_event`), a rewrite batch
-  is scheduled 120 seconds later
-- Batch processes 25 obituaries, then self-reschedules if more remain
+- After each collection (`ontario_obituaries_collection_event`), a rewrite batch is scheduled 30 seconds later
+- Batch processes 1 obituary per call, then self-reschedules if more remain
 - Each batch runs on the `ontario_obituaries_ai_rewrite_batch` hook
+- **cPanel cron** (every 5 min): `/usr/local/bin/php /home/monaylnf/public_html/wp-cron.php >/dev/null 2>&1`
 
 ### REST Endpoints
 - `GET /wp-json/ontario-obituaries/v1/ai-rewriter` — Status and stats (admin-only)
@@ -580,6 +619,7 @@ a paid license for private repos.
 - The `ai_description` field is disposable — can be regenerated at any time.
 - If Groq changes their API or rate limits, update the constants in class-ai-rewriter.php.
 - Monitor the error log for rate limiting or validation failures.
+- **v5.0.2**: Do NOT retry with fallback models on 429 errors — org-level TPM limits affect ALL models.
 
 ---
 
@@ -805,6 +845,61 @@ characters (previously only checked `description`), increasing Google indexation
 - **PHP**: `includes/class-ai-authenticity-checker.php`
 - **DB columns**: `last_audit_at`, `audit_status`, `audit_flags` (added v4.3.0 migration)
 - **Cron**: `ontario_obituaries_authenticity_audit` — every 4 hours (120s after settings save)
+
+---
+
+## Section 25 — AI Rewriter Rate-Limit Investigation (v5.0.0–v5.0.2, 2026-02-14/15)
+
+> **STATUS: PAUSED** — Owner decided to pause AI Rewriter development after v5.0.2
+> still hit Groq free-tier limits. The plugin is stable; all other features work.
+
+### Timeline of Attempts
+| Version | PR | Delay | Batch | Model | Result |
+|---------|-----|-------|-------|-------|--------|
+| v4.1.0–v4.6.7 | #52-#71 | 6-15s | 3-25 | llama-3.3-70b | Worked slowly, occasional 429s |
+| v5.0.0 | #72-#73 | 8s | 5 | llama-3.1-8b | Hit rate limits, switched to JSON extraction |
+| v5.0.0 | #74-#76 | 8-15s | 5 | llama-3.1-8b | Still hitting limits, UI label fixes |
+| v5.0.0 | #77 | 15s | 3 | llama-3.1-8b | Switched to 8B model to reduce tokens |
+| v5.0.0 | #78 | 6s | 10 | llama-3.1-8b | CLI cron with 250/hr target — crashed on rate limit |
+| v5.0.1 | #79 | 6s | 1 | llama-3.1-8b | 1-at-a-time + mutual exclusion — still crashed after ~6 |
+| v5.0.2 | #80 | 12s | 1 | llama-3.1-8b | 12s delay + retry-after — stopped after ~15 |
+
+### Root Cause Analysis
+The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not requests-per-minute:
+- `llama-3.1-8b-instant` TPM limit: **6,000 tokens/minute**
+- Each obituary rewrite: **~900-1,400 total tokens** (system prompt ~400 + obituary text ~200-500 + JSON response ~300-500)
+- At 5 requests/min (12s delay): ~5,000-7,000 tokens/min → exceeds 6,000 TPM
+- The limit is **organization-wide** — switching models doesn't help (same org quota)
+- The 429 response includes a `retry-after` header, but waiting that long (60-120s) makes throughput impractical
+
+### What Was Built & Works Correctly
+1. **Structured JSON extraction** (v5.0.0) — Groq returns JSON with rewritten text + extracted fields
+2. **Mutual exclusion lock** (v5.0.1) — transient-based lock prevents concurrent API calls
+3. **1-at-a-time processing** (v5.0.1) — all 4 execution paths process single obituaries
+4. **Retry-after header parsing** (v5.0.2) — respects Groq's recommended backoff
+5. **No fallback on 429** (v5.0.2) — stops wasting tokens on org-wide rate limits
+6. **TRUNCATE bug fix** (v5.0.1) — fixed critical bug that wiped all obituary data on reinstall
+7. **cPanel cron setup** — every 5 min via `wp-cron.php` (confirmed working)
+
+### Potential Solutions (NOT IMPLEMENTED — for future developer)
+1. **Upgrade Groq plan** — Paid tier has much higher TPM limits (easiest fix)
+2. **Switch to a different free LLM API** — e.g., OpenRouter, Together.ai, Cloudflare Workers AI
+3. **Reduce prompt size** — Shorter system prompt could save ~100-200 tokens per request
+4. **Process fewer per window** — Process 3-4 per 5-min cron, accept ~50/hr throughput
+5. **Use the 70B model** — Has 12,000 TPM (2x the 8B model), but uses more tokens per request
+6. **Queue with longer delays** — 20s+ between requests, accept ~3 req/min (~180/hr)
+7. **Time-spread processing** — Process 1 obituary every 2 minutes across the day (720/day)
+
+### Files Modified in v5.0.0–v5.0.2
+| File | What changed |
+|------|-------------|
+| `ontario-obituaries.php` | Version bump to 5.0.2, mutual exclusion transient lock for WP-Cron/shutdown/AJAX, TRUNCATE bug fix in uninstall, corrected batch scheduling |
+| `includes/class-ai-rewriter.php` | batch_size=1, request_delay=12s, JSON prompt/response, structured field extraction, retry-after parsing, no fallback on 429, temperature 0.1 |
+| `includes/class-ontario-obituaries.php` | Updated throughput comments |
+| `includes/class-ontario-obituaries-reset-rescan.php` | Updated UI text to "1 at a time" |
+| `assets/js/ontario-obituaries-reset-rescan.js` | Corrected "up to 5 obituaries" → "1 obituary" |
+| `cron-rewriter.php` | batch_size=1, 12s delay, sleep(10) on failure |
+| `uninstall.php` | Protected `db_version` option from deletion |
 
 ---
 
