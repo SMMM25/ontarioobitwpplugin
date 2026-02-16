@@ -190,6 +190,21 @@ class Ontario_Obituaries_AI_Chatbot {
             return $this->rule_based_response( $message );
         }
 
+        // BUG-M1 FIX (v5.0.6): Check shared Groq rate limiter before API call.
+        // QC-R11-1: Estimated tokens for chatbot = 500.
+        $chatbot_estimate  = 500;
+        $has_reservation   = false;
+        $chatbot_limiter   = null;
+
+        if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+            $chatbot_limiter = Ontario_Obituaries_Groq_Rate_Limiter::get_instance();
+            if ( ! $chatbot_limiter->may_proceed( $chatbot_estimate, 'chatbot' ) ) {
+                $this->log( 'Groq rate limiter: TPM budget exhausted — using rule-based fallback.', 'info' );
+                return $this->rule_based_response( $message );
+            }
+            $has_reservation = true;
+        }
+
         // Build messages array for the API.
         $messages = array(
             array( 'role' => 'system', 'content' => $this->build_system_prompt() ),
@@ -225,6 +240,10 @@ class Ontario_Obituaries_AI_Chatbot {
 
         if ( is_wp_error( $response ) ) {
             $this->log( 'Groq API error: ' . $response->get_error_message(), 'error' );
+            // QC-R11-1: Release reservation on failure — no tokens consumed.
+            if ( $has_reservation && $chatbot_limiter ) {
+                $chatbot_limiter->release_reservation( $chatbot_estimate, 'chatbot' );
+            }
             return $this->rule_based_response( $message );
         }
 
@@ -233,7 +252,25 @@ class Ontario_Obituaries_AI_Chatbot {
         if ( empty( $body['choices'][0]['message']['content'] ) ) {
             $error = isset( $body['error']['message'] ) ? $body['error']['message'] : 'Empty response';
             $this->log( 'Groq chatbot error: ' . $error, 'error' );
+            // QC-R11-1: Release reservation on failure — no tokens consumed.
+            if ( $has_reservation && $chatbot_limiter ) {
+                $chatbot_limiter->release_reservation( $chatbot_estimate, 'chatbot' );
+            }
             return $this->rule_based_response( $message );
+        }
+
+        // BUG-M1 FIX (v5.0.6): Record actual token usage in shared rate limiter.
+        // QC-R12 FIX: Pass estimate so record_usage computes delta, not pure add.
+        // If usage data is missing, assume estimate was correct (reservation stands).
+        if ( $has_reservation && $chatbot_limiter ) {
+            $actual = ! empty( $body['usage']['total_tokens'] )
+                ? (int) $body['usage']['total_tokens']
+                : $chatbot_estimate; // Fallback: reservation stands as-is.
+            $chatbot_limiter->record_usage(
+                $actual,
+                'chatbot',
+                $chatbot_estimate  // Must match the estimate in may_proceed() call.
+            );
         }
 
         return trim( $body['choices'][0]['message']['content'] );
@@ -241,6 +278,16 @@ class Ontario_Obituaries_AI_Chatbot {
 
     /**
      * Rule-based fallback when Groq is not available.
+     *
+     * SECURITY (QC-R7): This method is the public-facing fallback when the Groq
+     * API is unavailable (no key, rate-limited, budget exhausted). It MUST NOT:
+     *   - Expose the Groq API key or any internal credentials.
+     *   - Reveal system prompts, LLM instructions, or plugin internals.
+     *   - Change the output policy (still professional, still business-focused).
+     *   - Indicate to the user that an AI was attempted and failed.
+     * It returns pre-written, keyword-matched business responses identical in
+     * tone to the AI-generated ones. All information returned here is already
+     * public on monacomonuments.ca.
      *
      * @param string $message User's message.
      * @return string

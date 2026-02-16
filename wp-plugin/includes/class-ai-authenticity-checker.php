@@ -213,11 +213,34 @@ class Ontario_Obituaries_Authenticity_Checker {
      * @return array|WP_Error { status: 'pass'|'flagged', issues: string[], corrections: array }
      */
     private function audit_obituary( $obit ) {
+        // BUG-M1 FIX (v5.0.6): Check shared Groq rate limiter before API call.
+        // QC-R11-1: Estimated tokens for authenticity = 800.
+        $auth_estimate   = 800;
+        $has_reservation = false;
+        $auth_limiter    = null;
+
+        if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+            $auth_limiter = Ontario_Obituaries_Groq_Rate_Limiter::get_instance();
+            if ( ! $auth_limiter->may_proceed( $auth_estimate, 'authenticity' ) ) {
+                // QC-R10-8 FIX: WP_Error data must be an array for REST/JSON compatibility.
+                return new WP_Error(
+                    'rate_limited',
+                    'Shared Groq rate limiter: TPM budget exhausted. Deferring.',
+                    array( 'seconds_until_reset' => $auth_limiter->seconds_until_reset() )
+                );
+            }
+            $has_reservation = true;
+        }
+
         $prompt = $this->build_audit_prompt( $obit );
 
         $response = $this->call_api( $prompt );
 
         if ( is_wp_error( $response ) ) {
+            // QC-R11-1: Release reservation on API failure — no tokens consumed.
+            if ( $has_reservation && $auth_limiter ) {
+                $auth_limiter->release_reservation( $auth_estimate, 'authenticity' );
+            }
             return $response;
         }
 
@@ -437,6 +460,20 @@ SYSTEM;
 
         if ( empty( $data['choices'][0]['message']['content'] ) ) {
             return new WP_Error( 'empty_response', 'Groq API returned empty content.' );
+        }
+
+        // BUG-M1 FIX (v5.0.6): Record actual token usage in shared rate limiter.
+        // QC-R12 FIX: Pass estimate so record_usage computes delta, not pure add.
+        // If usage data is missing, assume estimate was correct (reservation stands).
+        if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+            $actual = ! empty( $data['usage']['total_tokens'] )
+                ? (int) $data['usage']['total_tokens']
+                : 800; // Fallback: reservation stands as-is.
+            Ontario_Obituaries_Groq_Rate_Limiter::get_instance()->record_usage(
+                $actual,
+                'authenticity',
+                800  // Must match the estimate in audit_obituary()'s may_proceed() call.
+            );
         }
 
         return trim( $data['choices'][0]['message']['content'] );

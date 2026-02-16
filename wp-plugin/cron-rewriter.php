@@ -15,9 +15,10 @@
  *
  * Performance (Groq free tier):
  *   - 1 obituary at a time with 12s delay between requests
- *   - 4-minute runtime ≈ ~18 obituaries per cron run
- *   - Cron every 5 min = ~200 obituaries per hour
- *   - 47 pending ≈ ~15 minutes to clear
+ *   - 4-minute runtime ≈ ~18 obituaries per cron run (theoretical max)
+ *   - Cron every 5 min = ~180 obituaries per hour (theoretical)
+ *   - In practice: ~15 per 5-min window before 6,000 TPM ceiling hit
+ *   - 47 pending ≈ ~15-20 minutes to clear
  *
  * Why not use WP-Cron or the AJAX button?
  *   - WP-Cron requires site visitors to trigger — unreliable with low traffic.
