@@ -557,7 +557,10 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $id ) ) {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d", intval( $id ) ) );
+            // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
+            // render_individual_page() already 404s suppressed records, but wp_head
+            // hooks may still fire; this prevents metadata leakage.
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL", intval( $id ) ) );
             if ( $obit ) {
                 $items[] = array(
                     'name' => $obit->name,
@@ -604,7 +607,8 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $id ) ) {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d", intval( $id ) ) );
+            // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL", intval( $id ) ) );
             if ( $obit ) {
                 $city_name = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
                 $title_parts['title'] = sprintf( '%s — %s, Ontario | Monaco Monuments', $obit->name, $city_name );
@@ -638,7 +642,8 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
-                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d",
+                // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
+                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
                 intval( $id )
             ) );
             if ( $obit ) {
@@ -689,7 +694,8 @@ class Ontario_Obituaries_SEO {
             // Build the individual canonical from the DB record
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d", intval( $id ) ) );
+            // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL", intval( $id ) ) );
             if ( $obit ) {
                 $canonical = home_url( '/obituaries/ontario/' . sanitize_title( $city ) . '/' . sanitize_title( $obit->name ) . '-' . intval( $id ) . '/' );
             }
@@ -868,7 +874,8 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
-                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d",
+                // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
+                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
                 intval( $id )
             ) );
             if ( $obit ) {

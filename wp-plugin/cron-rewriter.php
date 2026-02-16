@@ -29,10 +29,26 @@
  */
 
 // ── SECURITY: Block ALL web access. CLI only. ──────────────────────────────
-if ( php_sapi_name() !== 'cli' && ! defined( 'STDIN' ) ) {
+// QC-R3/R4 FIX: Primary check is PHP_SAPI.  STDIN check removed because some
+// legitimate CLI runners (e.g., proc_open, exec, some Docker entrypoints) may
+// not define STDIN.  The SAPI check alone is definitive: 'cli' is only set
+// when PHP is invoked from the command line or via the CLI binary.  CGI/FPM/
+// Apache module SAPIs are always non-'cli' and will be blocked.
+if ( PHP_SAPI !== 'cli' ) {
     http_response_code( 403 );
     die( 'CLI only.' );
 }
+
+// QC-R5/R6 FIX: Include-safety guard.  If another file ever require_once's this
+// script (e.g., test harness), the constant gate prevents re-execution.
+// Note on semantics: the guard only prevents the main processing loop and
+// WordPress bootstrap from running twice.  Side-effect-free setup (constants,
+// function defs) above this point is harmless on re-entry.  The lock file +
+// shutdown function below are the authoritative single-instance mechanism.
+if ( defined( 'ONTARIO_CLI_REWRITER_LOADED' ) ) {
+    return; // Already loaded — skip main body.
+}
+define( 'ONTARIO_CLI_REWRITER_LOADED', true );
 
 // ── Tell WordPress this is a cron/CLI context BEFORE loading ───────────────
 define( 'DOING_CRON', true );
@@ -214,15 +230,25 @@ if ( $total_ok > 0 ) {
 }
 
 // ── Summary ────────────────────────────────────────────────────────────────
-$runtime = time() - $start_time;
-$rate    = $runtime > 0 ? round( $total_ok / ( $runtime / 60 ), 1 ) : 0;
+// BUG-H1 FIX (v5.0.5): Corrected rate calculation.
+// Previous formula: $rate * 60 / max($runtime, 1) * 3600 / 60
+//   expanded to: total_ok * 216000 / runtime² — nonsense (squared denominator).
+// Correct formula: total_ok / runtime * 3600 = obituaries per hour.
+$runtime  = time() - $start_time;
+$per_hour = $runtime > 0 ? round( $total_ok / $runtime * 3600 ) : 0;
 cron_log( sprintf(
-    'FINISHED: %d published, %d failed, %ds runtime (~%.0f/hour). %d remaining.',
+    'FINISHED: %d published, %d failed, %ds runtime (~%d/hour). %d remaining.',
     $total_ok,
     $total_fail,
     $runtime,
-    $rate * 60 / max( $runtime, 1 ) * 3600 / 60,
+    $per_hour,
     $rewriter->get_pending_count()
 ) );
 
-exit( 0 );
+// QC-R5/R6 FIX: return instead of exit(0).
+// PHP manual (php.net/return): "If return is called from within the main script
+// file, then script execution ends."  This is NOT a fatal — it is explicitly
+// documented behaviour since PHP 4.  When executed directly via CLI (the normal
+// cPanel cron path), return at file scope ends the process with exit code 0.
+// When include()'d, it returns control to the caller without killing the process.
+return;
