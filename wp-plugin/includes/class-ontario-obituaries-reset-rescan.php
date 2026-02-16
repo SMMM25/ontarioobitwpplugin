@@ -911,8 +911,12 @@ class Ontario_Obituaries_Reset_Rescan {
             }
 
             // Run dedup.
-            if ( function_exists( 'ontario_obituaries_cleanup_duplicates' ) ) {
-                ontario_obituaries_cleanup_duplicates();
+            // BUG-C4 FIX (v5.0.4): Admin rescan uses $force=true to bypass
+            // the 1-hour cooldown — admins expect immediate results.  The
+            // underlying lock still prevents overlap with a concurrent cron run
+            // (add_option / stale-lock check), but won't silently skip cleanup.
+            if ( function_exists( 'ontario_obituaries_maybe_cleanup_duplicates' ) ) {
+                ontario_obituaries_maybe_cleanup_duplicates( true );
             }
 
             // v4.6.3: Schedule AI rewrite batch if Groq API key is configured.

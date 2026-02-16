@@ -4,8 +4,8 @@
 > **Plugin version:** `5.0.4` (sandbox) / `5.0.2` (live) / `5.0.3` (main branch)
 > **Live site version:** `5.0.2` (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
 > **Main branch HEAD:** PR #83 merged (v5.0.3)
-> **Project status:** CRITICAL BUGS — BUG-C1/C2/C3 fixed (PRs #83-84), BUG-C4 pending. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
-> **Next deployment:** PR #84 (v5.0.4) pending review → then BUG-C4 (dedup on init) → Sprint 2 (high-severity)
+> **Project status:** Sprint 1 COMPLETE (4 critical bugs). Sprint 2 in progress: 4/8 done (H2, H3, H7, H8). See PLATFORM_OVERSIGHT_HUB.md.
+> **Next deployment:** PR #84 (v5.0.4) + PR #85 (v5.0.4) + PR #86 (v5.0.5) pending review → then BUG-H1/H4/H5/H6 (remaining Sprint 2)
 
 ---
 
@@ -284,6 +284,8 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #80 | Merged | `8812580` | fix(v5.0.2): respect Groq 6,000 TPM limit — 12s delay, no fallback on 429 |
 | #83 | Merged | `4566eb3` | fix(v5.0.3): BUG-C1/C3 — remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
 | #84 | Pending | — | fix(v5.0.4): BUG-C2/H8 — remove status='published' gate from 18 display/SEO queries + REST API auth hardening (manage_options) + REST published-only filter + JSON-LD XSS hardening (JSON_HEX_TAG) + centralized status validation helper (`ontario_obituaries_valid_statuses()` / `ontario_obituaries_is_valid_status()`) + backfill derives IN-list from helper + RULE 14 (Core Workflow Integrity) |
+| #85 | Pending | — | fix(v5.0.4): BUG-C4 — remove duplicate cleanup from `init` hook; add daily cron `ontario_obituaries_dedup_daily` + one-shot `ontario_obituaries_dedup_once` for post-scrape dedup; lock via WP-native `add_option()`/`get_option()` with JSON `{ts,state}` (no raw INSERT IGNORE); no recursive retry; stale auto-clear 1h; cooldown 1h; admin `$force=true` bypasses cooldown; deferred cron scheduling prevents inline DB work and DoS via `/cron`. Sprint 1 (all 4 critical bugs) now 100% complete. |
+| #86 | Pending | — | fix(v5.0.5): BUG-H2/H7 — complete uninstall cleanup: 22 options (3 sensitive API keys: Groq, Google Ads, IndexNow), 8 transients, 8 cron hooks. Previously only 11 options, 4 transients, 2 hooks. Inventory method documented in code. Sprint 2 progress: 4/8. |
 
 ---
 
