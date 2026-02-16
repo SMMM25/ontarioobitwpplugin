@@ -1,11 +1,11 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-16 (independent code audit completed — critical bugs found)
-> **Plugin version:** `5.0.2` (live + main branch + sandbox — all in sync)
+> **Last updated:** 2026-02-16 (BUG-C1/C3 fix applied — v5.0.3 pending PR review)
+> **Plugin version:** `5.0.3` (sandbox) / `5.0.2` (live + main branch)
 > **Live site version:** `5.0.2` (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
 > **Main branch HEAD:** PR #80 merged
-> **Project status:** CRITICAL BUGS IDENTIFIED — 4 critical, 7 high, 6 medium-severity issues found. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
-> **Next deployment:** Bug fix PRs pending (Sprint 1 critical fixes required before plugin is usable)
+> **Project status:** CRITICAL BUGS — BUG-C1/C3 fixed (PR #83), BUG-C2/C4 pending. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
+> **Next deployment:** PR #83 (v5.0.3) pending review → then BUG-C2 (display deadlock) → BUG-C4 (dedup on init)
 
 ---
 
@@ -282,6 +282,7 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #78 | Merged | `3cea74a` | feat(v5.0.0): bulletproof CLI cron — 10/batch @ 6s (~250/hour) |
 | #79 | Merged | `54e7095` | fix(v5.0.1): process 1 obituary at a time + mutual exclusion lock |
 | #80 | Merged | `8812580` | fix(v5.0.2): respect Groq 6,000 TPM limit — 12s delay, no fallback on 429 |
+| #83 | Pending | — | fix(v5.0.3): BUG-C1/C3 — remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
 
 ---
 
@@ -312,9 +313,9 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 
 ### What's NOT Working / Broken (2026-02-16 Audit Findings)
 - **AI Rewriter** — Multiple code bugs in addition to Groq TPM limit:
-  - **Activation cascade** (BUG-C1): On activation, all migrations run synchronously, triggering 5+ scrapes + rewrites, exhausting Groq TPM
+  - ~~**Activation cascade** (BUG-C1)~~: ✅ **FIXED in v5.0.3 (PR #83)** — All historical migration blocks removed from `on_plugin_update()`
   - **Display deadlock** (BUG-C2): Records inserted as `pending` are invisible — display queries require `status='published'` which only happens after AI rewrite
-  - **Non-idempotent migrations** (BUG-C3): Reinstall re-runs all 20+ migrations with blocking HTTP calls
+  - ~~**Non-idempotent migrations** (BUG-C3)~~: ✅ **FIXED in v5.0.3 (PR #83)** — Migration blocks removed; remaining operations are idempotent
   - **Init-phase dedup** (BUG-C4): Full-table GROUP BY runs on every page load
 - **Uninstall incomplete** (BUG-H2, H7) — API keys (Groq, Google Ads) and 4+ cron hooks persist after uninstall
 - **Domain lock bypass** (BUG-H6) — substring match allows spoofed domains
@@ -433,9 +434,9 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 > **17 bugs identified**: 4 critical, 7 high-severity, 6 medium-severity.
 
 **Critical findings (abbreviated — see PLATFORM_OVERSIGHT_HUB.md Section 26 for full details):**
-- **BUG-C1: Activation cascade** — `on_plugin_update()` runs all 20+ migrations synchronously on activation, including scrapes with `usleep()`, HTTP HEAD requests, and immediate rewrite scheduling. This causes the "5-15 obituaries then crash" behavior the owner reported. The previous dev spent 10 PRs (#71-#80) tuning Groq delays when the root cause was the activation cascade.
+- ~~**BUG-C1: Activation cascade**~~ — ✅ **FIXED in v5.0.3 (PR #83)**. Removed 1,663 lines of historical migration blocks from `on_plugin_update()`. Function reduced from ~1,721 to ~100 lines. All sync HTTP blocks eliminated.
 - **BUG-C2: Display pipeline deadlock** — `class-ontario-obituaries-display.php` requires `status='published'` but records are inserted as `pending`. Only ~15 of 725 records are visible because only AI-rewritten records become published. 710+ obituaries in the DB are invisible to users.
-- **BUG-C3: Non-idempotent migrations** — No fresh-install guard. Every reinstall re-runs all historical migrations with blocking HTTP calls.
+- ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ **FIXED in v5.0.3 (PR #83)**. Historical migration blocks removed entirely; remaining operations are naturally idempotent. `deployed_version` write moved to end of function for safe retry on partial failure.
 - **BUG-C4: Dedup on every page load** — `ontario_obituaries_cleanup_duplicates()` runs a full-table GROUP BY on the `init` hook (every page load, frontend and admin).
 
 **High-severity findings:**
@@ -446,7 +447,7 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 **Medium-severity findings:**
 - **BUG-M1: Shared Groq key** — 3 consumers compete for 6,000 TPM with no coordination.
-- **BUG-M3: 1,721-line function** — `on_plugin_update()` is unmaintainable.
+- ~~**BUG-M3: 1,721-line function**~~ — ✅ **FIXED in v5.0.3 (PR #83)**. `on_plugin_update()` reduced to ~100 lines.
 - **BUG-M4: Risky name-only dedup** — Could merge different people with same name.
 - **BUG-M5: Activation races** — Multiple cron events can overlap.
 - **BUG-M6: False throughput claims** — Comments say "200/hour" but reality is ~15/5-min.
@@ -580,9 +581,9 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 | ID | Task | Status |
 |----|------|--------|
-| P7-1 | Fix activation cascade (BUG-C1) — fresh-install guard + async scrapes | **TODO** |
+| P7-1 | Fix activation cascade (BUG-C1) — removed all historical migrations | ✅ **DONE (PR #83)** |
 | P7-2 | Fix display deadlock (BUG-C2) — remove published gate, show all records | **TODO** |
-| P7-3 | Fix non-idempotent migrations (BUG-C3) — existence checks + bypass | **TODO** |
+| P7-3 | Fix non-idempotent migrations (BUG-C3) — blocks removed, remaining ops idempotent | ✅ **DONE (PR #83)** |
 | P7-4 | Fix dedup on init (BUG-C4) — move to post-scrape hook | **TODO** |
 | P7-5 | Complete uninstall cleanup (BUG-H2, H7) — all options + all cron hooks | **TODO** |
 | P7-6 | Fix domain lock bypass (BUG-H6) — exact hostname match | **TODO** |
@@ -591,29 +592,29 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P7-9 | Add date guard to name-only dedup (BUG-M4) | **TODO** |
 | P7-10 | Stagger cron scheduling (BUG-M5) | **TODO** |
 | P7-11 | Update all throughput comments (BUG-M6) | **TODO** |
-| P7-12 | Refactor migrations into versioned files (BUG-M3) — long-term | **TODO** |
+| P7-12 | Refactor migrations into versioned files (BUG-M3) — superseded by removal | ✅ **DONE (PR #83)** |
 
 ---
 
 ## PENDING WORK (consolidated — updated 2026-02-16 after code audit)
 
 ### CRITICAL (blocks core functionality)
-1. **BUG-C1: Activation cascade** — Add fresh-install guard, move scrapes to async cron
+1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED (PR #83) — Removed all historical migration blocks
 2. **BUG-C2: Display deadlock** — Remove `status='published'` gate, show all non-suppressed records
-3. **BUG-C3: Non-idempotent migrations** — Add existence checks, fresh-install bypass
+3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED (PR #83) — Blocks removed, remaining ops idempotent
 4. **BUG-C4: Dedup on every page load** — Move to post-scrape hook or daily cron
 
 ### HIGH (security + functional)
 5. **BUG-H2 + H7: Incomplete uninstall** — Clean up all options, transients, and cron hooks
 6. **BUG-H6: Domain lock bypass** — Switch from `strpos()` to exact match
 7. **BUG-H1: Nonsense rate calculation** — Guard division by zero in cron-rewriter.php
-8. **BUG-H3: Duplicate index creation** — Add existence guard in v4.3.0 migration
+8. ~~**BUG-H3: Duplicate index creation**~~ — ✅ FIXED (PR #83) — v4.3.0 migration block removed entirely
 9. **BUG-H4: Undefined $result** — Initialize variable before conditional block
 10. **BUG-H5: Premature shutdown throttle** — Set throttle AFTER success, not before
 
 ### MEDIUM (architecture + safety)
 11. **BUG-M1: Shared Groq rate limiter** — Coordinate API usage across 3 consumers
-12. **BUG-M3: Monolithic migrations** — Refactor 1,721-line function into versioned files
+12. ~~**BUG-M3: Monolithic migrations**~~ — ✅ FIXED (PR #83) — Function reduced from ~1,721 to ~100 lines
 13. **BUG-M4: Risky name-only dedup** — Add date guard to prevent merging different people
 14. **BUG-M5: Activation race conditions** — Stagger cron scheduling, add transient locks
 15. **BUG-M6: Unrealistic throughput comments** — Update all to reflect actual ~15/5-min
