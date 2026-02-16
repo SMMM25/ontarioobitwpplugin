@@ -291,7 +291,7 @@ function monaco_output_localbusiness_schema() {
     });
 
     echo '<script type="application/ld+json">' . "\n";
-    echo wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT );
+    echo wp_json_encode( $schema, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT );
     echo "\n" . '</script>' . "\n";
 }
 add_action( 'wp_head', 'monaco_output_localbusiness_schema', 3 );

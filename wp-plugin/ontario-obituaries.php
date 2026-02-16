@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.0.3
+ * Version: 5.0.4
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,10 +15,45 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.0.3' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.0.4' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
+
+/**
+ * Status whitelist — single source of truth.
+ *
+ * Only these values may be written to the `status` column:
+ *   - 'pending'   — scraped, awaiting AI rewrite
+ *   - 'published' — AI rewrite complete, fully enriched
+ *
+ * Write points (exhaustive):
+ *   1. class-source-collector.php:481 — INSERT with 'pending'
+ *   2. class-ai-rewriter.php:388     — UPDATE to 'published'
+ *   3. ontario-obituaries.php:459    — backfill dirty → 'pending'
+ *
+ * Read filters:
+ *   - Display class (get_obituaries, count_obituaries) accepts optional
+ *     status arg validated against this list.
+ *   - REST API forces status='published' for backward compatibility.
+ *   - Frontend/SEO shows all non-suppressed records (no status filter).
+ *
+ * @since 5.0.4
+ */
+function ontario_obituaries_valid_statuses() {
+    return array( 'pending', 'published' );
+}
+
+/**
+ * Validate a status value against the whitelist.
+ *
+ * @param string $status Value to check.
+ * @return bool True if valid, false otherwise.
+ * @since 5.0.4
+ */
+function ontario_obituaries_is_valid_status( $status ) {
+    return in_array( $status, ontario_obituaries_valid_statuses(), true );
+}
 
 /**
  * v4.2.0: Domain lock — plugin only operates on authorized domains.
@@ -452,8 +487,13 @@ function ontario_obituaries_activate() {
         // v5.0.0 FIX: REMOVED the TRUNCATE that was here. It wiped all obituaries
         // on every delete-and-reinstall cycle because uninstall.php deletes the
         // db_version option, causing this migration to re-run.
-        // Instead, set any existing records without a status to 'pending'.
-        $wpdb->query( "UPDATE `{$table_name}` SET status = 'pending' WHERE status = '' OR status IS NULL" );
+        // v5.0.4 FIX: Normalize ALL invalid/dirty status values to 'pending'.
+        // Canonical whitelist: ontario_obituaries_valid_statuses() in this file.
+        // Uses LOWER() for collation safety (works on both _ci and _bin).
+        // Uses LIMIT 500 to bound execution time on large tables; runs once
+        // per plugin update so stragglers are caught on next activation.
+        $valid = implode( "','", array_map( 'esc_sql', ontario_obituaries_valid_statuses() ) );
+        $wpdb->query( "UPDATE `{$table_name}` SET status = 'pending' WHERE LOWER(COALESCE(status, '')) NOT IN ('{$valid}') LIMIT 500" );
         ontario_obituaries_log( 'v4.6.0 migration: Added status/ai_description columns. Existing records set to pending.', 'info' );
 
         // Clear cached data.

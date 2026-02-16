@@ -1125,13 +1125,38 @@ class Ontario_Obituaries {
     /* ────────────────────────── REST API ───────────────────────────────── */
 
     /**
+     * REST permission check — admin-only.
+     *
+     * BUG-H8 FIX (v5.0.4): Replaced '__return_true' with capability check.
+     * Endpoints now require 'manage_options' (admin). This prevents:
+     *  - Unauthenticated bulk enumeration via /obituary/{id}
+     *  - Public data harvesting via /obituaries?limit=100&offset=N
+     *  - DoS via repeated expensive queries
+     *
+     * @return bool|WP_Error
+     */
+    public function rest_permission_check() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return new WP_Error(
+                'rest_forbidden',
+                __( 'You do not have permission to access this endpoint.', 'ontario-obituaries' ),
+                array( 'status' => 403 )
+            );
+        }
+        return true;
+    }
+
+    /**
      * Register REST routes.
+     *
+     * BUG-H8 FIX (v5.0.4): Both endpoints now require manage_options capability.
+     * Previously used '__return_true' which allowed unauthenticated access.
      */
     public function register_rest_routes() {
         register_rest_route( 'ontario-obituaries/v1', '/obituaries', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_obituaries_api' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( $this, 'rest_permission_check' ),
             'args'                => array(
                 'limit'  => array(
                     'default'           => 20,
@@ -1150,7 +1175,7 @@ class Ontario_Obituaries {
         register_rest_route( 'ontario-obituaries/v1', '/obituary/(?P<id>\d+)', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_obituary_api' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( $this, 'rest_permission_check' ),
             'args'                => array(
                 'id' => array(
                     'validate_callback' => function ( $param ) {
@@ -1164,6 +1189,10 @@ class Ontario_Obituaries {
     /**
      * REST: list obituaries.
      * P1-6 FIX: returns whitelisted / sanitized shape.
+     * BUG-H8 FIX (v5.0.4): REST API returns only 'published' records to
+     *   preserve API contract. The display layer (frontend/SEO) shows all
+     *   non-suppressed records per BUG-C2 fix, but the REST API maintains
+     *   the original published-only behavior for backward compatibility.
      */
     public function get_obituaries_api( $request ) {
         $params = $request->get_params();
@@ -1177,6 +1206,7 @@ class Ontario_Obituaries {
             'search'       => isset( $params['search'] )       ? sanitize_text_field( $params['search'] )       : '',
             'orderby'      => isset( $params['orderby'] )      ? sanitize_text_field( $params['orderby'] )      : 'date_of_death',
             'order'        => isset( $params['order'] )        ? sanitize_text_field( $params['order'] )        : 'DESC',
+            'status'       => 'published', // BUG-H8: REST API remains published-only
         );
 
         $raw_obituaries = $this->display->get_obituaries( $query_args );
@@ -1187,6 +1217,7 @@ class Ontario_Obituaries {
             'funeral_home' => $query_args['funeral_home'],
             'days'         => $query_args['days'],
             'search'       => $query_args['search'],
+            'status'       => 'published', // BUG-H8: count also published-only
         );
         $total = $this->display->count_obituaries( $count_args );
 

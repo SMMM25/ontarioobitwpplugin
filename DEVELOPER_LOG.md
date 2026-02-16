@@ -1,11 +1,11 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-16 (BUG-C1/C3 fix applied — v5.0.3 pending PR review)
-> **Plugin version:** `5.0.3` (sandbox) / `5.0.2` (live + main branch)
+> **Last updated:** 2026-02-16 (BUG-C2 display fix applied — v5.0.4 pending PR review)
+> **Plugin version:** `5.0.4` (sandbox) / `5.0.2` (live) / `5.0.3` (main branch)
 > **Live site version:** `5.0.2` (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
-> **Main branch HEAD:** PR #80 merged
-> **Project status:** CRITICAL BUGS — BUG-C1/C3 fixed (PR #83), BUG-C2/C4 pending. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
-> **Next deployment:** PR #83 (v5.0.3) pending review → then BUG-C2 (display deadlock) → BUG-C4 (dedup on init)
+> **Main branch HEAD:** PR #83 merged (v5.0.3)
+> **Project status:** CRITICAL BUGS — BUG-C1/C2/C3 fixed (PRs #83-84), BUG-C4 pending. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
+> **Next deployment:** PR #84 (v5.0.4) pending review → then BUG-C4 (dedup on init) → Sprint 2 (high-severity)
 
 ---
 
@@ -282,7 +282,8 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #78 | Merged | `3cea74a` | feat(v5.0.0): bulletproof CLI cron — 10/batch @ 6s (~250/hour) |
 | #79 | Merged | `54e7095` | fix(v5.0.1): process 1 obituary at a time + mutual exclusion lock |
 | #80 | Merged | `8812580` | fix(v5.0.2): respect Groq 6,000 TPM limit — 12s delay, no fallback on 429 |
-| #83 | Pending | — | fix(v5.0.3): BUG-C1/C3 — remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
+| #83 | Merged | `4566eb3` | fix(v5.0.3): BUG-C1/C3 — remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
+| #84 | Pending | — | fix(v5.0.4): BUG-C2/H8 — remove status='published' gate from 18 display/SEO queries + REST API auth hardening (manage_options) + REST published-only filter + JSON-LD XSS hardening (JSON_HEX_TAG) + centralized status validation helper (`ontario_obituaries_valid_statuses()` / `ontario_obituaries_is_valid_status()`) + backfill derives IN-list from helper + RULE 14 (Core Workflow Integrity) |
 
 ---
 
@@ -314,7 +315,7 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 ### What's NOT Working / Broken (2026-02-16 Audit Findings)
 - **AI Rewriter** — Multiple code bugs in addition to Groq TPM limit:
   - ~~**Activation cascade** (BUG-C1)~~: ✅ **FIXED in v5.0.3 (PR #83)** — All historical migration blocks removed from `on_plugin_update()`
-  - **Display deadlock** (BUG-C2): Records inserted as `pending` are invisible — display queries require `status='published'` which only happens after AI rewrite
+  - ~~**Display deadlock** (BUG-C2)~~: ✅ **FIXED in v5.0.4 (PR #84)** — Removed `status='published'` gate from 18 display/SEO queries. All non-suppressed records now visible with original factual data. AI rewrite enhances display in background. Core workflow preserved per RULE 14.
   - ~~**Non-idempotent migrations** (BUG-C3)~~: ✅ **FIXED in v5.0.3 (PR #83)** — Migration blocks removed; remaining operations are idempotent
   - **Init-phase dedup** (BUG-C4): Full-table GROUP BY runs on every page load
 - **Uninstall incomplete** (BUG-H2, H7) — API keys (Groq, Google Ads) and 4+ cron hooks persist after uninstall
@@ -435,7 +436,7 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 **Critical findings (abbreviated — see PLATFORM_OVERSIGHT_HUB.md Section 26 for full details):**
 - ~~**BUG-C1: Activation cascade**~~ — ✅ **FIXED in v5.0.3 (PR #83)**. Removed 1,663 lines of historical migration blocks from `on_plugin_update()`. Function reduced from ~1,721 to ~100 lines. All sync HTTP blocks eliminated.
-- **BUG-C2: Display pipeline deadlock** — `class-ontario-obituaries-display.php` requires `status='published'` but records are inserted as `pending`. Only ~15 of 725 records are visible because only AI-rewritten records become published. 710+ obituaries in the DB are invisible to users.
+- ~~**BUG-C2: Display pipeline deadlock**~~ — ✅ **FIXED in v5.0.4 (PR #84)**. Removed `status='published'` gate from 18 display/SEO queries (5 in Display class, 13 in SEO class). All non-suppressed records now visible with original factual data. AI rewrite enhances display in background. Core workflow (SCRAPE → AI VIEW → AI REWRITE → PUBLISH) preserved per RULE 14.
 - ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ **FIXED in v5.0.3 (PR #83)**. Historical migration blocks removed entirely; remaining operations are naturally idempotent. `deployed_version` write moved to end of function for safe retry on partial failure.
 - **BUG-C4: Dedup on every page load** — `ontario_obituaries_cleanup_duplicates()` runs a full-table GROUP BY on the `init` hook (every page load, frontend and admin).
 
@@ -582,7 +583,7 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | ID | Task | Status |
 |----|------|--------|
 | P7-1 | Fix activation cascade (BUG-C1) — removed all historical migrations | ✅ **DONE (PR #83)** |
-| P7-2 | Fix display deadlock (BUG-C2) — remove published gate, show all records | **TODO** |
+| P7-2 | Fix display deadlock (BUG-C2) — removed published gate from 18 queries | ✅ **DONE (PR #84)** |
 | P7-3 | Fix non-idempotent migrations (BUG-C3) — blocks removed, remaining ops idempotent | ✅ **DONE (PR #83)** |
 | P7-4 | Fix dedup on init (BUG-C4) — move to post-scrape hook | **TODO** |
 | P7-5 | Complete uninstall cleanup (BUG-H2, H7) — all options + all cron hooks | **TODO** |
@@ -600,7 +601,7 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 ### CRITICAL (blocks core functionality)
 1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED (PR #83) — Removed all historical migration blocks
-2. **BUG-C2: Display deadlock** — Remove `status='published'` gate, show all non-suppressed records
+2. ~~**BUG-C2: Display deadlock**~~ — ✅ FIXED (PR #84) — Removed `status='published'` gate from 18 queries
 3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED (PR #83) — Blocks removed, remaining ops idempotent
 4. **BUG-C4: Dedup on every page load** — Move to post-scrape hook or daily cron
 

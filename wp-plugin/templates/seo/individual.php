@@ -189,7 +189,7 @@ $json_ld = array(
 
 <!-- v4.4.0: Enhanced JSON-LD structured data -->
 <script type="application/ld+json">
-<?php echo wp_json_encode( $json_ld, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ); ?>
+<?php echo wp_json_encode( $json_ld, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ); ?>
 </script>
 
 <div class="ontario-obituary-individual">

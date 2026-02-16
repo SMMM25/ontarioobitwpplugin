@@ -14,6 +14,12 @@
  *
  * @package Ontario_Obituaries
  * @since   3.0.0
+ *
+ * BUG-C2 FIX (v5.0.4): Removed status='published' gate from all display/SEO
+ *   queries. Records are now visible as soon as scraped. The AI rewrite
+ *   pipeline still runs — ai_description replaces description when ready.
+ *   The core pipeline (SCRAPE → AI REVIEW → REWRITE → PUBLISH) is unchanged;
+ *   the status column still tracks progress but no longer gates visibility.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -285,8 +291,7 @@ class Ontario_Obituaries_SEO {
                     MAX(date_of_death) as latest
              FROM `{$table}`
              WHERE city_normalized != ''
-               AND (suppressed_at IS NULL)
-               AND status = 'published'
+               AND suppressed_at IS NULL
              GROUP BY city_normalized
              ORDER BY total DESC
              LIMIT 50"
@@ -297,7 +302,6 @@ class Ontario_Obituaries_SEO {
             $wpdb->prepare(
                 "SELECT * FROM `{$table}`
                  WHERE suppressed_at IS NULL
-                   AND status = 'published'
                    AND date_of_death >= %s
                  ORDER BY date_of_death DESC
                  LIMIT 20",
@@ -339,7 +343,6 @@ class Ontario_Obituaries_SEO {
             "SELECT * FROM `{$table}`
              WHERE ( city_normalized = %s OR location LIKE %s )
                AND suppressed_at IS NULL
-               AND status = 'published'
              ORDER BY date_of_death DESC
              LIMIT %d OFFSET %d",
             $city_name,
@@ -359,8 +362,7 @@ class Ontario_Obituaries_SEO {
         $total = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(*) FROM `{$table}`
              WHERE ( city_normalized = %s OR location LIKE %s )
-               AND suppressed_at IS NULL
-               AND status = 'published'",
+               AND suppressed_at IS NULL",
             $city_name,
             '%' . $wpdb->esc_like( $city_name ) . '%'
         ) );
@@ -388,7 +390,7 @@ class Ontario_Obituaries_SEO {
         $table = $wpdb->prefix . 'ontario_obituaries';
 
         $obituary = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
+            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
 
@@ -453,7 +455,7 @@ class Ontario_Obituaries_SEO {
         $table = $wpdb->prefix . 'ontario_obituaries';
 
         $obit = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
+            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
 
@@ -494,7 +496,7 @@ class Ontario_Obituaries_SEO {
             $schema['description'] = wp_trim_words( $schema_desc, 50, '...' );
         }
 
-        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
 
         // v4.2.0: BurialEvent schema when funeral home is present.
         if ( ! empty( $obit->funeral_home ) ) {
@@ -525,7 +527,7 @@ class Ontario_Obituaries_SEO {
                 );
             }
 
-            echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $burial_schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+            echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $burial_schema, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
         }
     }
 
@@ -555,7 +557,7 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $id ) ) {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND status = 'published'", intval( $id ) ) );
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d", intval( $id ) ) );
             if ( $obit ) {
                 $items[] = array(
                     'name' => $obit->name,
@@ -583,7 +585,7 @@ class Ontario_Obituaries_SEO {
             $schema['itemListElement'][] = $entry;
         }
 
-        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
     }
 
     /**
@@ -602,7 +604,7 @@ class Ontario_Obituaries_SEO {
         if ( ! empty( $id ) ) {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d AND status = 'published'", intval( $id ) ) );
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d", intval( $id ) ) );
             if ( $obit ) {
                 $city_name = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
                 $title_parts['title'] = sprintf( '%s — %s, Ontario | Monaco Monuments', $obit->name, $city_name );
@@ -636,7 +638,7 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
-                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d AND status = 'published'",
+                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d",
                 intval( $id )
             ) );
             if ( $obit ) {
@@ -687,7 +689,7 @@ class Ontario_Obituaries_SEO {
             // Build the individual canonical from the DB record
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND status = 'published'", intval( $id ) ) );
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d", intval( $id ) ) );
             if ( $obit ) {
                 $canonical = home_url( '/obituaries/ontario/' . sanitize_title( $city ) . '/' . sanitize_title( $obit->name ) . '-' . intval( $id ) . '/' );
             }
@@ -745,7 +747,7 @@ class Ontario_Obituaries_SEO {
         $cities = $wpdb->get_results(
             "SELECT city_normalized as city, COUNT(*) as total, MAX(date_of_death) as latest
              FROM `{$table}`
-             WHERE city_normalized != '' AND suppressed_at IS NULL AND status = 'published'
+             WHERE city_normalized != '' AND suppressed_at IS NULL
              GROUP BY city_normalized ORDER BY total DESC LIMIT 100"
         );
 
@@ -768,7 +770,6 @@ class Ontario_Obituaries_SEO {
             "SELECT id, name, city_normalized, location, date_of_death
              FROM `{$table}`
              WHERE suppressed_at IS NULL
-               AND status = 'published'
                AND (
                    ( description IS NOT NULL AND CHAR_LENGTH(description) > 100 )
                    OR ( ai_description IS NOT NULL AND CHAR_LENGTH(ai_description) > 100 )
@@ -840,7 +841,7 @@ class Ontario_Obituaries_SEO {
             ),
         );
 
-        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
+        echo "\n<script type=\"application/ld+json\">\n" . wp_json_encode( $schema, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n</script>\n";
     }
 
     /**
@@ -867,7 +868,7 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
-                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d AND status = 'published'",
+                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d",
                 intval( $id )
             ) );
             if ( $obit ) {
