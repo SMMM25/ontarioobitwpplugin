@@ -1,11 +1,11 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-15 (after v5.0.2 deployed + PR #80 merged + project PAUSED)
+> **Last updated:** 2026-02-16 (independent code audit completed — critical bugs found)
 > **Plugin version:** `5.0.2` (live + main branch + sandbox — all in sync)
 > **Live site version:** `5.0.2` (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
 > **Main branch HEAD:** PR #80 merged
-> **Project status:** PAUSED — AI Rewriter blocked by Groq free-tier TPM limit
-> **Next deployment:** None pending
+> **Project status:** CRITICAL BUGS IDENTIFIED — 4 critical, 7 high, 6 medium-severity issues found. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
+> **Next deployment:** Bug fix PRs pending (Sprint 1 critical fixes required before plugin is usable)
 
 ---
 
@@ -290,7 +290,7 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 ### Plugin Version: **5.0.2** (all environments in sync)
 ### Main Branch Version: **5.0.2** (PR #80 merged 2026-02-15)
 ### Live Site Version: **5.0.2** (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
-### Project Status: **PAUSED** (owner decision — Groq TPM limit blocker)
+### Project Status: **CRITICAL BUGS IDENTIFIED** (2026-02-16 independent code audit)
 
 ### What's Working (Live — v5.0.2)
 - Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
@@ -310,9 +310,17 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - **AI Authenticity Checker** — active, auditing records every 4h
 - **cPanel cron** — configured: `*/5 * * * * /usr/local/bin/php /home/monaylnf/public_html/wp-cron.php`
 
-### What's NOT Working / Paused
-- **AI Rewriter** — Code works correctly but Groq free-tier TPM limit (6,000 tokens/min for llama-3.1-8b-instant) stops processing after ~15 obituaries per run. See PLATFORM_OVERSIGHT_HUB.md Section 25.
+### What's NOT Working / Broken (2026-02-16 Audit Findings)
+- **AI Rewriter** — Multiple code bugs in addition to Groq TPM limit:
+  - **Activation cascade** (BUG-C1): On activation, all migrations run synchronously, triggering 5+ scrapes + rewrites, exhausting Groq TPM
+  - **Display deadlock** (BUG-C2): Records inserted as `pending` are invisible — display queries require `status='published'` which only happens after AI rewrite
+  - **Non-idempotent migrations** (BUG-C3): Reinstall re-runs all 20+ migrations with blocking HTTP calls
+  - **Init-phase dedup** (BUG-C4): Full-table GROUP BY runs on every page load
+- **Uninstall incomplete** (BUG-H2, H7) — API keys (Groq, Google Ads) and 4+ cron hooks persist after uninstall
+- **Domain lock bypass** (BUG-H6) — substring match allows spoofed domains
+- **Shared Groq key** (BUG-M1) — Rewriter, chatbot, and authenticity checker compete for same 6,000 TPM quota
 - **Google Ads Optimizer** — Disabled by owner choice (off-season). Toggle on in spring.
+- See PLATFORM_OVERSIGHT_HUB.md Section 26 for full audit details and Section 27 for fix plan.
 
 ### What Was Attempted in v5.0.0-v5.0.2 (2026-02-14/15)
 The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate-limiting:
@@ -418,6 +426,32 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 - **OUTCOME**: Improved from ~6 to ~15 items per run, but still hits TPM ceiling
 - **PROJECT PAUSED** after this version — Groq free-tier limitation, not a code bug
 - Version bump: 5.0.1 → 5.0.2
+
+**INDEPENDENT CODE AUDIT (2026-02-16):**
+> An independent line-by-line code review was performed on the entire plugin codebase.
+> The previous developer's claim that "the plugin is stable" was found to be **incorrect**.
+> **17 bugs identified**: 4 critical, 7 high-severity, 6 medium-severity.
+
+**Critical findings (abbreviated — see PLATFORM_OVERSIGHT_HUB.md Section 26 for full details):**
+- **BUG-C1: Activation cascade** — `on_plugin_update()` runs all 20+ migrations synchronously on activation, including scrapes with `usleep()`, HTTP HEAD requests, and immediate rewrite scheduling. This causes the "5-15 obituaries then crash" behavior the owner reported. The previous dev spent 10 PRs (#71-#80) tuning Groq delays when the root cause was the activation cascade.
+- **BUG-C2: Display pipeline deadlock** — `class-ontario-obituaries-display.php` requires `status='published'` but records are inserted as `pending`. Only ~15 of 725 records are visible because only AI-rewritten records become published. 710+ obituaries in the DB are invisible to users.
+- **BUG-C3: Non-idempotent migrations** — No fresh-install guard. Every reinstall re-runs all historical migrations with blocking HTTP calls.
+- **BUG-C4: Dedup on every page load** — `ontario_obituaries_cleanup_duplicates()` runs a full-table GROUP BY on the `init` hook (every page load, frontend and admin).
+
+**High-severity findings:**
+- **BUG-H2: Incomplete uninstall** — Groq API key, Google Ads OAuth credentials, and 4+ cron hooks persist after uninstall.
+- **BUG-H6: Domain lock bypass** — `strpos()` substring match allows spoofed domains.
+- **BUG-H7: Stale cron hooks** — 4 orphaned hooks fire after uninstall, causing PHP fatals.
+- **BUG-H1, H3, H4, H5** — Rate calculation, duplicate indexes, undefined variables, premature throttling.
+
+**Medium-severity findings:**
+- **BUG-M1: Shared Groq key** — 3 consumers compete for 6,000 TPM with no coordination.
+- **BUG-M3: 1,721-line function** — `on_plugin_update()` is unmaintainable.
+- **BUG-M4: Risky name-only dedup** — Could merge different people with same name.
+- **BUG-M5: Activation races** — Multiple cron events can overlap.
+- **BUG-M6: False throughput claims** — Comments say "200/hour" but reality is ~15/5-min.
+
+**Systematic fix plan created**: 4 sprints, 22 tasks, 8 PRs mapped. See Section 27 of PLATFORM_OVERSIGHT_HUB.md.
 
 ### What v4.0.0 Changed (DEPLOYED 2026-02-13)
 - **6 new Postmedia/Remembering.ca sources** added to seed_defaults()
@@ -541,18 +575,59 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P6-7 | Resolve Groq 6,000 TPM limit | **BLOCKED** — requires paid Groq plan or alternative API |
 | P6-8 | Complete all 725+ obituary rewrites | **BLOCKED** — depends on P6-7 |
 
+### Phase 7: Critical Bug Fixes (identified 2026-02-16 audit)
+> Fix all bugs found during independent code audit. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
+
+| ID | Task | Status |
+|----|------|--------|
+| P7-1 | Fix activation cascade (BUG-C1) — fresh-install guard + async scrapes | **TODO** |
+| P7-2 | Fix display deadlock (BUG-C2) — remove published gate, show all records | **TODO** |
+| P7-3 | Fix non-idempotent migrations (BUG-C3) — existence checks + bypass | **TODO** |
+| P7-4 | Fix dedup on init (BUG-C4) — move to post-scrape hook | **TODO** |
+| P7-5 | Complete uninstall cleanup (BUG-H2, H7) — all options + all cron hooks | **TODO** |
+| P7-6 | Fix domain lock bypass (BUG-H6) — exact hostname match | **TODO** |
+| P7-7 | Fix minor high-severity bugs (BUG-H1, H3, H4, H5) | **TODO** |
+| P7-8 | Implement shared Groq rate limiter (BUG-M1) | **TODO** |
+| P7-9 | Add date guard to name-only dedup (BUG-M4) | **TODO** |
+| P7-10 | Stagger cron scheduling (BUG-M5) | **TODO** |
+| P7-11 | Update all throughput comments (BUG-M6) | **TODO** |
+| P7-12 | Refactor migrations into versioned files (BUG-M3) — long-term | **TODO** |
+
 ---
 
-## PENDING WORK (consolidated)
+## PENDING WORK (consolidated — updated 2026-02-16 after code audit)
 
-1. ~~Cache purge + permalinks flush~~ — DONE
-2. ~~Version bump to v3.10.2~~ — Superseded by v3.17.2
-3. **BLOCKED: AI Rewriter Groq TPM limit** — Free tier 6,000 TPM insufficient. Solutions: upgrade Groq, switch API, or accept slow throughput. See PLATFORM_OVERSIGHT_HUB.md Section 25.
-4. **Data repair** — Clean existing fabricated `YYYY-01-01` rows in DB
-5. **Schema/dedupe redesign** — Add `birth_year`/`death_year` columns, new unique key
-6. **Max-age audit** — Prevent pagination drift into old archive pages
-7. **Google Ads Optimizer** — Enable in spring (owner action)
-8. **Out-of-province filtering** — Low priority
+### CRITICAL (blocks core functionality)
+1. **BUG-C1: Activation cascade** — Add fresh-install guard, move scrapes to async cron
+2. **BUG-C2: Display deadlock** — Remove `status='published'` gate, show all non-suppressed records
+3. **BUG-C3: Non-idempotent migrations** — Add existence checks, fresh-install bypass
+4. **BUG-C4: Dedup on every page load** — Move to post-scrape hook or daily cron
+
+### HIGH (security + functional)
+5. **BUG-H2 + H7: Incomplete uninstall** — Clean up all options, transients, and cron hooks
+6. **BUG-H6: Domain lock bypass** — Switch from `strpos()` to exact match
+7. **BUG-H1: Nonsense rate calculation** — Guard division by zero in cron-rewriter.php
+8. **BUG-H3: Duplicate index creation** — Add existence guard in v4.3.0 migration
+9. **BUG-H4: Undefined $result** — Initialize variable before conditional block
+10. **BUG-H5: Premature shutdown throttle** — Set throttle AFTER success, not before
+
+### MEDIUM (architecture + safety)
+11. **BUG-M1: Shared Groq rate limiter** — Coordinate API usage across 3 consumers
+12. **BUG-M3: Monolithic migrations** — Refactor 1,721-line function into versioned files
+13. **BUG-M4: Risky name-only dedup** — Add date guard to prevent merging different people
+14. **BUG-M5: Activation race conditions** — Stagger cron scheduling, add transient locks
+15. **BUG-M6: Unrealistic throughput comments** — Update all to reflect actual ~15/5-min
+
+### PREVIOUSLY KNOWN (carried forward)
+16. **BLOCKED: AI Rewriter Groq TPM limit** — Upgrade plan, switch API, or accept slow throughput
+17. **Data repair** — Clean existing fabricated `YYYY-01-01` rows in DB
+18. **Schema/dedupe redesign** — Add `birth_year`/`death_year` columns, new unique key
+19. **Max-age audit** — Prevent pagination drift into old archive pages
+20. **Google Ads Optimizer** — Enable in spring (owner action)
+21. **Out-of-province filtering** — Low priority
+
+> See PLATFORM_OVERSIGHT_HUB.md Section 27 for the full systematic fix plan with
+> sprint organization, PR mapping, and estimated effort.
 
 ---
 

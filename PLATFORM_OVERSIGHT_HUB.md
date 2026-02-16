@@ -38,11 +38,15 @@ to prevent further breakage.
 | **Main branch** | 5.0.2 | PR #80 merged |
 | **Sandbox** | 5.0.2 | All caught up — no pending PRs |
 
-### PROJECT STATUS: PAUSED (2026-02-15)
-> **Owner decision**: AI Rewriter development paused after v5.0.2 still hits Groq free-tier
-> rate limits (6,000 TPM) after ~15 obituaries. The plugin is stable and all other features
-> work correctly. The AI Rewriter issue is a Groq free-tier limitation, not a code bug.
-> See Section 25 for full details.
+### PROJECT STATUS: CRITICAL BUGS IDENTIFIED (2026-02-16)
+> **Independent code audit** performed 2026-02-16 found **4 critical bugs, 7 high-severity
+> issues, and 6 medium-severity concerns** in the plugin codebase. The previous developer's
+> claim that "the plugin is stable and all other features work correctly" and that "the AI
+> Rewriter issue is a Groq free-tier limitation, not a code bug" is **INCORRECT**.
+>
+> Multiple architectural and logic bugs exist that cause the activation cascade, display
+> pipeline failure, performance degradation, and unclean uninstall behavior.
+> See **Section 26** for the full audit and **Section 27** for the systematic fix plan.
 
 ### Live Site Stats (verified 2026-02-15)
 - **725+ obituaries** displayed across 37+ pagination pages
@@ -70,7 +74,7 @@ to prevent further breakage.
 | GoFundMe Auto-Linker | v4.3.0 | ✅ LIVE (2 matched, 360 pending) |
 | AI Authenticity Checker (24/7 audits) | v4.3.0 | ✅ LIVE (725 never audited — processing) |
 | Logo filter (rejects images < 15 KB) | v4.0.1 | ✅ LIVE |
-| AI rewrite engine (Groq/Llama) | v5.0.2 | ⚠️ PAUSED — code works but Groq free-tier TPM limit (6,000) stops processing after ~15 items per run |
+| AI rewrite engine (Groq/Llama) | v5.0.2 | ❌ BROKEN — multiple code bugs (activation cascade, display pipeline deadlock) + Groq free-tier TPM limit. See Section 26. |
 | BurialEvent JSON-LD schema | v4.2.0 | ✅ LIVE |
 | IndexNow search engine notification | v4.2.0 | ✅ LIVE |
 | QR code on memorial pages | v4.2.0 | ✅ LIVE |
@@ -90,8 +94,13 @@ to prevent further breakage.
 | Future death date rejection | v4.2.4 | ✅ LIVE |
 | q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
 
-### AI Rewriter Status (PAUSED — 2026-02-15)
-- **Code**: Complete (`class-ai-rewriter.php`) — v5.0.2
+### AI Rewriter Status (BROKEN — 2026-02-16 Audit)
+- **Code**: Multiple bugs identified (`class-ai-rewriter.php`, `ontario-obituaries.php`, `class-ontario-obituaries-display.php`) — v5.0.2
+- **Audit finding**: The previous developer misdiagnosed this as "only a Groq TPM issue." The real problems are:
+  1. **Activation cascade** triggers 5-15 synchronous scrapes + rewrites on plugin activation (Section 26, BUG-C1)
+  2. **Display pipeline deadlock** — records inserted as `pending` are invisible because display queries require `status='published'`, but records only become `published` AFTER a successful AI rewrite, which is rate-limited (Section 26, BUG-C2)
+  3. **Non-idempotent migrations** run on every activation, performing blocking HTTP calls (Section 26, BUG-C3)
+  4. **Performance killer** — duplicate cleanup runs on every page load (Section 26, BUG-C4)
 - **Primary model**: `llama-3.1-8b-instant` (switched from 70B in v5.0.0 to reduce token usage)
 - **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (NOT used on 429 errors as of v5.0.2)
 - **Admin UI**: Settings page section (checkbox toggle + API key input + live stats)
@@ -139,6 +148,8 @@ to prevent further breakage.
 6. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
 7. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
 8. **Schema redesign needed** for records without death date → future work
+9. **Display deadlock** — 710+ of 725 records invisible due to `status='published'` filter in display queries. See BUG-C2 in Section 26. **HIGH PRIORITY FIX.**
+10. **Name-only dedup risk** — 3rd dedup pass could merge different people with same name. See BUG-M4 in Section 26.
 
 ### Key Files to Know
 | File | What it does |
@@ -193,22 +204,43 @@ to prevent further breakage.
 | #79 | Merged | v5.0.1 | Process 1 obituary at a time + mutual exclusion lock |
 | #80 | Merged | v5.0.2 | Respect Groq 6,000 TPM token limit — 12s delay, no fallback on 429 |
 
-### Remaining Work (priority order)
-1. ~~**Deploy v4.2.2** to live site~~ → ✅ Done 2026-02-13
-2. ~~**Merge PR #54 (v4.2.3)** and deploy~~ → ✅ Done 2026-02-13
-3. ~~**Enable AI Rewriter** via admin settings page~~ → ✅ Done 2026-02-13 (Groq key set)
-4. ~~**Merge PR #55 (v4.2.4)** and deploy~~ → ✅ Done 2026-02-13
-5. ~~**Merge PR #56 (v4.3.0)** and deploy~~ → ✅ Done 2026-02-13 (GoFundMe + Authenticity)
-6. ~~**Merge PR #58 (v4.5.0)** and deploy~~ → ✅ Done 2026-02-13 (Chatbot + Google Ads + SEO Schema)
-7. ~~**Enable AI Chatbot**~~ → ✅ Done 2026-02-13 (live on frontend, verified working)
-8. ~~**Full site backup before v4.5.0 deploy**~~ → ✅ Done via UpdraftPlus (Feb 13, 21:45)
-9. ~~**AI Rewriter v5.0.0-v5.0.2 fixes**~~ → ✅ Done 2026-02-14/15 (PRs #71-#80 merged) — but still hits Groq TPM limit
-10. **BLOCKED: AI Rewriter Groq TPM limit** — See Section 25 for solutions
-11. **Enable Google Ads Optimizer** when busy season starts (spring) — toggle + enter credentials
-12. **Data repair**: Clean fabricated YYYY-01-01 dates (developer — future PR)
-13. **Schema redesign**: Handle records without death date (developer — future PR)
-14. **Out-of-province filtering** (developer — low priority)
-15. **Automated deployment** via GitHub Actions or WP Pusher paid (developer — low priority)
+### Remaining Work (priority order — updated 2026-02-16 after code audit)
+
+> **IMPORTANT**: Items 1-15 are NEW findings from the 2026-02-16 independent code audit.
+> These supersede the previous developer's claim that "the plugin is stable."
+> See Section 26 for full details on each bug and Section 27 for the systematic fix plan.
+
+#### CRITICAL (plugin does not function correctly until fixed)
+1. **BUG-C1: Activation cascade** — `on_plugin_update()` runs all migrations synchronously on activation, triggering 5+ scrapes, usleep() calls, and HTTP HEAD checks. This exhausts Groq TPM and causes timeouts. **FIX**: Guard migrations to skip on fresh install; move scrapes to async cron.
+2. **BUG-C2: Display pipeline deadlock** — Records are inserted as `pending` but `class-ontario-obituaries-display.php` only queries `status='published'`. Without successful AI rewrite, no obituaries appear. **FIX**: Show records without AI rewrite; make rewrite an enhancement, not a gate.
+3. **BUG-C3: Non-idempotent migrations** — `ontario_obituaries_deployed_version` is not cleared on uninstall, so reinstalling re-runs every migration from v3.9.0+. **FIX**: Clear version option on uninstall; add idempotency guards.
+4. **BUG-C4: Duplicate cleanup on every init** — `ontario_obituaries_cleanup_duplicates()` (line ~742) runs `GROUP BY` on every page load, scanning 725+ records. **FIX**: Gate behind admin-only cron or post-scrape hook, not `init`.
+
+#### HIGH (significant functional or security issues)
+5. **BUG-H1: Nonsense rate calculation in cron-rewriter.php** — Line ~224 divides by `$processed` which can be 0 or produces misleading rates. **FIX**: Guard division, use accurate timing.
+6. **BUG-H2: Lingering API keys after uninstall** — `uninstall.php` does not delete `ontario_obituaries_groq_api_key`, chatbot settings, Google Ads credentials, or IndexNow key. **FIX**: Add all option keys to uninstall cleanup.
+7. **BUG-H3: Duplicate index creation** — v4.3.0 migration creates identical indexes on `gofundme_checked_at` and `last_audit_at` that may already exist. **FIX**: Add IF NOT EXISTS guards or check before creating.
+8. **BUG-H4: Possible undefined $result** — Line ~1208 in `ontario-obituaries.php` may reference `$result` before assignment in edge cases. **FIX**: Initialize variable before conditional block.
+9. **BUG-H5: Premature throttling in shutdown rewriter** — Line ~1293 sets 1-minute throttle on shutdown hook, but the lock is checked before processing even starts. **FIX**: Only throttle after successful processing.
+10. **BUG-H6: Over-permissive domain lock** — Line ~38 uses `strpos()` which matches substrings (e.g., `evilmonacomonuments.ca` would pass). **FIX**: Use exact match or parsed hostname comparison.
+11. **BUG-H7: Stale cron hooks survive uninstall** — `uninstall.php` only clears 2 of 5+ cron hooks (misses ai_rewrite_batch, gofundme_batch, authenticity_audit, google_ads_analysis). **FIX**: Clear all plugin cron hooks.
+
+#### MEDIUM (architectural debt, misleading docs, or edge-case risks)
+12. **BUG-M1: Shared Groq API key across 3 consumers** — AI Rewriter, Chatbot, and Authenticity Checker all use the same Groq key with no shared rate limiter. They can collectively exceed TPM. **FIX**: Implement a shared Groq rate limiter or stagger schedules.
+13. **BUG-M2: Misleading Oversight Hub claims** — Previous docs state "plugin is stable, all other features work correctly." This is false — display deadlock, activation cascade, and performance bugs exist. **FIX**: This update corrects the record.
+14. **BUG-M3: 1,721-line on_plugin_update() function** — Unmaintainable monolith; adding new migrations increases risk of regression. **FIX**: Refactor into versioned migration files.
+15. **BUG-M4: Risky name-only dedup pass** — 3rd dedup pass matches by name alone (no date), risking deletion of different people with the same name. **FIX**: Add a date-range guard or remove name-only pass.
+16. **BUG-M5: Activation race conditions** — Multiple cron events scheduled in quick succession can cause overlapping scrapes. **FIX**: Use transient locks for scrape scheduling.
+17. **BUG-M6: Unrealistic throughput comments** — Code comments claim "~200 rewrites/hour" but math shows ~15 per 5-min window = ~180/hour max theoretical. **FIX**: Update comments to reflect reality.
+
+#### PREVIOUSLY KNOWN (carried forward)
+18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done (2026-02-13 through 2026-02-15)
+19. **BLOCKED: AI Rewriter Groq TPM limit** — See Section 25 for solutions (upgrade plan, switch API, etc.)
+20. **Enable Google Ads Optimizer** when busy season starts (spring)
+21. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
+22. **Schema redesign**: Handle records without death date (future PR)
+23. **Out-of-province filtering** (low priority)
+24. **Automated deployment** via GitHub Actions or WP Pusher paid (low priority)
 
 ---
 
@@ -951,3 +983,363 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 | `ontario-obituaries.php` | Version bump to 4.5.0, chatbot class loader, v4.5.0 migration block |
 | `includes/class-ontario-obituaries.php` | Chatbot settings UI section, Google Ads settings UI, `chatbot_enabled` in sanitizer |
 | `templates/seo/individual.php` | Schema.org DonateAction for GoFundMe links, version header update |
+
+---
+
+## Section 26 — Independent Code Audit (2026-02-16)
+
+> **Performed by**: Independent code review (not the previous developer)
+> **Scope**: Line-by-line inspection of all PHP files in the plugin
+> **Finding**: The plugin has significant bugs beyond the Groq TPM rate limit.
+> The previous developer's diagnosis of "code works, it's just a Groq limit"
+> was **incomplete and misleading**. Multiple architectural bugs prevent the
+> plugin from functioning correctly even if Groq had unlimited capacity.
+
+### CRITICAL BUGS (4)
+
+#### BUG-C1: Activation Cascade — Plugin Activation Publishes 5-15 Obituaries Then Crashes
+
+**Location**: `ontario-obituaries.php`, `ontario_obituaries_activate()` (line ~279) and `ontario_obituaries_on_plugin_update()` (line ~3544)
+
+**What happens**:
+1. On activation, `ontario_obituaries_activate()` schedules `ontario_obituaries_initial_collection` (immediate cron event).
+2. `ontario_obituaries_on_plugin_update()` runs on `init` hook and executes **all** versioned migration blocks from v3.9.0 through v5.0.2 on a fresh install (because `ontario_obituaries_deployed_version` starts empty).
+3. Multiple migration blocks trigger synchronous scrapes with `usleep(500000)` pauses, HTTP HEAD requests for image validation (logo filtering), and immediate rewrite scheduling.
+4. This chain consumes several minutes of execution time, publishes 5-15 obituaries via the AI rewriter, then Groq's TPM limit kicks in and everything halts with 429 errors.
+5. The user sees "5-15 obituaries published, then it stops" — which is not primarily a Groq issue, it's a runaway activation pipeline.
+
+**Why the previous developer missed this**: They focused exclusively on tuning the Groq delay (6s → 8s → 12s → 15s) across PRs #72-#80 without examining what triggers the initial burst. The burst comes from the activation cascade, not from steady-state cron.
+
+**Root cause**: `on_plugin_update()` is a 1,721-line monolith with no fresh-install guard. Every migration block runs sequentially on first activation.
+
+**Fix plan**:
+- Add a "fresh install" guard at the top of `on_plugin_update()` — if no `ontario_obituaries_deployed_version` exists, set it to current version and skip all historical migrations.
+- Move all scrape triggers to deferred cron events (never synchronous on `init`).
+- Split the function into versioned migration files for maintainability.
+
+---
+
+#### BUG-C2: Display Pipeline Deadlock — Obituaries Invisible Without AI Rewrite
+
+**Location**: `includes/class-ontario-obituaries-display.php`, `get_obituaries()` and `get_obituary()` methods
+
+**What happens**:
+1. The scraper inserts obituary records with `status = 'pending'` (or no explicit status field — the column may not exist in some code paths).
+2. `get_obituaries()` adds `WHERE status = 'published'` to every query.
+3. Records only become `published` after the AI rewriter successfully processes them and updates the row.
+4. But the AI rewriter is rate-limited (Groq TPM), so only ~15 records get rewritten per run.
+5. **Result**: 710+ of 725 obituaries in the database are invisible on the frontend because they were never AI-rewritten and thus never marked `published`.
+
+**Why the previous developer missed this**: The display class was modified independently of the rewriter. The `status = 'published'` filter was intended as a quality gate, but it creates a hard dependency on the AI rewriter — which is broken.
+
+**Impact**: The plugin appears to work (725 records in DB) but the public site shows far fewer obituaries than expected. Users see a fraction of the actual data.
+
+**Fix plan**:
+- Show all non-suppressed obituaries by default (remove or relax the `status = 'published'` requirement).
+- Use `ai_description` as an enhancement layer, not a publication gate.
+- Add a fallback: display `description` (raw scraped text) when `ai_description` is not yet available.
+
+---
+
+#### BUG-C3: Non-Idempotent Migrations — Re-Run on Every Reinstall
+
+**Location**: `ontario-obituaries.php`, `ontario_obituaries_on_plugin_update()` and `uninstall.php`
+
+**What happens**:
+1. `on_plugin_update()` compares `ontario_obituaries_deployed_version` (stored in `wp_options`) against each migration block's version.
+2. `uninstall.php` does **not** delete `ontario_obituaries_deployed_version` from the options table.
+3. However, on a truly fresh install (new WordPress or new site), the option doesn't exist.
+4. When the option is empty/missing, ALL migration blocks from v3.9.0 onward execute — including ones that run synchronous HTTP requests, schedule cron events, and modify database schema.
+5. Each reinstall triggers the same cascade as BUG-C1 because there's no "I'm a fresh install, skip old migrations" guard.
+
+**Additional problem**: Some migration blocks (e.g., v4.0.1 logo filter) perform HTTP HEAD requests to CDN URLs for every record in the database. On a site with 725+ records, this is ~725 HTTP requests during `init`.
+
+**Fix plan**:
+- On fresh install (no deployed version): Set version to current and skip all migrations.
+- Add idempotency guards to each migration block (check if the work has already been done).
+- `uninstall.php` should either delete the version option (for clean reinstall) or leave it (to prevent re-migration). Choose one strategy and document it.
+
+---
+
+#### BUG-C4: Duplicate Cleanup Runs on Every Page Load
+
+**Location**: `ontario-obituaries.php`, `ontario_obituaries_cleanup_duplicates()` (line ~742), hooked to `init`
+
+**What happens**:
+1. `ontario_obituaries_cleanup_duplicates()` is hooked to WordPress `init`, meaning it fires on **every single page load** (frontend and admin).
+2. The function runs a full `GROUP BY name, date_of_death, funeral_home` query across the entire `ontario_obituaries` table (725+ rows).
+3. For each duplicate group found, it loads all records, compares them, picks a winner, and deletes the losers.
+4. This adds a measurable DB load to every page request — unnecessary since duplicates only enter the system during scrape runs.
+
+**Impact**: Frontend performance degradation. On shared hosting (which this site uses), this is especially harmful.
+
+**Fix plan**:
+- Move duplicate cleanup to a post-scrape hook (run it only after `ontario_obituaries_scheduled_collection` completes).
+- Alternatively, run it on a low-frequency cron (e.g., once daily) or only in admin context.
+- Add a transient-based "last cleanup" timestamp to prevent running more than once per hour.
+
+---
+
+### HIGH-SEVERITY BUGS (7)
+
+#### BUG-H1: Nonsense Rate Calculation in cron-rewriter.php
+
+**Location**: `cron-rewriter.php`, line ~224
+
+**What happens**:
+- After processing, the script calculates a "rate" by dividing processed count by elapsed time.
+- If `$processed` is 0, or if the elapsed time calculation is wrong, the rate is nonsensical.
+- The logged rate misleads developers about actual throughput.
+
+**Fix**: Guard division by zero; log actual tokens consumed if available from Groq response headers.
+
+---
+
+#### BUG-H2: Incomplete Uninstall — API Keys and Cron Hooks Persist
+
+**Location**: `uninstall.php`
+
+**What happens**:
+- The uninstall script deletes a specific list of options but **misses**:
+  - `ontario_obituaries_groq_api_key` (Groq API key — sensitive!)
+  - `ontario_obituaries_chatbot_settings` and `ontario_obituaries_chatbot_conversations`
+  - `ontario_obituaries_google_ads_credentials` (Google Ads OAuth tokens — very sensitive!)
+  - `ontario_obituaries_indexnow_key`
+  - `ontario_obituaries_rewriter_running` (transient lock)
+  - `ontario_obituaries_leads` (lead capture data)
+- Additionally, only 2 cron hooks are cleared (`collection_event` and `initial_collection`). Missing:
+  - `ontario_obituaries_ai_rewrite_batch`
+  - `ontario_obituaries_gofundme_batch`
+  - `ontario_obituaries_authenticity_audit`
+  - `ontario_obituaries_google_ads_analysis`
+  - `ontario_obituaries_shutdown_rewriter` (shutdown hook, not cron, but still registered)
+
+**Security risk**: API keys for Groq and Google Ads remain in `wp_options` after uninstall. If the site is compromised later, these keys are exposed.
+
+**Fix**: Add all option keys to the uninstall cleanup list. Clear all plugin-related cron hooks using `wp_clear_scheduled_hook()`.
+
+---
+
+#### BUG-H3: Duplicate Index Creation in v4.3.0 Migration
+
+**Location**: `ontario-obituaries.php`, v4.3.0 migration block (lines ~3532-3534)
+
+**What happens**:
+- The migration adds indexes on `gofundme_checked_at` and `last_audit_at`.
+- If the migration runs twice (due to BUG-C3), MySQL may throw "Duplicate key name" errors.
+- No `IF NOT EXISTS` guard or prior existence check.
+
+**Fix**: Check if index exists before creating, or use `CREATE INDEX IF NOT EXISTS` (MySQL 8+) or wrap in a try/catch.
+
+---
+
+#### BUG-H4: Possible Undefined $result Variable
+
+**Location**: `ontario-obituaries.php`, line ~1208
+
+**What happens**:
+- In certain conditional branches (e.g., when scraping is skipped), `$result` may be used without having been assigned.
+- This would generate a PHP Notice or Warning, and downstream code relying on `$result` would behave unpredictably.
+
+**Fix**: Initialize `$result = null;` (or appropriate default) before the conditional block.
+
+---
+
+#### BUG-H5: Premature Throttling in Shutdown Rewriter
+
+**Location**: `ontario-obituaries.php`, line ~1293
+
+**What happens**:
+- The shutdown hook checks a throttle transient (`ontario_obituaries_last_shutdown_rewrite`) before processing.
+- The transient is set for 60 seconds, meaning the shutdown rewriter can only fire once per minute.
+- But the check happens BEFORE any processing occurs, so even if the last attempt failed (e.g., Groq 429), the next admin page load is still throttled.
+- Combined with the mutual exclusion lock, this means the shutdown rewriter is effectively dead after the first Groq rate limit hit.
+
+**Fix**: Set the throttle transient AFTER successful processing, not before. On failure, allow immediate retry on next page load.
+
+---
+
+#### BUG-H6: Over-Permissive Domain Lock
+
+**Location**: `ontario-obituaries.php`, line ~38 (domain check function)
+
+**What happens**:
+- The domain lock uses `strpos($current_host, $authorized_domain)` to check if the current host is authorized.
+- `strpos()` checks for substring containment, not exact match.
+- A malicious domain like `evilmonacomonuments.ca` or `monacomonuments.ca.attacker.com` would pass the check.
+
+**Fix**: Use `$current_host === $authorized_domain` (exact match) or parse the hostname and compare the registered domain.
+
+---
+
+#### BUG-H7: Stale Cron Hooks Survive Uninstall
+
+**Location**: `uninstall.php`
+
+**What happens**:
+- Only `ontario_obituaries_collection_event` and `ontario_obituaries_initial_collection` are cleared.
+- The following cron hooks persist after uninstall:
+  - `ontario_obituaries_ai_rewrite_batch`
+  - `ontario_obituaries_gofundme_batch`
+  - `ontario_obituaries_authenticity_audit`
+  - `ontario_obituaries_google_ads_analysis`
+- These orphaned hooks will fire WordPress callbacks that no longer exist, generating PHP fatal errors until the cron entries naturally expire.
+
+**Fix**: Add all plugin cron hooks to the uninstall cleanup. Use a loop over a known list of hook names.
+
+---
+
+### MEDIUM-SEVERITY ISSUES (6)
+
+#### BUG-M1: Shared Groq API Key — No Rate Coordination
+
+**Location**: `class-ai-rewriter.php`, `class-ai-chatbot.php`, `class-ai-authenticity-checker.php`
+
+**What happens**:
+- Three separate classes all use the same Groq API key (`ontario_obituaries_groq_api_key`).
+- None of them coordinate their API usage. Each has its own delay/throttle logic.
+- If a visitor uses the chatbot while the AI rewriter is processing, both consume from the same 6,000 TPM quota.
+- The authenticity checker (10 requests per 4-hour cycle) further compounds this.
+
+**Fix**: Implement a shared rate limiter (e.g., a transient-based token bucket) that all three consumers check before making API calls.
+
+---
+
+#### BUG-M2: Misleading Documentation (CORRECTED)
+
+**Location**: This file (`PLATFORM_OVERSIGHT_HUB.md`) and `DEVELOPER_LOG.md`
+
+**What happened**:
+- The previous developer wrote "the plugin is stable and all other features work correctly" and "the AI Rewriter issue is a Groq free-tier limitation, not a code bug."
+- This was incorrect. The activation cascade (BUG-C1), display deadlock (BUG-C2), init-phase duplicate cleanup (BUG-C4), and several other bugs exist independently of the Groq TPM limit.
+- This misleading documentation caused the project to be PAUSED instead of fixed.
+
+**Status**: CORRECTED by this audit (2026-02-16). This document now reflects the true state.
+
+---
+
+#### BUG-M3: Monolithic on_plugin_update() — 1,721 Lines
+
+**Location**: `ontario-obituaries.php`, `ontario_obituaries_on_plugin_update()`
+
+**What happens**:
+- Every version migration from v3.9.0 to v5.0.2 is a sequential block inside one gigantic function.
+- Adding new migrations is error-prone — a misplaced brace or missing version guard breaks all subsequent migrations.
+- The function mixes schema changes, data repairs, HTTP calls, cron scheduling, and cache purging.
+
+**Fix**: Refactor into a migration runner pattern:
+1. Each migration is a separate file in `includes/migrations/` (e.g., `migration-4.2.2.php`).
+2. A runner in `on_plugin_update()` scans the directory, sorts by version, and runs any migration newer than the deployed version.
+3. Each migration file is self-contained and idempotent.
+
+---
+
+#### BUG-M4: Risky Name-Only Dedup Pass
+
+**Location**: `ontario-obituaries.php`, 3rd dedup pass in `ontario_obituaries_cleanup_duplicates()`
+
+**What happens**:
+- The 3rd dedup pass matches records by normalized name alone (no date comparison).
+- Two different people with the same name (e.g., "John Smith" who died in 2024 and another "John Smith" who died in 2025) could be incorrectly merged/deleted.
+- This is especially risky for common names.
+
+**Fix**: Add a date-range guard (e.g., only merge name-only matches if death dates are within 30 days) or remove the name-only pass entirely.
+
+---
+
+#### BUG-M5: Activation Race Conditions
+
+**Location**: `ontario-obituaries.php`, multiple `wp_schedule_single_event()` calls
+
+**What happens**:
+- During activation and migration, multiple cron events are scheduled in quick succession (collection, rewrite batch, GoFundMe batch, authenticity audit).
+- If WP-Cron fires immediately (e.g., on the next page load), multiple scrape and API operations can overlap.
+- The mutual exclusion lock only protects the rewriter — not the scraper, GoFundMe linker, or authenticity checker.
+
+**Fix**: Add a staggered scheduling pattern (e.g., collection at +0s, rewrite at +300s, GoFundMe at +600s) and implement transient locks for all API-consuming processes.
+
+---
+
+#### BUG-M6: Unrealistic Throughput Comments
+
+**Location**: `class-ai-rewriter.php`, `cron-rewriter.php`, `class-ontario-obituaries.php`
+
+**What happens**:
+- Code comments claim "~200 rewrites/hour" or "~250/hour" throughput.
+- Actual math: 12s delay × 5 req/min = 300 req/hour theoretical, but TPM limit of 6,000 tokens/min with ~1,100 tokens/req = ~5.4 req/min max = ~324 req/hour theoretical.
+- In practice, the plugin processes ~15 per 5-min window before TPM is exhausted, then waits for the next window. Real throughput is far lower.
+
+**Fix**: Update all comments to state actual observed throughput (~15 per 5-min cron window, ~180/hour maximum theoretical).
+
+---
+
+## Section 27 — Systematic Bug Fix To-Do List (2026-02-16)
+
+> **Purpose**: Step-by-step plan to fix every bug identified in Section 26.
+> Each item maps to a specific bug ID and includes file locations, the fix
+> description, and which PR category it belongs to (per Rule 8: one concern per PR).
+>
+> **Priority**: CRITICAL items must be fixed before any other development.
+> HIGH items should follow. MEDIUM items can be batched into improvement PRs.
+
+### Sprint 1: Critical Fixes (must-fix before plugin is usable)
+
+| # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
+|---|--------|-------------|------|-----------------|-------------|
+| 1 | BUG-C1 | Infrastructure | **Add fresh-install guard to `on_plugin_update()`** — If `ontario_obituaries_deployed_version` is empty/missing, set it to current version and return immediately (skip all historical migrations). | `ontario-obituaries.php` | 30 min |
+| 2 | BUG-C1 | Infrastructure | **Move all scrape triggers to deferred cron** — Replace all `usleep()` + synchronous scrape calls inside migration blocks with `wp_schedule_single_event()` calls at staggered future times. | `ontario-obituaries.php` | 1 hour |
+| 3 | BUG-C2 | Display fix | **Remove `status='published'` gate from display queries** — Change `get_obituaries()` and `get_obituary()` to show all non-suppressed records. Use `ai_description` as enhancement, display `description` as fallback. | `includes/class-ontario-obituaries-display.php` | 45 min |
+| 4 | BUG-C2 | Display fix | **Update templates to gracefully handle missing `ai_description`** — Show raw description when AI rewrite is not available; add a visual indicator ("AI-enhanced" badge) when it is. | `templates/obituaries.php`, `templates/seo/individual.php` | 30 min |
+| 5 | BUG-C3 | Infrastructure | **Make migrations idempotent** — Add existence checks before schema modifications (column exists? index exists?). Ensure each migration block has a "work already done" guard. | `ontario-obituaries.php` | 1.5 hours |
+| 6 | BUG-C4 | Infrastructure | **Move duplicate cleanup off `init` hook** — Remove from `init`; attach to `ontario_obituaries_scheduled_collection` completion or a daily cron. Add transient throttle (max once per hour). | `ontario-obituaries.php` | 30 min |
+
+### Sprint 2: High-Severity Fixes
+
+| # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
+|---|--------|-------------|------|-----------------|-------------|
+| 7 | BUG-H1 | Infrastructure | **Fix rate calculation in cron-rewriter.php** — Guard division by zero; calculate rate from elapsed time and token count, not just processed count. | `cron-rewriter.php` | 15 min |
+| 8 | BUG-H2 | Security | **Complete uninstall cleanup** — Add ALL plugin options to delete list: `groq_api_key`, `chatbot_settings`, `chatbot_conversations`, `google_ads_credentials`, `indexnow_key`, `rewriter_running`, `leads`, `deployed_version`, and all related transients. | `uninstall.php` | 30 min |
+| 9 | BUG-H7 | Security | **Clear ALL cron hooks on uninstall** — Add `wp_clear_scheduled_hook()` for: `ai_rewrite_batch`, `gofundme_batch`, `authenticity_audit`, `google_ads_analysis`, `shutdown_rewriter`. | `uninstall.php` | 15 min |
+| 10 | BUG-H3 | Infrastructure | **Guard duplicate index creation** — Add `SHOW INDEX FROM` check before `ALTER TABLE ADD INDEX` in v4.3.0 migration block. | `ontario-obituaries.php` | 15 min |
+| 11 | BUG-H4 | Infrastructure | **Initialize $result variable** — Add `$result = null;` before the conditional block at line ~1208. | `ontario-obituaries.php` | 5 min |
+| 12 | BUG-H5 | Infrastructure | **Fix shutdown rewriter throttle** — Move transient set to AFTER successful processing. On failure, delete the throttle transient to allow immediate retry. | `ontario-obituaries.php` | 20 min |
+| 13 | BUG-H6 | Security | **Fix domain lock to exact match** — Replace `strpos()` with strict `===` comparison against `parse_url(home_url(), PHP_URL_HOST)`. | `ontario-obituaries.php` | 15 min |
+
+### Sprint 3: Medium-Severity Improvements
+
+| # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
+|---|--------|-------------|------|-----------------|-------------|
+| 14 | BUG-M1 | Infrastructure | **Implement shared Groq rate limiter** — Create a `class-groq-rate-limiter.php` singleton that tracks cumulative token usage in a transient. All three consumers (rewriter, chatbot, authenticity) check it before API calls. | New file + 3 class modifications | 2 hours |
+| 15 | BUG-M3 | Infrastructure | **Refactor migrations into separate files** — Create `includes/migrations/` directory. Extract each version block into its own file. Build a runner that executes migrations in order. | `ontario-obituaries.php` + new directory | 4 hours |
+| 16 | BUG-M4 | Data integrity | **Add date guard to name-only dedup** — In the 3rd dedup pass, require death dates to be within 30 days of each other (or both empty) before merging by name alone. | `ontario-obituaries.php` | 30 min |
+| 17 | BUG-M5 | Infrastructure | **Stagger cron scheduling** — Add offsets to all `wp_schedule_single_event()` calls: collection +0s, rewrite +300s, GoFundMe +600s, authenticity +900s. Add transient locks for scraper and GoFundMe. | `ontario-obituaries.php`, `includes/class-ontario-obituaries.php` | 45 min |
+| 18 | BUG-M6 | Documentation | **Correct all throughput comments** — Find and update all references to "200/hour", "250/hour", "360/hour" to reflect actual ~15 per 5-min window. | Multiple files | 15 min |
+
+### Sprint 4: Groq TPM Resolution (original blocked item)
+
+| # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
+|---|--------|-------------|------|-----------------|-------------|
+| 19 | — | Infrastructure | **Evaluate alternative free LLM APIs** — Test OpenRouter, Together.ai, Cloudflare Workers AI for higher free-tier limits. | Research + `class-ai-rewriter.php` | 2 hours |
+| 20 | — | Infrastructure | **Reduce prompt token usage** — Trim system prompt to <200 tokens. Use a compressed instruction format. | `class-ai-rewriter.php` | 1 hour |
+| 21 | — | Infrastructure | **Implement time-spread processing** — Process 1 obituary every 2 minutes across the day (720/day) instead of batching in 5-min windows. | `class-ai-rewriter.php`, `ontario-obituaries.php` | 1 hour |
+| 22 | — | Owner action | **Upgrade Groq plan** — Paid tier provides 10x+ higher TPM limits. Easiest fix if budget allows. | Admin only | N/A |
+
+### Execution Order
+
+1. **Start with Sprint 1** — These fixes unblock the plugin's core functionality.
+2. **Sprint 2 immediately after** — Security issues (API key cleanup, domain lock) are time-sensitive.
+3. **Sprint 3 when time allows** — Architectural improvements that reduce future risk.
+4. **Sprint 4 is a business decision** — Owner chooses between upgrading Groq or switching APIs.
+
+### PR Mapping (per Rule 8: one concern per PR)
+
+| PR | Category | Bug IDs Covered | Description |
+|----|----------|-----------------|-------------|
+| PR-A | Infrastructure | BUG-C1, BUG-C3, BUG-C4 | Activation cascade fix: fresh-install guard, async scrapes, dedup off init |
+| PR-B | Display fix | BUG-C2 | Display pipeline fix: remove published gate, show all non-suppressed records |
+| PR-C | Security | BUG-H2, BUG-H6, BUG-H7 | Security hardening: complete uninstall, fix domain lock, clear all cron hooks |
+| PR-D | Infrastructure | BUG-H1, BUG-H3, BUG-H4, BUG-H5 | Minor infrastructure fixes: rate calc, index guard, init vars, throttle fix |
+| PR-E | Infrastructure | BUG-M1, BUG-M5 | Rate limiter: shared Groq coordinator + staggered scheduling |
+| PR-F | Data integrity | BUG-M4 | Dedup safety: date guard on name-only pass |
+| PR-G | Infrastructure | BUG-M3 | Migration refactor: split into versioned files |
+| PR-H | Documentation | BUG-M2, BUG-M6 | Documentation corrections: throughput comments, Hub updates |
