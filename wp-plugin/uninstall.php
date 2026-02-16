@@ -100,6 +100,7 @@ $option_keys = array(
     // but should still be cleaned up.
     'ontario_obituaries_dedup_lock',
     'ontario_obituaries_dedup_throttle_log',
+    'ontario_obituaries_cron_secret',           // QC-R6: Optional /cron auth secret
 );
 
 foreach ( $option_keys as $key ) {
@@ -130,6 +131,7 @@ $transient_keys = array(
     'ontario_obituaries_rewriter_running',     // Rewriter lock transient
     'ontario_obituaries_rewriter_scheduling',  // Rewriter scheduling guard
     'ontario_obituaries_rewriter_throttle',    // Rewriter throttle transient
+    'ontario_obituaries_cron_rest_limiter',    // QC-R5: REST /cron rate limiter
 );
 
 foreach ( $transient_keys as $key ) {

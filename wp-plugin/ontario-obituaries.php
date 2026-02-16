@@ -2,7 +2,9 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.0.4
+ * Version: 5.0.5
+ * Requires at least: 5.0
+ * Requires PHP: 7.4
  * Author: Monaco Monuments
  * Author URI: https://monacomonuments.ca
  * Text Domain: ontario-obituaries
@@ -15,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.0.4' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.0.5' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -68,9 +70,24 @@ define( 'ONTARIO_OBITUARIES_AUTHORIZED_DOMAINS', 'monacomonuments.ca,localhost,1
 
 function ontario_obituaries_is_authorized_domain() {
     $host = wp_parse_url( home_url(), PHP_URL_HOST );
+    if ( empty( $host ) ) {
+        return false;
+    }
+    $host       = strtolower( $host );
     $authorized = array_map( 'trim', explode( ',', ONTARIO_OBITUARIES_AUTHORIZED_DOMAINS ) );
+    $authorized = array_filter( $authorized, 'strlen' ); // QC-R2: Drop empty entries from trailing commas.
     foreach ( $authorized as $domain ) {
-        if ( $host === $domain || false !== strpos( $host, $domain ) ) {
+        $domain = strtolower( $domain );
+        // BUG-H6 FIX (v5.0.5): Use exact match or strict subdomain suffix match.
+        // Previously used strpos() which allowed substring spoofing
+        // (e.g., "evilmonacomonuments.ca" would pass).
+        // Now: "monacomonuments.ca" matches exactly, or "staging.monacomonuments.ca"
+        // matches via ".monacomonuments.ca" suffix — but "evilmonacomonuments.ca" fails.
+        if ( $host === $domain ) {
+            return true;
+        }
+        // Allow subdomains: host must end with ".{domain}" (leading dot prevents substring abuse).
+        if ( strlen( $host ) > strlen( $domain ) && substr( $host, -( strlen( $domain ) + 1 ) ) === '.' . $domain ) {
             return true;
         }
     }
@@ -669,8 +686,12 @@ function ontario_obituaries_cleanup_duplicates() {
 
     // v3.6.0: Auto-clean test data on production (records with 'Test' in name
     // and source_url pointing to home_url — added via add_test_data() debug action).
+    // QC-R4 FIX: Tightened pattern from '%Test %' to 'Test Obituary%' or 'Test Record%'
+    // to prevent accidental deletion of legitimate obituaries containing "Test"
+    // (e.g., a real person named "Tester Smith" or "Contest Winner").
+    // Also requires source_url to be empty OR match known test domains specifically.
     $test_removed = $wpdb->query(
-        "DELETE FROM `{$table}` WHERE name LIKE '%Test %' AND ( source_url = '' OR source_url LIKE '%monacomonuments.ca%' OR source_url LIKE '%example.com%' )"
+        "DELETE FROM `{$table}` WHERE ( name LIKE 'Test Obituary%' OR name LIKE 'Test Record%' OR name LIKE 'Test Data%' ) AND ( source_url = '' OR source_url LIKE '%monacomonuments.ca%' OR source_url LIKE '%example.com%' OR source_url LIKE '%localhost%' )"
     );
     if ( $test_removed > 0 ) {
         ontario_obituaries_log( sprintf( 'Removed %d test data records', $test_removed ), 'info' );
@@ -750,6 +771,18 @@ function ontario_obituaries_cleanup_duplicates() {
     // sources that report slightly different dates for the same person.
     // Groups by normalized name only; keeps the record with the longest
     // description and most recent death date.
+    //
+    // BUG-M4 FIX (v5.0.5): Added 90-day date-range guard to prevent merging
+    // distinct individuals who share the same normalized name but died in
+    // different periods (e.g., "John Smith" who died in 2022 vs. a different
+    // "John Smith" who died in 2024).  Without this guard, Pass 3 would merge
+    // them into one record — violating the "100% factual" publishing rule.
+    //
+    // Guard logic: within each name group, only merge records whose death dates
+    // are ALL within 90 days of the earliest death date in the group.  If the
+    // spread exceeds 90 days, the group is split into sub-groups by proximity.
+    // 90 days is generous — most cross-source date discrepancies are <7 days,
+    // but some funeral homes backdate notices by weeks.
     $all_rows_p3 = $wpdb->get_results(
         "SELECT id, name, date_of_death FROM `{$table}` WHERE suppressed_at IS NULL ORDER BY id"
     );
@@ -764,16 +797,52 @@ function ontario_obituaries_cleanup_duplicates() {
             $name_only_groups[ $norm_name ][] = $row;
         }
 
+        $pass3_removed = 0;
         foreach ( $name_only_groups as $group ) {
             if ( count( $group ) <= 1 ) {
                 continue;
             }
-            $ids = wp_list_pluck( $group, 'id' );
-            $removed += ontario_obituaries_merge_duplicate_ids( $table, $ids );
-        }
 
-        if ( $removed > 0 ) {
-            ontario_obituaries_log( sprintf( 'Pass 3 (name-only): merged %d duplicate records', $removed ), 'info' );
+            // BUG-M4 FIX: Split group into date-proximity sub-groups (90 days).
+            // Sort by death date, then cluster: any row >90 days from the
+            // sub-group's earliest date starts a new sub-group.
+            usort( $group, function ( $a, $b ) {
+                return strcmp( $a->date_of_death, $b->date_of_death );
+            } );
+
+            $sub_groups    = array();
+            $current_sub   = array( $group[0] );
+            $anchor_ts     = strtotime( $group[0]->date_of_death );
+            $max_spread    = 90 * DAY_IN_SECONDS; // 90 days.
+
+            for ( $i = 1, $len = count( $group ); $i < $len; $i++ ) {
+                $row_ts = strtotime( $group[ $i ]->date_of_death );
+                // If death date is unparseable (0 or false), treat as unknown —
+                // group with previous to avoid orphaning.
+                if ( $row_ts && $anchor_ts && ( $row_ts - $anchor_ts ) > $max_spread ) {
+                    // Start a new sub-group.
+                    $sub_groups[]  = $current_sub;
+                    $current_sub   = array( $group[ $i ] );
+                    $anchor_ts     = $row_ts;
+                } else {
+                    $current_sub[] = $group[ $i ];
+                }
+            }
+            $sub_groups[] = $current_sub; // Push final sub-group.
+
+            // Merge only within each date-proximate sub-group.
+            foreach ( $sub_groups as $sub ) {
+                if ( count( $sub ) <= 1 ) {
+                    continue;
+                }
+                $ids = wp_list_pluck( $sub, 'id' );
+                $pass3_removed += ontario_obituaries_merge_duplicate_ids( $table, $ids );
+            }
+        }
+        $removed += $pass3_removed;
+
+        if ( $pass3_removed > 0 ) {
+            ontario_obituaries_log( sprintf( 'Pass 3 (name-only, 90-day guard): merged %d duplicate records', $pass3_removed ), 'info' );
         }
     }
 
@@ -853,7 +922,7 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
     // add_option() returns false if the key already exists, keeping the
     // WP object-cache and notoptions-cache in sync (unlike raw SQL).
     $lock_data = wp_json_encode( array( 'ts' => $now, 'state' => 'running' ) );
-    $acquired  = add_option( $lock_key, $lock_data, '', 'no' );
+    $acquired  = add_option( $lock_key, $lock_data, '', false );
 
     if ( ! $acquired ) {
         // Lock row exists — read current state.
@@ -886,7 +955,7 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
             $threshold = $force ? $refractory : $cooldown;
             if ( $age >= $threshold ) {
                 // Re-acquire: overwrite with running state.
-                update_option( $lock_key, wp_json_encode( array( 'ts' => $now, 'state' => 'running' ) ), 'no' );
+                update_option( $lock_key, wp_json_encode( array( 'ts' => $now, 'state' => 'running' ) ), false );
                 // Fall through to run cleanup below.
             } else {
                 // Within cooldown/refractory — skip.
@@ -895,7 +964,7 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
                 $last_throttle_log = (int) get_option( 'ontario_obituaries_dedup_throttle_log', 0 );
                 if ( ( $now - $last_throttle_log ) > DAY_IN_SECONDS ) {
                     ontario_obituaries_log( 'Dedup throttled (cooldown ' . $age . '/' . $threshold . 's). Daily heartbeat.', 'debug' );
-                    update_option( 'ontario_obituaries_dedup_throttle_log', $now, 'no' );
+                    update_option( 'ontario_obituaries_dedup_throttle_log', $now, false );
                 }
                 return false;
             }
@@ -915,12 +984,19 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
         ontario_obituaries_cleanup_duplicates();
         $ran_ok = true;
         // Mark completion — starts the cooldown window.
-        update_option( $lock_key, wp_json_encode( array( 'ts' => time(), 'state' => 'done' ) ), 'no' );
+        update_option( $lock_key, wp_json_encode( array( 'ts' => time(), 'state' => 'done' ) ), false );
         ontario_obituaries_log( 'Dedup completed successfully.', 'debug' );
-    } catch ( \Exception $e ) {
+    } catch ( \Throwable $e ) {
+        // QC-R5 FIX: catch \Throwable (not just \Exception) for PHP 7+ coverage.
+        // \TypeError, OOM-triggered \Error, etc. bypass \Exception catch blocks.
+        // QC-R6 FIX: Clear the lock on caught errors to avoid 1-hour functional
+        // freeze.  Only truly unrecoverable fatals (segfault, OOM kill by OS)
+        // leave the lock in "running" state for stale_ttl to clear.
+        delete_option( $lock_key );
         ontario_obituaries_log( 'Dedup failed: ' . $e->getMessage(), 'error' );
     }
-    // On fatal (non-Exception): lock stays as "running"; stale_ttl clears it.
+    // On process-kill fatal (not caught by \Throwable): lock stays as "running";
+    // stale_ttl (1 hour) clears it on next attempt.
 
     return $ran_ok;
 }
@@ -1223,6 +1299,7 @@ function ontario_obituaries_deactivate() {
     wp_clear_scheduled_hook( 'ontario_obituaries_dedup_once' );
     delete_option( 'ontario_obituaries_dedup_lock' );
     delete_option( 'ontario_obituaries_dedup_throttle_log' );
+    delete_transient( 'ontario_obituaries_cron_rest_limiter' ); // QC-R5: REST /cron rate limiter.
 
     // v3.0.0: Remove SEO rewrite rules
     flush_rewrite_rules();
@@ -1358,6 +1435,11 @@ function ontario_obituaries_ai_rewrite_batch() {
     $total_fail        = 0;
     $consecutive_fails = 0;
     $iteration         = 0;
+    // BUG-H4 FIX (v5.0.5): Initialize $result before the loop.
+    // If the loop body never executes (0 pending, or time-guard fires first),
+    // the post-loop code would reference an undefined variable.
+    // QC-R2: Full key set matching process_batch() return signature.
+    $result            = array( 'processed' => 0, 'succeeded' => 0, 'failed' => 0, 'errors' => array() );
 
     while ( ( time() - $start_time ) < $max_runtime ) {
 
@@ -1429,7 +1511,9 @@ function ontario_obituaries_ai_rewrite_batch() {
     }
 
     // Purge cache and submit newly published records to IndexNow.
-    if ( $result['succeeded'] > 0 ) {
+    // BUG-H4 FIX (v5.0.5): Use $total_ok (accumulator) instead of $result['succeeded']
+    // (last iteration only). Also avoids undefined $result if loop never ran.
+    if ( $total_ok > 0 ) {
         ontario_obituaries_purge_litespeed( 'ontario_obits' );
 
         // v4.6.0: Submit newly published obituaries to IndexNow.
@@ -1513,8 +1597,10 @@ add_action( 'admin_init', 'ontario_obituaries_check_rewriter_needed' );
  * mutual exclusion transient so it won’t overlap with WP-Cron or AJAX.
  */
 function ontario_obituaries_shutdown_rewriter() {
-    // v4.6.4 FIX: Set the real throttle lock HERE, not in the check function.
-    set_transient( 'ontario_obituaries_rewriter_throttle', 1, 300 );
+    // BUG-H5 FIX (v5.0.5): Throttle transient moved AFTER successful processing.
+    // Previously set here (before any work), so failures would block all future
+    // runs for 5 minutes.  Now set only after process_batch() succeeds.
+    // Original line: set_transient( 'ontario_obituaries_rewriter_throttle', 1, 300 );
 
     // ── MUTUAL EXCLUSION: Don’t run if WP-Cron or AJAX is already processing ──
     if ( get_transient( 'ontario_obituaries_rewriter_running' ) ) {
@@ -1563,9 +1649,30 @@ function ontario_obituaries_shutdown_rewriter() {
         return;
     }
 
-    $result = $rewriter->process_batch();
+    // QC-R2: Wrap in try/finally to guarantee lock cleanup on \Error/\Throwable.
+    // PHP 7+ \TypeError, OOM, etc. bypass \Exception catch blocks; without
+    // finally{} the running lock persists until TTL (60s).
+    $result = array( 'processed' => 0, 'succeeded' => 0, 'failed' => 0, 'errors' => array() );
+    try {
+        $result = $rewriter->process_batch();
 
-    delete_transient( 'ontario_obituaries_rewriter_running' );
+        // BUG-H5 FIX (v5.0.5): Set throttle AFTER processing, not before.
+        // On success: 5-minute cooldown prevents wasting quota on rapid admin page loads.
+        // On failure: short 60s cooldown to bound retry rate (QC-R2: prevents burst
+        // loops on repeated all-fail batches — caps at 1 retry/min vs previous 1/30s).
+        if ( $result['succeeded'] > 0 ) {
+            set_transient( 'ontario_obituaries_rewriter_throttle', 1, 300 );
+        } else {
+            set_transient( 'ontario_obituaries_rewriter_throttle', 1, 60 );
+        }
+    } catch ( \Throwable $e ) {
+        // Catch both \Exception and \Error (PHP 7+).
+        if ( function_exists( 'ontario_obituaries_log' ) ) {
+            ontario_obituaries_log( 'Shutdown rewriter fatal: ' . $e->getMessage(), 'error' );
+        }
+    } finally {
+        delete_transient( 'ontario_obituaries_rewriter_running' );
+    }
 
     if ( function_exists( 'ontario_obituaries_log' ) ) {
         ontario_obituaries_log(
@@ -2319,19 +2426,76 @@ function ontario_obituaries_maybe_spawn_cron() {
 add_action( 'init', 'ontario_obituaries_maybe_spawn_cron', 99 );
 
 /**
+ * QC-R5/R6 FIX: Rate-limit + optional auth for the public /cron REST endpoint.
+ *
+ * Replaces '__return_true' which allowed unlimited unauthenticated hits.
+ *
+ * Two-layer defense:
+ *   1. Optional shared-secret: if the option 'ontario_obituaries_cron_secret'
+ *      is set, the request must include ?secret=<value> to proceed.  This
+ *      converts the endpoint from "public" to "authenticated" for sites that
+ *      want full DoS protection.  The cPanel cron command becomes:
+ *        curl -s https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron?secret=MY_KEY
+ *   2. Transient rate limiter: caps to 1 request per 60 seconds regardless.
+ *      Uses wp_cache_add() for best-effort atomicity when a persistent object
+ *      cache is available (Redis/Memcached), falling back to set_transient()
+ *      which is non-atomic but sufficient for the single-server shared-hosting
+ *      environment.  Worst case on TOCTOU: 2 concurrent requests both pass —
+ *      harmless because the callback itself checks staleness and the collection
+ *      runner uses its own lock.
+ *
+ * Returns WP_Error on rate-limit or auth failure so the REST framework returns
+ * the appropriate HTTP status code (403 or 429).
+ *
+ * @return true|WP_Error
+ */
+function ontario_obituaries_cron_rest_rate_limit() {
+    // Layer 1: Optional shared-secret authentication.
+    $secret = get_option( 'ontario_obituaries_cron_secret', '' );
+    if ( ! empty( $secret ) ) {
+        $provided = isset( $_GET['secret'] ) ? sanitize_text_field( wp_unslash( $_GET['secret'] ) ) : '';
+        if ( ! hash_equals( $secret, $provided ) ) {
+            return new WP_Error(
+                'rest_forbidden',
+                'Invalid or missing cron secret.',
+                array( 'status' => 403 )
+            );
+        }
+    }
+
+    // Layer 2: Transient-based rate limiter (1 req / 60 s).
+    $transient_key = 'ontario_obituaries_cron_rest_limiter';
+    if ( get_transient( $transient_key ) ) {
+        return new WP_Error(
+            'rest_rate_limited',
+            'Rate limited. Try again in 60 seconds.',
+            array( 'status' => 429 )
+        );
+    }
+    set_transient( $transient_key, 1, 60 );
+    return true;
+}
+
+/**
  * v3.16.0: Register a REST API endpoint for server-side cron.
  *
  * This allows setting up a real crontab entry on the server:
  *   Every 15 min:  curl -s https://monacomonuments.ca/wp-json/ontario-obituaries/v1/cron > /dev/null 2>&1
+ *   With secret:   curl -s '.../v1/cron?secret=MY_KEY' > /dev/null 2>&1
  *
  * The endpoint triggers the collection event if the data is stale.
- * No authentication required (the endpoint only triggers a read/scrape).
+ * QC-R5/R6 FIX: Rate-limited to 1 req/60s + optional shared-secret auth.
  */
 function ontario_obituaries_register_cron_rest_route() {
     register_rest_route( 'ontario-obituaries/v1', '/cron', array(
         'methods'             => 'GET',
         'callback'            => 'ontario_obituaries_handle_cron_rest',
-        'permission_callback' => '__return_true',
+        // QC-R5/R6 FIX: Rate-limited + optional-secret permission callback
+        // replaces '__return_true'.  Two layers: (1) optional shared-secret
+        // via 'ontario_obituaries_cron_secret' option, (2) transient-based
+        // 60-second rate limiter.  Together they reduce the DoS surface from
+        // "unlimited unauthenticated" to "1 req/60s, optionally authed".
+        'permission_callback' => 'ontario_obituaries_cron_rest_rate_limit',
     ) );
 
     // v3.16.1: Health/status endpoint for monitoring.
