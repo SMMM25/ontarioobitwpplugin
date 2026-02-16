@@ -100,7 +100,7 @@ to prevent further breakage.
   1. **Activation cascade** triggers 5-15 synchronous scrapes + rewrites on plugin activation (Section 26, BUG-C1)
   2. **Display pipeline deadlock** — records inserted as `pending` are invisible because display queries require `status='published'`, but records only become `published` AFTER a successful AI rewrite, which is rate-limited (Section 26, BUG-C2)
   3. **Non-idempotent migrations** run on every activation, performing blocking HTTP calls (Section 26, BUG-C3)
-  4. **Performance killer** — duplicate cleanup runs on every page load (Section 26, BUG-C4)
+4. ~~**Performance killer** — duplicate cleanup runs on every page load (Section 26, BUG-C4)~~ ✅ **FIXED (v5.0.4, PR #85)**
 - **Primary model**: `llama-3.1-8b-instant` (switched from 70B in v5.0.0 to reduce token usage)
 - **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (NOT used on 429 errors as of v5.0.2)
 - **Admin UI**: Settings page section (checkbox toggle + API key input + live stats)
@@ -216,16 +216,16 @@ to prevent further breakage.
 1. ~~**BUG-C1: Activation cascade**~~ — ✅ **FIXED in v5.0.3** (PR #83). Removed 1,663 lines of historical migration blocks (v3.9.0–v4.3.0) from `on_plugin_update()` that ran synchronous HTTP scrapes, usleep() enrichment loops, and unguarded ALTER TABLE on every fresh install or option loss. Schema is handled by `activate()`; data freshness by cron + heartbeat. KNOWN LIMITATIONS: `init` hook retained (needed for WP Pusher); no capability gate (would break cron/CLI); `wp_cache_flush()` kept (separate PR).
 2. **BUG-C2: Display pipeline deadlock** — Records are inserted as `pending` but `class-ontario-obituaries-display.php` only queries `status='published'`. Without successful AI rewrite, no obituaries appear. **FIX**: Show records without AI rewrite; make rewrite an enhancement, not a gate.
 3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ **FIXED in v5.0.3** (PR #83). Historical migration blocks removed entirely; remaining operations (rewrite flush, cache purge, transient delete, registry seed, cron schedule) are all idempotent. `deployed_version` write moved to end of function so partial failures retry safely.
-4. **BUG-C4: Duplicate cleanup on every init** — `ontario_obituaries_cleanup_duplicates()` (line ~742) runs `GROUP BY` on every page load, scanning 725+ records. **FIX**: Gate behind admin-only cron or post-scrape hook, not `init`.
+4. ~~**BUG-C4: Duplicate cleanup on every init**~~ — ✅ **FIXED in v5.0.4** (PR #85). Removed `init` hook; replaced with daily cron (`ontario_obituaries_dedup_daily`) + post-scrape deferred one-shot cron (`ontario_obituaries_dedup_once`). Lock uses WP-native `add_option()`/`get_option()` (not raw SQL) with JSON state `{ts,state}` — distinguishes "running" from "done" (cooldown). Stale-lock auto-cleared after 1h; cooldown 1h; no recursive retry. Admin rescan bypasses cooldown via `$force=true`. Logging: errors always, success at debug, throttled silent.
 
 #### HIGH (significant functional or security issues)
 5. **BUG-H1: Nonsense rate calculation in cron-rewriter.php** — Line ~224 divides by `$processed` which can be 0 or produces misleading rates. **FIX**: Guard division, use accurate timing.
-6. **BUG-H2: Lingering API keys after uninstall** — `uninstall.php` does not delete `ontario_obituaries_groq_api_key`, chatbot settings, Google Ads credentials, or IndexNow key. **FIX**: Add all option keys to uninstall cleanup.
+6. ~~**BUG-H2: Lingering API keys after uninstall**~~ — ✅ **FIXED in v5.0.5** (PR #86). `uninstall.php` now deletes all 22 plugin options (including 3 sensitive API keys), 8 transients, and clears all 8 cron hooks. Inventory method documented in code.
 7. ~~**BUG-H3: Duplicate index creation**~~ — ✅ **FIXED in v5.0.3** (PR #83). v4.3.0 migration block removed entirely; index creation handled by `activate()` which has existence checks.
 8. **BUG-H4: Possible undefined $result** — Line ~1208 in `ontario-obituaries.php` may reference `$result` before assignment in edge cases. **FIX**: Initialize variable before conditional block.
 9. **BUG-H5: Premature throttling in shutdown rewriter** — Line ~1293 sets 1-minute throttle on shutdown hook, but the lock is checked before processing even starts. **FIX**: Only throttle after successful processing.
 10. **BUG-H6: Over-permissive domain lock** — Line ~38 uses `strpos()` which matches substrings (e.g., `evilmonacomonuments.ca` would pass). **FIX**: Use exact match or parsed hostname comparison.
-11. **BUG-H7: Stale cron hooks survive uninstall** — `uninstall.php` only clears 2 of 5+ cron hooks (misses ai_rewrite_batch, gofundme_batch, authenticity_audit, google_ads_analysis). **FIX**: Clear all plugin cron hooks.
+11. ~~**BUG-H7: Stale cron hooks survive uninstall**~~ — ✅ **FIXED in v5.0.5** (PR #86). `uninstall.php` now clears all 8 scheduled cron hooks (was 2). Inventory method documented in code.
 
 #### MEDIUM (architectural debt, misleading docs, or edge-case risks)
 12. **BUG-M1: Shared Groq API key across 3 consumers** — AI Rewriter, Chatbot, and Authenticity Checker all use the same Groq key with no shared rate limiter. They can collectively exceed TPM. **FIX**: Implement a shared Groq rate limiter or stagger schedules.
@@ -1126,22 +1126,41 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 ---
 
-#### BUG-C4: Duplicate Cleanup Runs on Every Page Load
+#### BUG-C4: Duplicate Cleanup Runs on Every Page Load — ✅ FIXED (v5.0.4, PR #85)
 
-**Location**: `ontario-obituaries.php`, `ontario_obituaries_cleanup_duplicates()` (line ~742), hooked to `init`
+**Location**: `ontario-obituaries.php`, `ontario_obituaries_cleanup_duplicates()` + `ontario_obituaries_maybe_cleanup_duplicates()`
 
-**What happens**:
-1. `ontario_obituaries_cleanup_duplicates()` is hooked to WordPress `init`, meaning it fires on **every single page load** (frontend and admin).
-2. The function runs a full `GROUP BY name, date_of_death, funeral_home` query across the entire `ontario_obituaries` table (725+ rows).
-3. For each duplicate group found, it loads all records, compares them, picks a winner, and deletes the losers.
-4. This adds a measurable DB load to every page request — unnecessary since duplicates only enter the system during scrape runs.
+**What happened** (pre-fix):
+1. `ontario_obituaries_cleanup_duplicates()` was hooked to WordPress `init` at priority 5, meaning it fired on **every single page load** (frontend and admin).
+2. The function runs 3 passes: exact GROUP BY, fuzzy full-table SELECT, and name-only full-table SELECT across the entire `ontario_obituaries` table (725+ rows).
+3. For each duplicate group found, it loads all records, compares them, picks a winner, enriches it, and deletes the losers.
+4. This added measurable DB load to every page request — a DoS vector on shared hosting.
 
-**Impact**: Frontend performance degradation. On shared hosting (which this site uses), this is especially harmful.
+**Fix applied (v5.0.4)**:
+1. **Removed** `add_action('init', 'ontario_obituaries_cleanup_duplicates', 5)`.
+2. **Added** `ontario_obituaries_maybe_cleanup_duplicates($force)` — a throttled wrapper using WP-native `add_option()`/`get_option()` (respects object-cache and notoptions-cache, unlike raw `INSERT IGNORE` into `wp_options`). Lock value is JSON `{ts,state}` distinguishing `running` (actively executing) from `done` (cooldown). Corrupt/legacy JSON treated as stale-running (safe fallback — cleared via stale_ttl). No recursive retry on stale-lock — returns false; next scheduled event retries. Cooldown timestamp written only on success (not in `finally` block), so fatal errors don't create false cooldowns.
+3. **Daily cron**: `ontario_obituaries_dedup_daily` registered on activation and `on_plugin_update()`, cleared on deactivation. Fires once per day as a safety net.
+4. **Post-scrape**: `ontario_obituaries_scheduled_collection()` calls `ontario_obituaries_schedule_dedup_once()` — defers cleanup to a one-shot cron event 10s later using a **separate** hook `ontario_obituaries_dedup_once` (so `wp_clear_scheduled_hook` on one doesn't cancel the other). Guard: `wp_next_scheduled()` prevents duplicate events; lock prevents double execution.
+5. **Post-REST-cron**: `/cron` endpoint uses the same `ontario_obituaries_schedule_dedup_once()` — no inline DB work, preventing DoS via the public endpoint and cron-queue churn (repeated hits are no-ops while an event is pending).
+6. **Admin rescan**: `class-ontario-obituaries-reset-rescan.php` calls `ontario_obituaries_maybe_cleanup_duplicates(true)` — `$force=true` bypasses the 1-hour cooldown but NOT a 60-second refractory window (prevents admin click-spam from triggering repeated full-table scans). The underlying lock still prevents overlap with concurrent cron runs.
+7. **Lock lifecycle**: Stale "running" locks auto-cleared after 1 hour. Lock + throttle-log option cleared on deactivate + on_plugin_update. Both `dedup_daily` and `dedup_once` hooks cleared on deactivate and during plugin update.
+8. **Logging**: Errors always logged; stale-lock warnings logged; success at 'debug' level; throttled hits silent except once-per-day heartbeat (prevents stuck-lock blindness without log spam).
+9. **Deterministic merge** (verified, rounds 2–3): All 3 passes produce deterministic candidate sets:
+   - Pass 1: `GROUP BY name, date_of_death` — set-based, same data → same groups.
+   - Pass 2: `SELECT ... ORDER BY id` → PHP grouping by `normalize_name()|date_of_death` — deterministic key.
+   - Pass 3: `SELECT ... ORDER BY id` → PHP grouping by `normalize_name()` only — deterministic key.
+   - Both `merge_duplicate_group()` and `merge_duplicate_ids()` use `ORDER BY desc_len DESC, id ASC` — `id ASC` tiebreaker ensures the same winner is picked even under concurrent runs. DELETE on already-deleted IDs is a no-op (0 rows affected).
+10. **JSON decode self-healing** (verified, round 3): Corrupt option → fallback `{ts:0, running}` → age exceeds `stale_ttl` → `delete_option` → return false (no run). Next call: option absent → `add_option` succeeds → cleanup runs → writes valid JSON → done state. Self-heals in exactly 2 calls. Continuous external corruption (astronomically unlikely given unique key name) bounded by cooldown: at worst one extra run, then 1-hour cooldown applies.
 
-**Fix plan**:
-- Move duplicate cleanup to a post-scrape hook (run it only after `ontario_obituaries_scheduled_collection` completes).
-- Alternatively, run it on a low-frequency cron (e.g., once daily) or only in admin context.
-- Add a transient-based "last cleanup" timestamp to prevent running more than once per hour.
+**Accepted residual risks** (documented, not fixable without external dependencies):
+- `add_option()` is not a true mutex under persistent object cache with sub-ms race windows. Mitigated: dedup merge is deterministic (ORDER BY id ASC tiebreaker + deterministic grouping), so concurrent runs converge to the same state.
+- `wp_next_scheduled()` in `schedule_dedup_once()` is non-atomic; duplicate one-shot events possible. Mitigated: lock prevents double execution.
+- `stale_ttl = HOUR_IN_SECONDS` is a time assumption; extremely slow DBs could exceed it. Mitigated: 120× safety margin over observed execution time (<30s); PHP `max_execution_time` kills the process before 1h.
+- Clearing `dedup_once` on plugin update drops an imminent one-shot run. Acceptable: `on_plugin_update()` deletes the lock, so the next daily cron or scrape will re-trigger dedup promptly.
+- 60s force-mode refractory still permits per-minute admin scans. Bounded: 725 rows × <30s = tolerable shared-hosting load; raising refractory regresses admin-expects-immediate UX.
+- Public `/cron` endpoint can trigger collection (the expensive part) regardless of dedup scheduling. Tracked as BUG-H2 scope (Sprint 2 — uninstall/auth hardening).
+- Throttle heartbeat writes one `update_option` per day. Negligible vs existing `ontario_obituaries_log()` DB writes on every log call.
+- `ontario_obituaries_dedup_lock` and `ontario_obituaries_dedup_throttle_log` persist as `autoload=no` rows if plugin is deleted without deactivation. Tracked in BUG-H2 (uninstall cleanup).
 
 ---
 
@@ -1160,28 +1179,30 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 ---
 
-#### BUG-H2: Incomplete Uninstall — API Keys and Cron Hooks Persist
+#### BUG-H2: Incomplete Uninstall — API Keys and Cron Hooks Persist — ✅ FIXED (v5.0.5, PR #86)
 
 **Location**: `uninstall.php`
 
-**What happens**:
-- The uninstall script deletes a specific list of options but **misses**:
+**What happened** (pre-fix):
+- The uninstall script deleted only 11 of 22+ plugin options, missing:
   - `ontario_obituaries_groq_api_key` (Groq API key — sensitive!)
-  - `ontario_obituaries_chatbot_settings` and `ontario_obituaries_chatbot_conversations`
+  - `ontario_obituaries_chatbot_settings`
   - `ontario_obituaries_google_ads_credentials` (Google Ads OAuth tokens — very sensitive!)
   - `ontario_obituaries_indexnow_key`
-  - `ontario_obituaries_rewriter_running` (transient lock)
   - `ontario_obituaries_leads` (lead capture data)
-- Additionally, only 2 cron hooks are cleared (`collection_event` and `initial_collection`). Missing:
-  - `ontario_obituaries_ai_rewrite_batch`
-  - `ontario_obituaries_gofundme_batch`
-  - `ontario_obituaries_authenticity_audit`
-  - `ontario_obituaries_google_ads_analysis`
-  - `ontario_obituaries_shutdown_rewriter` (shutdown hook, not cron, but still registered)
+  - `ontario_obituaries_deployed_version`, reset/rescan session state options
+  - BUG-C4 lock options (`dedup_lock`, `dedup_throttle_log`)
+- Only 2 of 8 cron hooks were cleared.
+- Only 4 of 8 transients were deleted.
 
-**Security risk**: API keys for Groq and Google Ads remain in `wp_options` after uninstall. If the site is compromised later, these keys are exposed.
+**Security risk**: API keys for Groq and Google Ads remained in `wp_options` after uninstall. If the site is compromised later, these keys are exposed.
 
-**Fix**: Add all option keys to the uninstall cleanup list. Clear all plugin-related cron hooks using `wp_clear_scheduled_hook()`.
+**Fix applied (v5.0.5)**:
+1. **Options**: Now deletes all 22 plugin options (grouped by category in code for auditability). 3 sensitive API keys (`groq_api_key`, `google_ads_credentials`, `indexnow_key`) explicitly listed. `db_version` intentionally preserved to prevent migration re-run on reinstall.
+2. **Transients**: Now deletes all 8 plugin transients (added `last_cron_spawn`, `rewriter_running`, `rewriter_scheduling`, `rewriter_throttle`).
+3. **Cron hooks**: Now clears all 8 scheduled hooks (added `ai_rewrite_batch`, `gofundme_batch`, `authenticity_audit`, `google_ads_analysis`, `dedup_daily`, `dedup_once`).
+4. **Audit trail**: Inventory method documented in code comments (`grep -rn` commands + audit date).
+5. **Versioned dedup flags**: LIKE query retained to catch dynamic `ontario_obituaries_dedup_*` option names.
 
 ---
 
@@ -1237,20 +1258,16 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 ---
 
-#### BUG-H7: Stale Cron Hooks Survive Uninstall
+#### BUG-H7: Stale Cron Hooks Survive Uninstall — ✅ FIXED (v5.0.5, PR #86)
 
 **Location**: `uninstall.php`
 
-**What happens**:
-- Only `ontario_obituaries_collection_event` and `ontario_obituaries_initial_collection` are cleared.
-- The following cron hooks persist after uninstall:
-  - `ontario_obituaries_ai_rewrite_batch`
-  - `ontario_obituaries_gofundme_batch`
-  - `ontario_obituaries_authenticity_audit`
-  - `ontario_obituaries_google_ads_analysis`
-- These orphaned hooks will fire WordPress callbacks that no longer exist, generating PHP fatal errors until the cron entries naturally expire.
+**What happened** (pre-fix):
+- Only `ontario_obituaries_collection_event` and `ontario_obituaries_initial_collection` were cleared.
+- 6 cron hooks persisted after uninstall: `ai_rewrite_batch`, `gofundme_batch`, `authenticity_audit`, `google_ads_analysis`, `dedup_daily`, `dedup_once`.
+- These orphaned hooks would fire WordPress callbacks that no longer exist, generating PHP fatal errors.
 
-**Fix**: Add all plugin cron hooks to the uninstall cleanup. Use a loop over a known list of hook names.
+**Fix applied (v5.0.5)**: All 8 scheduled cron hooks are now cleared in a documented loop. Inventory method (grep command) recorded in code comments for future audits.
 
 ---
 
@@ -1351,14 +1368,14 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 | Category | Total | Done | Remaining |
 |----------|-------|------|-----------|
-| Sprint 1 (Critical) | 6 | 5 (tasks 1,2,3,4,5) | 1 (task 6) |
-| Sprint 2 (High) | 8 | 2 (tasks 10,13b) | 6 (tasks 7,8,9,11,12,13) |
+| Sprint 1 (Critical) | 6 | **6 (tasks 1,2,3,4,5,6)** | **0 — SPRINT COMPLETE** |
+| Sprint 2 (High) | 8 | 4 (tasks 8,9,10,13b) | 4 (tasks 7,11,12,13) |
 | Sprint 3 (Medium) | 5 | 1 (task 15) | 4 (tasks 14,16,17,18) |
 | Sprint 4 (Groq TPM) | 4 | 0 | 4 (tasks 19,20,21,22) |
-| **Total** | **23** | **8** | **15** |
+| **Total** | **23** | **11** | **12** |
 
-> **Bugs resolved**: BUG-C1 ✅, BUG-C2 ✅, BUG-C3 ✅, BUG-H3 ✅, BUG-H8 ✅, BUG-M3 ✅ (C1/C3/H3/M3 via PR #83 v5.0.3; C2/H8 via PR #84 v5.0.4)
-> **Next up**: BUG-C4 (dedup on init), BUG-H1-H7 (high-severity sprint)
+> **Bugs resolved**: BUG-C1 ✅, BUG-C2 ✅, BUG-C3 ✅, BUG-C4 ✅, BUG-H2 ✅, BUG-H3 ✅, BUG-H7 ✅, BUG-H8 ✅, BUG-M3 ✅ (C1/C3/H3/M3 via PR #83 v5.0.3; C2/H8 via PR #84 v5.0.4; C4 via PR #85 v5.0.4; H2/H7 via PR #86 v5.0.5)
+> **Sprint 1 COMPLETE.** Sprint 2 in progress: 4/8 done. Next: BUG-H1, H4, H5, H6.
 
 ### Sprint 1: Critical Fixes (must-fix before plugin is usable)
 
@@ -1369,15 +1386,15 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 | 3 | BUG-C2 | Display fix | ~~**Remove `status='published'` gate from display queries**~~ ✅ **DONE (PR #84, v5.0.4)** — Removed `AND status='published'` from 5 display queries and 13 SEO queries (18 total). Records now visible as soon as scraped. AI rewrite enhances description in background. Core workflow preserved per RULE 14. | `includes/class-ontario-obituaries-display.php`, `includes/class-ontario-obituaries-seo.php` | 45 min |
 | 4 | BUG-C2 | Display fix | ~~**Update templates to gracefully handle missing `ai_description`**~~ ✅ **DONE (PR #84, v5.0.4)** — Templates already fall back to `description` when `ai_description` is absent. SEO class prefers `ai_description` for indexing, falls back to `description`. No template changes needed. | `templates/obituaries.php`, `templates/seo/individual.php` | 30 min |
 | 5 | BUG-C3 | Infrastructure | ~~**Make migrations idempotent**~~ ✅ **DONE (PR #83, v5.0.3)** — Historical migration blocks removed; remaining operations are all naturally idempotent (rewrite flush, cache purge, transient delete, registry upsert, cron schedule). `deployed_version` write moved to end of function for safe retry on partial failure. | `ontario-obituaries.php` | 1.5 hours |
-| 6 | BUG-C4 | Infrastructure | **Move duplicate cleanup off `init` hook** — Remove from `init`; attach to `ontario_obituaries_scheduled_collection` completion or a daily cron. Add transient throttle (max once per hour). | `ontario-obituaries.php` | 30 min |
+| 6 | BUG-C4 | Infrastructure | ~~**Move duplicate cleanup off `init` hook**~~ ✅ **DONE (PR #85, v5.0.4)** — Removed `add_action('init', ...)`. Lock uses WP-native `add_option()`/`get_option()` with JSON `{ts,state}` (not raw INSERT IGNORE). Separate hooks: `ontario_obituaries_dedup_daily` (recurring) + `ontario_obituaries_dedup_once` (one-shot post-scrape). Admin rescan uses `$force=true` to bypass cooldown. No recursive retry; stale-lock cleared after 1h. Cooldown written only on success. Logging: errors always, stale warnings, success at debug, throttled silent. | `ontario-obituaries.php`, `class-ontario-obituaries-reset-rescan.php` | 30 min |
 
 ### Sprint 2: High-Severity Fixes
 
 | # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
 |---|--------|-------------|------|-----------------|-------------|
 | 7 | BUG-H1 | Infrastructure | **Fix rate calculation in cron-rewriter.php** — Guard division by zero; calculate rate from elapsed time and token count, not just processed count. | `cron-rewriter.php` | 15 min |
-| 8 | BUG-H2 | Security | **Complete uninstall cleanup** — Add ALL plugin options to delete list: `groq_api_key`, `chatbot_settings`, `chatbot_conversations`, `google_ads_credentials`, `indexnow_key`, `rewriter_running`, `leads`, `deployed_version`, and all related transients. | `uninstall.php` | 30 min |
-| 9 | BUG-H7 | Security | **Clear ALL cron hooks on uninstall** — Add `wp_clear_scheduled_hook()` for: `ai_rewrite_batch`, `gofundme_batch`, `authenticity_audit`, `google_ads_analysis`, `shutdown_rewriter`. | `uninstall.php` | 15 min |
+| 8 | BUG-H2 | Security | ~~**Complete uninstall cleanup**~~ ✅ **DONE (PR #86, v5.0.5)** — `uninstall.php` now deletes all 22 plugin options (3 sensitive API keys), 8 transients, and clears all 8 cron hooks. Inventory method documented in code. | `uninstall.php` | 30 min |
+| 9 | BUG-H7 | Security | ~~**Clear ALL cron hooks on uninstall**~~ ✅ **DONE (PR #86, v5.0.5)** — All 8 cron hooks now cleared (was 2). Inventory method documented in code. | `uninstall.php` | 15 min |
 | 10 | BUG-H3 | Infrastructure | ~~**Guard duplicate index creation**~~ ✅ **DONE (PR #83, v5.0.3)** — v4.3.0 migration block removed entirely. Index creation is now handled exclusively by `ontario_obituaries_activate()` which already has existence checks. | `ontario-obituaries.php` | 15 min |
 | 11 | BUG-H4 | Infrastructure | **Initialize $result variable** — Add `$result = null;` before the conditional block at line ~1208. | `ontario-obituaries.php` | 5 min |
 | 12 | BUG-H5 | Infrastructure | **Fix shutdown rewriter throttle** — Move transient set to AFTER successful processing. On failure, delete the throttle transient to allow immediate retry. | `ontario-obituaries.php` | 20 min |
@@ -1414,11 +1431,13 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 | PR | Category | Bug IDs Covered | Description |
 |----|----------|-----------------|-------------|
-| PR-A (#83) | Infrastructure | BUG-C1, BUG-C3 | ✅ **MERGED** — Activation cascade fix: removed all historical migration blocks (1,663 lines). BUG-C4 moved to separate PR. |
+| PR-A (#83) | Infrastructure | BUG-C1, BUG-C3 | ✅ **MERGED** — Activation cascade fix: removed all historical migration blocks (1,663 lines). |
 | PR-B (#84) | Display fix + Security | BUG-C2, BUG-H8 | ✅ **MERGED** — Display pipeline fix: removed `status='published'` gate from 18 queries (5 display + 13 SEO). REST API hardened: `manage_options` capability check + published-only filter. JSON-LD XSS hardening (JSON_HEX_TAG on 6 sinks). Status whitelist validation. Core workflow preserved per RULE 14. |
-| PR-C | Security | BUG-H2, BUG-H6, BUG-H7 | Security hardening: complete uninstall, fix domain lock, clear all cron hooks |
-| PR-D | Infrastructure | BUG-H1, BUG-H3, BUG-H4, BUG-H5 | Minor infrastructure fixes: rate calc, index guard, init vars, throttle fix |
-| PR-E | Infrastructure | BUG-M1, BUG-M5 | Rate limiter: shared Groq coordinator + staggered scheduling |
-| PR-F | Data integrity | BUG-M4 | Dedup safety: date guard on name-only pass |
-| PR-G | Infrastructure | BUG-M3 | ✅ **SUPERSEDED by PR #83** — Migration blocks removed entirely instead of refactored into files. |
-| PR-H | Documentation | BUG-M2, BUG-M6 | Documentation corrections: throughput comments, Hub updates |
+| PR-C (#85) | Infrastructure | BUG-C4 | **PENDING** — Duplicate cleanup: removed `init` hook, added daily cron (`dedup_daily`) + one-shot post-scrape cron (`dedup_once`). Lock via WP-native `add_option()`/`get_option()` with JSON `{ts,state}`. No recursive retry; stale auto-clear 1h; cooldown 1h; admin `$force=true`. Sprint 1 critical bugs now 100% complete. |
+| PR-D (#86) | Security | BUG-H2, BUG-H7 | **PENDING** — Complete uninstall cleanup: 22 options (3 sensitive API keys), 8 transients, 8 cron hooks. Inventory method documented. |
+| PR-E | Security | BUG-H6 | Security hardening: fix domain lock to exact match |
+| PR-F | Infrastructure | BUG-H1, BUG-H4, BUG-H5 | Minor infrastructure fixes: rate calc, init vars, throttle fix |
+| PR-F | Infrastructure | BUG-M1, BUG-M5 | Rate limiter: shared Groq coordinator + staggered scheduling |
+| PR-G | Data integrity | BUG-M4 | Dedup safety: date guard on name-only pass |
+| PR-H | Infrastructure | BUG-M3 | ✅ **SUPERSEDED by PR #83** — Migration blocks removed entirely instead of refactored into files. |
+| PR-I | Documentation | BUG-M2, BUG-M6 | Documentation corrections: throughput comments, Hub updates |

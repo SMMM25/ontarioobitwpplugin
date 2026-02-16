@@ -529,6 +529,16 @@ function ontario_obituaries_activate() {
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
     Ontario_Obituaries_SEO::flush_rules();
 
+    // BUG-C4 FIX (v5.0.4): Schedule daily dedup cron.
+    // Runs once per day as a safety net; primary dedup runs post-scrape via
+    // ontario_obituaries_maybe_cleanup_duplicates(). Uses wp_next_scheduled()
+    // guard to avoid duplicate events (non-atomic but safe: worst case is two
+    // near-simultaneous events, and the transient lock prevents both from running).
+    wp_clear_scheduled_hook( 'ontario_obituaries_dedup_daily' );
+    if ( ! wp_next_scheduled( 'ontario_obituaries_dedup_daily' ) ) {
+        wp_schedule_event( time() + 3600, 'daily', 'ontario_obituaries_dedup_daily' );
+    }
+
     // P0-1 FIX: Schedule initial collection as a one-time cron event
     // instead of running synchronously during activation (which causes timeouts).
     if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
@@ -622,29 +632,30 @@ function ontario_obituaries_normalize_name( $name ) {
 /**
  * Duplicate cleanup: remove duplicate obituaries from the database.
  *
- * Two-pass approach:
+ * Three-pass approach:
  *   Pass 1 — Exact match: same name + same date_of_death (fast SQL GROUP BY).
  *   Pass 2 — Fuzzy match: normalized name + same date_of_death (catches
  *            case/punctuation differences like "Ronald McLEOD" vs "Ronald McLeod").
  *            Runs even when records have different funeral_home values.
+ *   Pass 3 — Name-only match: normalized name regardless of date_of_death
+ *            (catches cross-source date variants). Requires name >= 6 chars.
  *
  * For each group, keeps the record with the longest description and enriches
  * it with funeral_home, city_normalized, location, image_url, and source_url
  * from duplicates.
  *
- * Runs:
- *   - On every admin page load (lightweight — the COUNT query exits fast).
- *   - On frontend: once per plugin version via option flag.
- *   - After every scheduled scrape (hooked to the collection event).
- *   - After WP Pusher deploy via on_plugin_update() clearing the flag.
+ * BUG-C4 FIX (v5.0.4): Removed from `init` hook. Now runs only via:
+ *   - Daily cron: `ontario_obituaries_dedup_daily` (registered on activation).
+ *   - Post-scrape: deferred one-shot cron `ontario_obituaries_dedup_once` (10s after collection).
+ *   - Post-REST-cron: deferred one-shot cron `ontario_obituaries_dedup_once` (10s after /cron collection).
+ *   - Admin rescan: via maybe_cleanup_duplicates($force=true) — bypasses cooldown.
+ *   All automated callers go through ontario_obituaries_maybe_cleanup_duplicates()
+ *   which enforces a WP-native lock via add_option()/get_option() and a
+ *   1-hour cooldown between runs.
+ *
+ * @see ontario_obituaries_maybe_cleanup_duplicates() Throttled wrapper.
  */
 function ontario_obituaries_cleanup_duplicates() {
-    // On frontend: run once per version to avoid slowing every page load.
-    // On admin/cron: always check.
-    $version_key = 'ontario_obituaries_dedup_' . ONTARIO_OBITUARIES_VERSION;
-    if ( ! is_admin() && ! wp_doing_cron() && get_option( $version_key ) ) {
-        return;
-    }
 
     global $wpdb;
     $table = $wpdb->prefix . 'ontario_obituaries';
@@ -766,8 +777,6 @@ function ontario_obituaries_cleanup_duplicates() {
         }
     }
 
-    update_option( $version_key, true );
-
     // Clear transient caches so pages reflect the deduped data
     delete_transient( 'ontario_obituaries_locations_cache' );
     delete_transient( 'ontario_obituaries_funeral_homes_cache' );
@@ -779,7 +788,172 @@ function ontario_obituaries_cleanup_duplicates() {
         ontario_obituaries_purge_litespeed( 'ontario_obits' );
     }
 }
-add_action( 'init', 'ontario_obituaries_cleanup_duplicates', 5 );
+/**
+ * Throttled wrapper for duplicate cleanup — WP-native lock via add_option/get_option.
+ *
+ * BUG-C4 FIX (v5.0.4): Replaces the `init` hook.
+ *
+ * Design decisions addressing QC review (rounds 1–3):
+ *   1. Uses add_option()/get_option() instead of raw INSERT IGNORE so the WP
+ *      object-cache and notoptions-cache stay in sync.  add_option() returns
+ *      false without writing when the key already exists (atomic enough for a
+ *      distributed-cron mutex — worst case is two near-simultaneous runs,
+ *      which is harmless because the dedup merge is deterministic: both
+ *      SELECT queries use ORDER BY desc_len DESC, id ASC, so the same winner
+ *      is always picked, and DELETE on already-deleted IDs is a no-op).
+ *   2. Lock value is a JSON object {ts:<epoch>,state:"running"|"done"} so we
+ *      can distinguish "actively running" from "completed cooldown".
+ *      json_decode failure treated as stale-running (safe fallback).
+ *   3. Stale-lock TTL is 1 hour: the dedup job processes ≤725 rows with 3
+ *      lightweight passes.  PHP max_execution_time (30-300s) will kill the
+ *      process long before 1 hour.  A future scale increase should raise
+ *      stale_ttl proportionally.
+ *   4. No recursive retry: stale-lock clearance returns false; the next
+ *      scheduled cron invocation (daily or one-shot) will re-acquire.
+ *   5. Cooldown timestamp written only on success (inside try body, not
+ *      finally), so fatal errors don't mark the lock as "done".
+ *   6. On fatal: lock left with state="running" and stale_ttl auto-clears
+ *      on next attempt.  deactivate() and on_plugin_update() also delete it.
+ *   7. Logging: errors always; stale-lock warnings always; success at 'debug';
+ *      throttled hits silent except once per day (low-frequency heartbeat so
+ *      a stuck lock is still observable).
+ *   8. $force=true (admin rescan) bypasses 1-hour cooldown but NOT a 60-second
+ *      refractory window — prevents admin-click-spam from triggering repeated
+ *      full-table scans.
+ *
+ * Accepted residual risks (documented, not fixable without external deps):
+ *   - add_option() is not a true mutex under persistent object cache with
+ *     sub-ms race windows.  Mitigated: dedup merge is deterministic
+ *     (ORDER BY id ASC tiebreaker), so concurrent runs converge to same state.
+ *   - wp_next_scheduled() in schedule_dedup_once() is non-atomic; duplicate
+ *     one-shot events possible.  Mitigated: lock prevents double execution.
+ *   - stale_ttl is a time assumption; extremely slow DBs could exceed it.
+ *     Mitigated: 120× safety margin over observed execution time (<30s).
+ *
+ * Lock lifecycle:
+ *   add_option succeeds  →  state=running  →  cleanup  →  state=done (cooldown)
+ *   add_option fails     →  check state:
+ *     running + age > stale_ttl  →  delete_option + return false (next cron retries)
+ *     done    + age > cooldown   →  update_option to running → cleanup → done
+ *     done    + $force + age>60s →  update_option to running → cleanup → done
+ *     json_decode fails          →  treated as running with ts=0 (→ stale path)
+ *     otherwise                  →  return false (throttled)
+ *
+ * @param bool $force  If true, bypass 1-hour cooldown (but not 60s refractory).
+ * @return bool True if cleanup ran, false if throttled/locked.
+ */
+function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
+    $lock_key    = 'ontario_obituaries_dedup_lock';
+    $now         = time();
+    $cooldown    = HOUR_IN_SECONDS;     // 1-hour minimum between normal runs.
+    $refractory  = 60;                  // 60-second minimum even for $force.
+    $stale_ttl   = HOUR_IN_SECONDS;     // Force-clear running locks after 1 hour.
+
+    // ── Attempt lock acquisition via WP-native add_option ────────────
+    // add_option() returns false if the key already exists, keeping the
+    // WP object-cache and notoptions-cache in sync (unlike raw SQL).
+    $lock_data = wp_json_encode( array( 'ts' => $now, 'state' => 'running' ) );
+    $acquired  = add_option( $lock_key, $lock_data, '', 'no' );
+
+    if ( ! $acquired ) {
+        // Lock row exists — read current state.
+        $raw  = get_option( $lock_key, '' );
+        $lock = is_string( $raw ) ? json_decode( $raw, true ) : null;
+
+        // Defensive: if json_decode fails (corrupt value, legacy scalar, etc.)
+        // treat as stale running lock with ts=0 so the stale_ttl path clears it.
+        if ( ! is_array( $lock ) || ! isset( $lock['ts'] ) || ! isset( $lock['state'] ) ) {
+            $lock = array( 'ts' => 0, 'state' => 'running' );
+        }
+
+        $lock_ts = (int) $lock['ts'];
+        $lock_st = (string) $lock['state'];
+        $age     = $now - $lock_ts;
+
+        // Case A: Lock is "running" and older than stale_ttl → crash recovery.
+        // Delete and return false; the next scheduled event will retry.
+        // No recursive call — avoids unbounded retry on repeated fatals.
+        if ( 'running' === $lock_st && $age > $stale_ttl ) {
+            delete_option( $lock_key );
+            ontario_obituaries_log( 'Dedup: stale running-lock cleared (age=' . $age . 's).', 'warning' );
+            return false;
+        }
+
+        // Case B: Lock is "done" (cooldown period).
+        if ( 'done' === $lock_st ) {
+            // $force bypasses the 1-hour cooldown but NOT the 60s refractory.
+            // This prevents admin click-spam from triggering repeated full scans.
+            $threshold = $force ? $refractory : $cooldown;
+            if ( $age >= $threshold ) {
+                // Re-acquire: overwrite with running state.
+                update_option( $lock_key, wp_json_encode( array( 'ts' => $now, 'state' => 'running' ) ), 'no' );
+                // Fall through to run cleanup below.
+            } else {
+                // Within cooldown/refractory — skip.
+                // Low-frequency heartbeat: log once per day so a permanently
+                // throttled state is still observable.
+                $last_throttle_log = (int) get_option( 'ontario_obituaries_dedup_throttle_log', 0 );
+                if ( ( $now - $last_throttle_log ) > DAY_IN_SECONDS ) {
+                    ontario_obituaries_log( 'Dedup throttled (cooldown ' . $age . '/' . $threshold . 's). Daily heartbeat.', 'debug' );
+                    update_option( 'ontario_obituaries_dedup_throttle_log', $now, 'no' );
+                }
+                return false;
+            }
+        } else {
+            // Lock is "running" and within stale_ttl — another process is active.
+            return false;
+        }
+    }
+
+    // ── Run cleanup inside try/catch ─────────────────────────────────
+    // On success: update lock to "done" with current timestamp (cooldown starts).
+    // On failure: leave lock as "running" — stale_ttl will auto-clear it,
+    // or deactivate/update will delete it.  No cooldown timestamp written on
+    // failure so the next retry isn't blocked.
+    $ran_ok = false;
+    try {
+        ontario_obituaries_cleanup_duplicates();
+        $ran_ok = true;
+        // Mark completion — starts the cooldown window.
+        update_option( $lock_key, wp_json_encode( array( 'ts' => time(), 'state' => 'done' ) ), 'no' );
+        ontario_obituaries_log( 'Dedup completed successfully.', 'debug' );
+    } catch ( \Exception $e ) {
+        ontario_obituaries_log( 'Dedup failed: ' . $e->getMessage(), 'error' );
+    }
+    // On fatal (non-Exception): lock stays as "running"; stale_ttl clears it.
+
+    return $ran_ok;
+}
+
+// BUG-C4 FIX (v5.0.4): Daily cron hook for recurring scheduled dedup.
+// Registered in ontario_obituaries_activate(). Fires once per day.
+add_action( 'ontario_obituaries_dedup_daily', 'ontario_obituaries_maybe_cleanup_duplicates' );
+
+// BUG-C4 FIX (v5.0.4): Separate one-shot hook for post-scrape/post-REST dedup.
+// Uses a distinct hook name so wp_clear_scheduled_hook('ontario_obituaries_dedup_daily')
+// does not cancel pending one-shot events, and vice versa.
+add_action( 'ontario_obituaries_dedup_once', 'ontario_obituaries_maybe_cleanup_duplicates' );
+
+/**
+ * Schedule a one-shot dedup event (10s from now) if none is already pending.
+ *
+ * Uses the dedicated 'ontario_obituaries_dedup_once' hook (separate from the
+ * daily cron) so clearing/rescheduling the daily event doesn't cancel post-scrape
+ * cleanup, and vice versa.
+ *
+ * Guard: wp_next_scheduled() prevents duplicate events from repeated calls
+ * within the same cron cycle.  Even if two events slip through (non-atomic
+ * check), the lock in maybe_cleanup_duplicates() prevents double execution.
+ *
+ * @return bool True if a new event was scheduled, false if one already exists.
+ */
+function ontario_obituaries_schedule_dedup_once() {
+    if ( ! wp_next_scheduled( 'ontario_obituaries_dedup_once' ) ) {
+        wp_schedule_single_event( time() + 10, 'ontario_obituaries_dedup_once' );
+        return true;
+    }
+    return false;
+}
 
 /**
  * Merge a group of exact duplicates by name + date_of_death.
@@ -1044,6 +1218,12 @@ function ontario_obituaries_deactivate() {
     wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
     wp_clear_scheduled_hook( 'ontario_obituaries_initial_collection' );
 
+    // BUG-C4 FIX (v5.0.4): Clear both dedup cron hooks and the lock.
+    wp_clear_scheduled_hook( 'ontario_obituaries_dedup_daily' );
+    wp_clear_scheduled_hook( 'ontario_obituaries_dedup_once' );
+    delete_option( 'ontario_obituaries_dedup_lock' );
+    delete_option( 'ontario_obituaries_dedup_throttle_log' );
+
     // v3.0.0: Remove SEO rewrite rules
     flush_rewrite_rules();
 }
@@ -1104,8 +1284,12 @@ function ontario_obituaries_scheduled_collection() {
         );
     }
 
-    // v3.3.0: Run dedup after every scrape to catch cross-source duplicates immediately
-    ontario_obituaries_cleanup_duplicates();
+    // v3.3.0: Run dedup after every scrape to catch cross-source duplicates.
+    // BUG-C4 FIX (v5.0.4): Deferred to a one-shot cron event (10s later) so
+    // cleanup runs in its own request, not blocking the scrape response.
+    // Uses 'ontario_obituaries_dedup_once' (separate from daily cron) so
+    // wp_clear_scheduled_hook on one doesn't cancel the other.
+    ontario_obituaries_schedule_dedup_once();
 
     // v4.6.0: IndexNow is now triggered after AI rewrite publishes records,
     // not after scraping. Pending records should NOT be submitted to search engines.
@@ -1921,14 +2105,26 @@ function ontario_obituaries_on_plugin_update() {
     delete_transient( 'ontario_obituaries_locations_cache' );
     delete_transient( 'ontario_obituaries_funeral_homes_cache' );
 
-    // ── Dedup version reset ──────────────────────────────────────────
-    // Sanitize stored_version before using in option name to prevent
-    // oversized/malformed keys if the option value was corrupted.
+    // ── Dedup schedule reset (BUG-C4 FIX v5.0.4) ─────────────────────
+    // Clear the lock so dedup runs on next trigger after update.
+    // Also clean up any legacy version-keyed options from pre-v5.0.4.
+    delete_option( 'ontario_obituaries_dedup_lock' );
+    delete_option( 'ontario_obituaries_dedup_throttle_log' );
     if ( '' !== $stored_version ) {
         $safe_version = preg_replace( '/[^0-9.]/', '', substr( $stored_version, 0, 20 ) );
         if ( '' !== $safe_version ) {
             delete_option( 'ontario_obituaries_dedup_' . $safe_version );
         }
+    }
+    // Ensure daily dedup cron exists (may have been lost if activation didn't fire).
+    // wp_clear_scheduled_hook first to prevent duplicate events from concurrent
+    // update requests (wp_next_scheduled is non-atomic).
+    // Also clear any pending one-shot events — a fresh dedup is more appropriate
+    // after plugin update than an old deferred one.
+    wp_clear_scheduled_hook( 'ontario_obituaries_dedup_daily' );
+    wp_clear_scheduled_hook( 'ontario_obituaries_dedup_once' );
+    if ( ! wp_next_scheduled( 'ontario_obituaries_dedup_daily' ) ) {
+        wp_schedule_event( time() + 3600, 'daily', 'ontario_obituaries_dedup_daily' );
     }
 
     // ── Source registry health check ─────────────────────────────────
@@ -2211,8 +2407,13 @@ function ontario_obituaries_handle_cron_rest() {
         $result['found']          = isset( $collect_res['obituaries_found'] ) ? intval( $collect_res['obituaries_found'] ) : 0;
         $result['added']          = isset( $collect_res['obituaries_added'] ) ? intval( $collect_res['obituaries_added'] ) : 0;
 
-        // Also run dedup after collection.
-        ontario_obituaries_cleanup_duplicates();
+        // BUG-C4 FIX (v5.0.4): Dedup deferred to one-shot cron (10s later).
+        // Removed inline call — avoids adding heavy DB scans to this already
+        // heavy REST handler, and prevents DoS via the public /cron endpoint.
+        // Uses ontario_obituaries_schedule_dedup_once() which has a built-in
+        // wp_next_scheduled guard to prevent cron-queue churn from repeated
+        // /cron hits (each hit is a no-op if a one-shot event already exists).
+        ontario_obituaries_schedule_dedup_once();
     }
 
     return rest_ensure_response( $result );
