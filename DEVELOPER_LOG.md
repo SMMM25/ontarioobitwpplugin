@@ -1,11 +1,11 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-16 (QC-R5 hardening — v5.0.5 PR #86)
-> **Plugin version:** `5.0.5` (sandbox) / `5.0.2` (live) / `5.0.5` (main branch pending PR #86 merge)
+> **Last updated:** 2026-02-16 (v5.0.12 — QC-R12 hardening)
+> **Plugin version:** `5.0.12` (sandbox) / `5.0.2` (live) / `5.0.5` (main branch, PR #86 merged)
 > **Live site version:** `5.0.2` (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
-> **Main branch HEAD:** PR #85 merged (v5.0.4/5.0.5)
-> **Project status:** Sprint 1 COMPLETE. Sprint 2 COMPLETE (8/8). Sprint 3: 4/5 done. 18/23 tasks (78%). See PLATFORM_OVERSIGHT_HUB.md.
-> **Next deployment:** PR #86 (v5.0.5 — BUG-H1/H4/H5/H6/M4 + SEO defense + QC-R5 hardening) pending merge → then Sprint 3 (M1)
+> **Main branch HEAD:** PR #86 merged (v5.0.5)
+> **Project status:** Sprint 1 COMPLETE. Sprint 2 COMPLETE. Sprint 3 COMPLETE. Sprint 4: 3/4 done. 22/23 tasks (96%). See PLATFORM_OVERSIGHT_HUB.md.
+> **Next deployment:** PR #87 (v5.0.12 — QC-R12 hardening: true atomic CAS via SELECT…FOR UPDATE, enhanced unknown-consumer logging, missing-usage fallback, multisite elapsed-time guard, cache churn reduction) pending merge → then purge & rescrape
 
 ---
 
@@ -285,7 +285,8 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #83 | Merged | `4566eb3` | fix(v5.0.3): BUG-C1/C3 — remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
 | #84 | Merged | `2576ec3` | fix(v5.0.4): BUG-C2/H8 — remove status='published' gate from 18 display/SEO queries + REST API auth hardening (manage_options) + REST published-only filter + JSON-LD XSS hardening (JSON_HEX_TAG) + centralized status validation helper + RULE 14 (Core Workflow Integrity). Retroactive QC: 1 new finding (5 SEO helper queries missing suppressed_at) addressed in PR #86. |
 | #85 | Merged | `7060a9c` | fix(v5.0.4-5.0.5): BUG-C4/H2/H7 — remove duplicate cleanup from init hook; WP-native lock; daily + one-shot cron; complete uninstall cleanup (22 options, 8 transients, 8 cron hooks). 4 rounds of QC review. Sprint 1 complete. |
-| #86 | Pending | — | fix(v5.0.5): BUG-H1/H4/H5/H6 — rate calc fix (cron-rewriter.php), undefined $result init, shutdown throttle post-success only, domain lock exact match + subdomain suffix, 5 SEO queries defense-in-depth (suppressed_at IS NULL). Sprint 2 complete (8/8). Overall: 15/23 (65%). |
+| #86 | Merged | `aa99abd` | fix(v5.0.5): BUG-H1/H4/H5/H6/M4 — rate calc fix, undefined $result init, shutdown throttle post-success only, domain lock exact match, 5 SEO queries suppressed_at IS NULL. Sprint 2 complete (8/8). Tag v5.0.5, release created. |
+| #87 | Pending | — | fix(v5.0.6): Sprint 3+4 complete — BUG-M1 (shared Groq rate limiter), BUG-M5 (staggered cron), BUG-M6 (throughput comments), Sprint 4 Tasks 19-21 (LLM eval, prompt reduction, time-spread processing). Overall: 22/23 (96%). |
 
 ---
 
@@ -432,6 +433,17 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 - Version bump: 5.0.1 → 5.0.2
 
 **INDEPENDENT CODE AUDIT (2026-02-16):**
+
+**v5.0.6 — Sprint 3+4 Complete (2026-02-16):**
+- **BUG-M1 FIX: Shared Groq rate limiter** — New `class-groq-rate-limiter.php` singleton coordinates TPM usage across AI Rewriter, Chatbot, and Authenticity Checker. 60-second sliding-window transient with 5,500 TPM budget. All consumers call `may_proceed()` before and `record_usage()` after API calls. Chatbot gracefully falls back to rule-based responses when budget exhausted.
+- **BUG-M5 FIX: Staggered cron scheduling** — Post-scrape events now staggered: dedup +10s, rewrite +60s, GoFundMe +300s. Prevents API consumer overlap.
+- **BUG-M6 FIX: Corrected throughput comments** — cron-rewriter.php header updated from "~200/hour" to "~180 theoretical, ~15 practical". ontario-obituaries.php batch handler updated from "~360/hour" to "~18/run theoretical".
+- **Sprint 4 Task 19: Alternative LLM API evaluation** — Evaluated OpenRouter (free tier, multiple models), Together.ai (free credits), Cloudflare Workers AI (free, built-in rate limiting), Cerebras (free, fastest inference). Recommendation: OpenRouter or Cerebras as drop-in Groq replacement if TPM remains insufficient.
+- **Sprint 4 Task 20: Prompt token reduction** — System prompt consolidated from ~400 to ~280 tokens. Saves ~120 tokens/call × 5 calls/min = ~600 TPM headroom.
+- **Sprint 4 Task 21: Time-spread processing** — Batch max_runtime reduced from 240s to 90s; self-reschedule interval from 300s to 120s. Each batch processes 3-5 obituaries then yields. Sustainable ~60-90/hour vs. bursty 15/5-min.
+- **Cleanup**: New `groq_tpm_window` transient added to deactivation and uninstall routines. Rate limiter class loaded before consumer classes.
+- **Files changed**: ontario-obituaries.php (+version bump to 5.0.6, stagger fix, time-spread, deactivation cleanup), class-ai-rewriter.php (rate limiter integration, prompt reduction), class-ai-chatbot.php (rate limiter integration), class-ai-authenticity-checker.php (rate limiter integration), cron-rewriter.php (comment fix), uninstall.php (new transient cleanup), NEW: class-groq-rate-limiter.php.
+- Version bump: 5.0.5 → 5.0.6
 > An independent line-by-line code review was performed on the entire plugin codebase.
 > The previous developer's claim that "the plugin is stable" was found to be **incorrect**.
 > **17 bugs identified**: 4 critical, 7 high-severity, 6 medium-severity.
@@ -587,15 +599,103 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P7-1 | Fix activation cascade (BUG-C1) — removed all historical migrations | ✅ **DONE (PR #83)** |
 | P7-2 | Fix display deadlock (BUG-C2) — removed published gate from 18 queries | ✅ **DONE (PR #84)** |
 | P7-3 | Fix non-idempotent migrations (BUG-C3) — blocks removed, remaining ops idempotent | ✅ **DONE (PR #83)** |
-| P7-4 | Fix dedup on init (BUG-C4) — move to post-scrape hook | **TODO** |
-| P7-5 | Complete uninstall cleanup (BUG-H2, H7) — all options + all cron hooks | **TODO** |
-| P7-6 | Fix domain lock bypass (BUG-H6) — exact hostname match | **TODO** |
-| P7-7 | Fix minor high-severity bugs (BUG-H1, H3, H4, H5) | **TODO** |
-| P7-8 | Implement shared Groq rate limiter (BUG-M1) | **TODO** |
-| P7-9 | Add date guard to name-only dedup (BUG-M4) | **TODO** |
-| P7-10 | Stagger cron scheduling (BUG-M5) | **TODO** |
-| P7-11 | Update all throughput comments (BUG-M6) | **TODO** |
+| P7-4 | Fix dedup on init (BUG-C4) — move to post-scrape hook | ✅ **DONE (PR #85)** |
+| P7-5 | Complete uninstall cleanup (BUG-H2, H7) — all options + all cron hooks | ✅ **DONE (PR #85)** |
+| P7-6 | Fix domain lock bypass (BUG-H6) — exact hostname match | ✅ **DONE (PR #86)** |
+| P7-7 | Fix minor high-severity bugs (BUG-H1, H3, H4, H5) | ✅ **DONE (PR #83, #86)** |
+| P7-8 | Implement shared Groq rate limiter (BUG-M1) | ✅ **DONE (PR #87, v5.0.10 — QC-R10 rewrite: atomic reserve, CAS fail-closed, input hardening, tiered cache, pool normalization, multisite try/finally)** |
+| P7-9 | Add date guard to name-only dedup (BUG-M4) | ✅ **DONE (PR #86)** |
+| P7-10 | Stagger cron scheduling (BUG-M5) | ✅ **DONE (PR #87, v5.0.10 — QC-R10: jitter path audit + cooldown-after-collect)** |
+| P7-11 | Update all throughput comments (BUG-M6) | ✅ **DONE (PR #87, v5.0.10)** |
 | P7-12 | Refactor migrations into versioned files (BUG-M3) — superseded by removal | ✅ **DONE (PR #83)** |
+
+### QC-R7: Rate Limiter Hardening (v5.0.7 — addresses PR #87 review round 1)
+> Initial hardening pass. All 10 reviewer concerns addressed.
+
+| ID | Concern | Fix |
+|----|---------|-----|
+| QC-R7-1 | Sliding-window is actually fixed-window, non-atomic | Replaced with **atomic CAS** via `$wpdb->query("UPDATE...WHERE")` — InnoDB row-lock guarantees. 3-retry CAS loop; worst case = 1 brief overshoot (Groq 429 backstop). |
+| QC-R7-2 | Public endpoints (chatbot) can exhaust cron quota (DoS) | **Split budget pools**: 80% cron (4,400 TPM), 20% chatbot (1,100 TPM). Visitor traffic isolated. |
+| QC-R7-3 | Fallback must not expose prompts/keys | Audited `rule_based_response()` — returns only public business info. Defensive docblock added. |
+| QC-R7-4 | Hard-coded 5,500 TPM | Now stored in `wp_options` (`ontario_obituaries_groq_tpm_budget`), overridable via `ontario_obituaries_groq_tpm_budget` filter. |
+| QC-R7-5 | Cron stagger by seconds can overlap if prior job runs long | Added **random jitter**: rewriter ±30s (150-210s interval), GoFundMe +0-60s, authenticity +0-120s. `wp_next_scheduled()` guards prevent double-scheduling. |
+| QC-R7-6 | 90s batch windows raise CPU on shared hosts | Reduced `max_runtime` from 90s → **60s** (~33% duty cycle). Self-reschedule every 3 min ± 30s. |
+| QC-R7-7 | Visitor-triggered WP-Cron reliance | No change needed — cPanel cron (`cron-rewriter.php`) is the primary mechanism. WP-Cron is only backup. |
+| QC-R7-8 | Uninstall must clean new options | Added `ontario_obituaries_groq_rate_window`, `ontario_obituaries_groq_tpm_budget` to option cleanup, `ontario_obituaries_collection_cooldown` to transient cleanup. |
+| QC-R7-9 | Purge & rescrape can spike outbound requests | Added **collection cooldown transient** (10 min) — prevents back-to-back scrapes from duplicate WP-Cron fires or rapid admin clicks. |
+| QC-R7-10 | Need code diff for limiter/scheduling/integration | All code included in PR. 9 files changed.
+
+### QC-R8: Second-Pass Hardening (v5.0.8 — addresses PR #87 review round 2)
+> Follow-up to QC-R7. Addresses serialization precision, multisite, and cooldown timing.
+
+| ID | Concern | Fix |
+|----|---------|-----|
+| QC-R8-1 | CAS WHERE clause may fail due to JSON re-encoding precision | **Full rewrite of `record_usage()`**: raw string from `get_option()` used directly in WHERE clause (never re-encoded). `fresh_window()` helper uses integer-only values (no floats stored). `add_option(..., '', 'no')` for creation — autoload=no. `wp_cache_delete()` on every `$wpdb->update()`. |
+| QC-R8-2 | Pool isolation must be verified: all consumers route through `get_pool()` | Confirmed: `get_pool()` is the SOLE mapping function. Docblock added stating this. All `may_proceed()`/`record_usage()` callers pass consumer name; pool determined internally. |
+| QC-R8-3 | Configurable TPM option should avoid autoload bloat | `BUDGET_OPTION_KEY` stored with `autoload='no'`. Filter `ontario_obituaries_groq_tpm_budget` runs once at singleton construction. Added 500 TPM floor to prevent abuse. |
+| QC-R8-4 | Use `update_option()` / proper cache invalidation | All reads via `get_option()`, creates via `add_option(..., 'no')`, atomic writes via `$wpdb->update()` + `wp_cache_delete()`. No raw INSERT/UPDATE without cache sync. |
+| QC-R8-5 | Jitter max_runtime vs interval: need gap analysis | Gap proven: max_runtime(60s) + min_interval(150s=180-30) = 210s minimum cycle. Added `max(120, ...)` floor on rewrite interval. GoFundMe: 300-360s. Authenticity: 300-420s. |
+| QC-R8-6 | Collection cooldown should not block retries on failure | Cooldown `set_transient()` moved AFTER collector construction + start. Domain check failure, missing class, or DB error → no cooldown set → next cron tick retries immediately. |
+| QC-R8-7 | Uninstall: `delete_option()` only clears single-site | **Multisite support**: `is_multisite()` → `get_sites()` → `switch_to_blog()` → per-site cleanup → `restore_current_blog()`. Single-site unchanged. Also added `ontario_obituaries_chatbot_conversations` to option cleanup. |
+| QC-R8-8 | Core pipeline must remain unchanged | Verified: SCRAPE→AI REVIEW→REWRITE→PUBLISH pipeline intact. No status values changed, no query modifications, no workflow reordering. |
+
+### QC-R9: Third-Pass Hardening (v5.0.9 — addresses PR #87 review round 3)
+> Full code-level review. Addresses CAS robustness, cache triad, consumer audit, filter lifecycle, cooldown timing, multisite timeout, and publish gating.
+
+| ID | Concern | Fix |
+|----|---------|-----|
+| QC-R9-1 | Direct `$wpdb->update()` CAS clashes with WP object cache; `notoptions`/`alloptions` not cleared | **Cache triad invalidation**: new `invalidate_option_cache()` clears `OPTION_KEY` + `alloptions` + `notoptions` after every `$wpdb->query()` UPDATE and on `add_option()` creation. Covers per-option cache, autoload bundle, and negative-lookup cache. |
+| QC-R9-1b | Raw DB string comparison fragile if other code normalises whitespace/serialization | **Version counter**: each window JSON now includes a monotonic `v` field, incremented on every write. Even if external code re-serialises the JSON (key reordering, whitespace normalisation), the version counter ensures the CAS WHERE clause fails correctly, triggering a clean retry. |
+| QC-R9-2 | Verify only intended "sole routing function" calls the limiter | **Exhaustive audit**: all 6 call sites documented in class docblock. 3× `may_proceed()` + 3× `record_usage()`, each passing a consumer string routed through `get_pool()`. No stray calls found. Consumer→pool mapping: `rewriter`→cron, `chatbot`→chatbot, `authenticity`→cron. |
+| QC-R9-3 | Filter running only at singleton construction prevents runtime budget changes | **Added `refresh()` static method**: destroys and recreates the singleton, forcing a full re-read of `wp_options` and re-application of the filter. Callers (admin AJAX, WP-CLI) can call `Ontario_Obituaries_Groq_Rate_Limiter::refresh()` to apply runtime changes without a process restart. |
+| QC-R9-4 | Mixing `get_option()` reads with direct DB writes risks cache incoherence | **Resolved by QC-R9-1**: every `$wpdb->query()` UPDATE is immediately followed by `invalidate_option_cache()`. Subsequent `get_option()` reads in the same request hit the DB, not stale cache. On retries (attempt > 0), cache is busted before the `get_option()` read. |
+| QC-R9-5 | Jitter/gap logic: alternate reschedule pathways could cause more-frequent events | **Jitter path audit**: documented all 4 code paths that schedule `ontario_obituaries_ai_rewrite_batch`. Only the self-reschedule block in `ontario_obituaries_ai_rewrite_batch()` uses jitter (150-210s). The +60s post-collection schedule is a one-shot with `wp_next_scheduled()` guard. Shutdown and AJAX handlers do NOT self-reschedule. CLI cron-rewriter.php uses its own loop with `usleep()`, not WP-Cron. |
+| QC-R9-6 | Cooldown set before scrape actually begins suppresses retries on collect() failure | **Moved `set_transient()` to AFTER `$collector->collect()` returns**. If `collect()` throws an exception or triggers a PHP fatal, execution never reaches the `set_transient()` line → no cooldown → next cron tick retries immediately. Domain check failure and constructor failure already prevented cooldown in v5.0.8. |
+| QC-R9-7 | Multisite uninstall loop can timeout; must handle partial completion and network-level keys | **Timeout guard**: tracks elapsed time against 50% of `max_execution_time` (min 30s, max 120s). **Batch pagination**: fetches sites in batches of 100 to avoid memory exhaustion. **Network-level cleanup**: new `ontario_obituaries_uninstall_network()` calls `delete_site_option()`/`delete_site_transient()` for wp_sitemeta keys. **Partial completion safe**: all operations are idempotent; re-running uninstall continues where it left off. **Logging**: logs cleaned/skipped site counts and IDs on timeout. |
+| QC-R9-8 | Limiter/fallback must not alter publish gating or treat pending as published | **Verified and documented**: rate limiter ONLY returns `WP_Error('rate_limited', ...)` (rewriter/authenticity) or triggers rule-based fallback (chatbot). It NEVER writes to the obituaries table, NEVER changes the `status` column, and NEVER treats `pending` as `published`. The `pending→published` transition is exclusively in `class-ai-rewriter.php:process_batch()` after successful API call + validation. Explicit docblocks added to `may_proceed()` and `record_usage()`. |
+
+### QC-R10: Fourth-Pass Hardening (v5.0.10 — addresses PR #87 review round 4)
+> Addresses race conditions, CAS fail-open, input hardening, cache churn, WP_Error compatibility, pool routing, and multisite context safety.
+
+| ID | Concern | Fix |
+|----|---------|-----|
+| QC-R10-1 | `may_proceed()` is read-only; concurrent callers oversubscribe before `record_usage()` runs | **Atomic reserve pattern**: `may_proceed()` now performs CAS write that both checks availability AND reserves tokens in one operation. On CAS failure, caller is BLOCKED (fail-closed). `record_usage()` adjusts the reservation to actual usage (delta). If CAS fails during adjustment, the reservation stands (overcount = safe direction). No silent budget leak. |
+| QC-R10-1b | `record_usage()` CAS failure logs warning but proceeds — allows silent overspend | **Fail-safe**: since `may_proceed()` now reserves tokens, `record_usage()` only adjusts. On CAS failure, the original reservation stands (overcount, never undercount). The "CAS failed → proceed" path is eliminated. |
+| QC-R10-2 | CAS compares full raw JSON string; formatting/key-order changes cause lost accounting | **Version counter differentiator**: the monotonic `v` field in the window JSON ensures that any concurrent write changes the raw string. CAS uses exact raw-string match, but the version counter guarantees distinct strings per write. Key reordering/whitespace changes by external processes cause CAS failure → clean retry. |
+| QC-R10-3 | No input hardening: negative/zero token values could manipulate budget | **Input clamping**: `may_proceed()` rejects `$estimated_tokens <= 0` with early `return false` and warning log. `record_usage()` clamps `$actual_tokens` to `max(0, ...)` and skips no-ops. Prevents budget inflation from invalid input. |
+
+### QC-R12: Sixth-Pass Hardening (v5.0.12 — addresses PR #87 review round 6)
+> Addresses QC's requirement for true atomic CAS, verifiable release paths, enhanced unknown-consumer logging, cache churn reduction, multisite set_time_limit replacement, and a checksummed deployable ZIP.
+
+| ID | QC Concern | Fix |
+|----|-----------|-----|
+| QC-R12-1 (Bug 1) | **Verify double-count fix** | Verified: rewriter=1100, chatbot=500, authenticity=800. All 6 record_usage calls pass estimate. All 6 release_reservation calls match. |
+| QC-R12-2 (Bug 2) | **Release on every non-success path, clamp >=0** | All error paths release. NEW: missing usage.total_tokens defaults to estimate (reservation stands). max(0) clamp on pool values. |
+| QC-R12-3 (Bug 3) | **True atomic CAS** | SELECT FOR UPDATE replaces LIKE pattern. InnoDB row lock. Version compared in PHP. Concurrent callers block, not fail. |
+| QC-R12-4 (Bug 4) | **Unknown consumer logging** | Error logs include raw string, caller file:line, valid consumer list. Logged at error level. |
+| QC-R12-5 (Bug 5) | **Cache churn reduction** | FOR UPDATE eliminates most CAS failures. Happy path = 1 cache delete. Full triad only on add_option/retry. |
+| QC-R12-6 (Bug 6) | **Multisite set_time_limit** | Replaced with elapsed-time measurement. No E_WARNING on restricted hosts. |
+| QC-R12-7 (Bug 7) | **Checksummed ZIP** | ontario-obituaries-v5.0.12.zip (277 KB). SHA-256 in PR body. |
+
+### QC-R11: Fifth-Pass Hardening (v5.0.11 — addresses PR #87 review round 5)
+> Fixes critical double-counting bug, budget bypass on failed API calls, brittle CAS comparison, fail-open pool routing, and multisite safety gaps. Produces versioned ZIP release asset.
+
+| ID | Concern | Fix |
+|----|---------|-----|
+| QC-R11-1 | **Double-counting tokens**: `may_proceed()` reserves `estimated_tokens` but all three consumers call `record_usage(actual, consumer)` WITHOUT the estimate, inflating usage via the legacy `$estimated=0` pure-increment path. Budget bypass: reservation remains after failed API call, permanently reducing pool capacity until window expiry. | **Three-part fix**: (a) All 3 consumers now pass `$estimated` as 3rd arg to `record_usage()` — delta = actual - estimated, NOT pure add. (b) New `release_reservation($estimated, $consumer)` method credits unused reservation back on API failure. All error paths in rewriter (3 paths), chatbot (2 paths), and authenticity (1 path) call `release_reservation()`. (c) Legacy `$estimated=0` path logs deprecation warning instead of silently double-counting. |
+| QC-R11-2 | **Brittle CAS**: WHERE clause compares full raw JSON string — any key reordering, whitespace normalization, or serialization round-trip breaks the match, causing repeated CAS misses and fail-closed blocking. | **Version-prefix LIKE match**: new `cas_update()` private method uses `WHERE option_name = %s AND option_value LIKE '{"v":N,%'` matching ONLY the version-counter prefix. Key reordering and whitespace changes no longer affect CAS. The `v` field is always the first JSON key (enforced by `fresh_window()` insertion order + `wp_json_encode` preserving order). |
+| QC-R11-3 | `add_option()` invalidates `notoptions` + `alloptions` but NOT the per-option cache key (`OPTION_KEY`), leaving stale reads in some object-cache setups. | **Full cache bust**: `add_option()` path now calls `invalidate_full_cache()` which includes per-option key + alloptions + notoptions. This covers Redis/Memcached setups that cache individual option keys separately. |
+| QC-R11-4 | **Pool routing fail-open**: unknown consumer strings log a warning but silently route to cron pool, masking misconfiguration. | **Fail-closed**: `get_pool()` returns `false` for unknown consumers (was `'cron'`). `may_proceed()` returns `false` and logs error. `record_usage()` returns early. `normalize_consumer()` no longer defaults unknowns to `'unknown'` — just lowercases/trims. Typos are immediately visible as blocked requests in logs. |
+| QC-R11-5 | **Consumer integration mismatch**: `may_proceed()` reserves tokens, but consumers treat `record_usage()` as a simple addition (no `$estimated` parameter), causing the double-counting bug. | **All 6 `record_usage()` call sites updated**: rewriter passes `1100`, chatbot passes `500`, authenticity passes `800` as 3rd argument. Plus 6 `release_reservation()` calls on error paths. Consumer ↔ limiter contract is now: `may_proceed(N, c)` → API call → `record_usage(actual, c, N)` or `release_reservation(N, c)`. |
+| QC-R11-6 | **Multisite uninstall**: `switch_to_blog()` return value ignored — failure can unbalance `restore_current_blog()` stack. Skip-list unlimited (10k+ IDs possible). No per-site timeout — single slow `ontario_obituaries_uninstall_site()` can overrun budget. | **Three fixes**: (a) `switch_to_blog()` return checked — if `false`, site is skipped and logged. (b) Skip-list capped at 500 entries (`$max_skip_ids`). (c) `set_time_limit()` called per-site with `$per_site_limit` (15% of budget, max 15s) to prevent single-site overrun. |
+| QC-R11-7 | No versioned ZIP/release asset — cannot safely deploy PR #87 to live WordPress. | **Deployable ZIP**: `ontario-obituaries-v5.0.11.zip` built from `wp-plugin/` directory with all QC-R11 fixes. Suitable for WordPress Admin → Plugins → Upload. |
+| QC-R10-4 | `invalidate_option_cache()` deletes alloptions on every successful write — heavy cache churn | **Tiered invalidation**: new `invalidate_option_only()` (per-option key only) for happy-path writes; `invalidate_full_cache()` (triad: option + alloptions + notoptions) only on retry paths and `add_option()`. Reduces cache churn from 3 deletes/write to 1 delete/write on the common path. |
+| QC-R10-4b | `add_option()` only deletes `notoptions` — stale "missing option" reads persist | **Fixed**: `add_option()` path now busts both `notoptions` AND `alloptions` to ensure the new option is visible through all WP cache paths. |
+| QC-R10-5 | Pool routing uses exact string match; typos silently route to wrong pool | **Normalized routing**: new `normalize_consumer()` lowercases and trims input. `CONSUMER_POOL_MAP` constant defines explicit allowlist (`rewriter→cron`, `chatbot→chatbot`, `authenticity→cron`). Unknown consumers route to `cron` (safe default) with logged warning. |
+| QC-R10-6 | WP_Error instantiated with scalar data — breaks REST/JSON serialization | **Array data**: rewriter's `WP_Error('rate_limited', ...)` now uses `array('seconds_until_reset' => ...)` instead of scalar. Authenticity checker likewise uses array data with reset timer. Compatible with `wp_send_json_error()` and REST framework. |
+| QC-R10-7 | Multisite uninstall: no try/finally around switch_to_blog()/restore_current_blog() | **Context safety**: `switch_to_blog()` + `try { uninstall_site() } catch(\Throwable) { log } finally { restore_current_blog() }`. Exception in per-site cleanup cannot leave WP in wrong blog context. |
+| QC-R10-8 | Timeout handling: loop continues iterating when budget exceeded | **Immediate break**: timeout guard now uses `break` instead of `continue`. When time budget is exceeded, the inner foreach breaks immediately, sets `$timed_out` flag, and the outer do-while breaks too. No wasted iteration. |
+| QC-R10-9 | `get_sites(['number'=>0])` behavior varies across WP versions | **Safe pagination**: explicit `'number' => $batch_size` (100) in all `get_sites()` calls. Never uses `'number' => 0`. Post-timeout remaining-sites fetch uses `'number' => 10000` upper bound. |
 
 ---
 
@@ -605,22 +705,22 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED (PR #83) — Removed all historical migration blocks
 2. ~~**BUG-C2: Display deadlock**~~ — ✅ FIXED (PR #84) — Removed `status='published'` gate from 18 queries
 3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED (PR #83) — Blocks removed, remaining ops idempotent
-4. **BUG-C4: Dedup on every page load** — Move to post-scrape hook or daily cron
+4. ~~**BUG-C4: Dedup on every page load**~~ — ✅ FIXED (PR #85) — Moved to post-scrape hook + daily cron
 
 ### HIGH (security + functional)
-5. **BUG-H2 + H7: Incomplete uninstall** — Clean up all options, transients, and cron hooks
-6. **BUG-H6: Domain lock bypass** — Switch from `strpos()` to exact match
-7. **BUG-H1: Nonsense rate calculation** — Guard division by zero in cron-rewriter.php
+5. ~~**BUG-H2 + H7: Incomplete uninstall**~~ — ✅ FIXED (PR #85) — All 22 options, 8 transients, 8 cron hooks cleaned up
+6. ~~**BUG-H6: Domain lock bypass**~~ — ✅ FIXED (PR #86) — Exact match + subdomain suffix
+7. ~~**BUG-H1: Nonsense rate calculation**~~ — ✅ FIXED (PR #86) — Correct per-hour formula
 8. ~~**BUG-H3: Duplicate index creation**~~ — ✅ FIXED (PR #83) — v4.3.0 migration block removed entirely
-9. **BUG-H4: Undefined $result** — Initialize variable before conditional block
-10. **BUG-H5: Premature shutdown throttle** — Set throttle AFTER success, not before
+9. ~~**BUG-H4: Undefined $result**~~ — ✅ FIXED (PR #86) — Initialized before loop
+10. ~~**BUG-H5: Premature shutdown throttle**~~ — ✅ FIXED (PR #86) — Throttle moved to post-success
 
 ### MEDIUM (architecture + safety)
-11. **BUG-M1: Shared Groq rate limiter** — Coordinate API usage across 3 consumers
+11. ~~**BUG-M1: Shared Groq rate limiter**~~ — ✅ FIXED (PR #87, v5.0.8) — Atomic CAS full rewrite, split 80/20 cron/chatbot pools, DoS mitigation, multisite uninstall
 12. ~~**BUG-M3: Monolithic migrations**~~ — ✅ FIXED (PR #83) — Function reduced from ~1,721 to ~100 lines
-13. **BUG-M4: Risky name-only dedup** — Add date guard to prevent merging different people
-14. **BUG-M5: Activation race conditions** — Stagger cron scheduling, add transient locks
-15. **BUG-M6: Unrealistic throughput comments** — Update all to reflect actual ~15/5-min
+13. ~~**BUG-M4: Risky name-only dedup**~~ — ✅ FIXED (PR #86) — 90-day date guard
+14. ~~**BUG-M5: Activation race conditions**~~ — ✅ FIXED (PR #87, v5.0.8) — Staggered scheduling + jitter with floor + cooldown-on-success
+15. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ FIXED (PR #87, v5.0.8) — Comments corrected
 
 ### PREVIOUSLY KNOWN (carried forward)
 16. **BLOCKED: AI Rewriter Groq TPM limit** — Upgrade plan, switch API, or accept slow throughput

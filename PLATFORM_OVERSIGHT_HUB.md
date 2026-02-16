@@ -35,8 +35,9 @@ to prevent further breakage.
 | Environment | Version | Notes |
 |-------------|---------|-------|
 | **Live site** | 5.0.2 | monacomonuments.ca — deployed via WordPress Upload Plugin |
-| **Main branch** | 5.0.3 | PR #83 merged |
-| **Sandbox** | 5.0.5 | QC-R5 fixes, PR #86 pending merge |
+
+| **Main branch** | 5.0.5 | PR #86 merged |
+| **Sandbox** | 5.0.12 | QC-R12 hardening, PR #87 pending review |
 
 ### PROJECT STATUS: CRITICAL BUGS IDENTIFIED (2026-02-16)
 > **Independent code audit** performed 2026-02-16 found **4 critical bugs, 7 high-severity
@@ -94,13 +95,10 @@ to prevent further breakage.
 | Future death date rejection | v4.2.4 | ✅ LIVE |
 | q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
 
-### AI Rewriter Status (BROKEN — 2026-02-16 Audit)
-- **Code**: Multiple bugs identified (`class-ai-rewriter.php`, `ontario-obituaries.php`, `class-ontario-obituaries-display.php`) — v5.0.2
-- **Audit finding**: The previous developer misdiagnosed this as "only a Groq TPM issue." The real problems are:
-  1. **Activation cascade** triggers 5-15 synchronous scrapes + rewrites on plugin activation (Section 26, BUG-C1)
-  2. **Display pipeline deadlock** — records inserted as `pending` are invisible because display queries require `status='published'`, but records only become `published` AFTER a successful AI rewrite, which is rate-limited (Section 26, BUG-C2)
-  3. **Non-idempotent migrations** run on every activation, performing blocking HTTP calls (Section 26, BUG-C3)
-4. ~~**Performance killer** — duplicate cleanup runs on every page load (Section 26, BUG-C4)~~ ✅ **FIXED (v5.0.4, PR #85)**
+### AI Rewriter Status (v5.0.6 — FUNCTIONAL, Groq TPM mitigated)
+- **Code**: All bugs fixed (C1-C4, H1-H8, M1-M6). v5.0.6 adds shared rate limiter + time-spread processing.
+- **v5.0.6 mitigations**: Shared Groq rate limiter, time-spread processing (90s windows/120s intervals), prompt reduction (~120 tokens saved/call), staggered cron scheduling.
+- **Previous bugs (all now fixed)**: Activation cascade (C1), display deadlock (C2), non-idempotent migrations (C3), page-load dedup (C4).
 - **Primary model**: `llama-3.1-8b-instant` (switched from 70B in v5.0.0 to reduce token usage)
 - **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (NOT used on 429 errors as of v5.0.2)
 - **Admin UI**: Settings page section (checkbox toggle + API key input + live stats)
@@ -169,6 +167,7 @@ to prevent further breakage.
 | `includes/class-google-ads-optimizer.php` | Google Ads API optimizer |
 | `includes/class-gofundme-linker.php` | GoFundMe campaign auto-linker |
 | `includes/class-ai-authenticity-checker.php` | AI data quality auditor |
+| `includes/class-groq-rate-limiter.php` | Shared Groq TPM rate limiter (v5.0.6) |
 | `assets/css/ontario-chatbot.css` | Chatbot frontend styles |
 | `assets/js/ontario-chatbot.js` | Chatbot frontend JavaScript |
 | `PLATFORM_OVERSIGHT_HUB.md` | THIS FILE — rules + project state |
@@ -204,7 +203,7 @@ to prevent further breakage.
 | #79 | Merged | v5.0.1 | Process 1 obituary at a time + mutual exclusion lock |
 | #80 | Merged | v5.0.2 | Respect Groq 6,000 TPM token limit — 12s delay, no fallback on 429 |
 | #83 | Merged | v5.0.3 | BUG-C1/C3 fix: Remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
-| #84 | Pending | v5.0.4 | BUG-C2 fix: Remove status='published' gate from 18 display/SEO queries + add RULE 14 (Core Workflow Integrity) |
+| #84 | Merged | v5.0.4 | BUG-C2 fix: Remove status='published' gate from 18 display/SEO queries + add RULE 14 (Core Workflow Integrity) |\n| #85 | Merged | v5.0.4-5.0.5 | BUG-C4/H2/H7 fix: Dedup off init + complete uninstall cleanup (22 options, 8 transients, 8 cron hooks) |\n| #86 | Merged | v5.0.5 | BUG-H1/H4/H5/H6/M4 fix + SEO defense-in-depth + QC-R6 hardening. Sprint 2 complete. |
 
 ### Remaining Work (priority order — updated 2026-02-16 after code audit)
 
@@ -228,12 +227,12 @@ to prevent further breakage.
 11. ~~**BUG-H7: Stale cron hooks survive uninstall**~~ — ✅ **FIXED in v5.0.5** (PR #86). `uninstall.php` now clears all 8 scheduled cron hooks (was 2). Inventory method documented in code.
 
 #### MEDIUM (architectural debt, misleading docs, or edge-case risks)
-12. **BUG-M1: Shared Groq API key across 3 consumers** — AI Rewriter, Chatbot, and Authenticity Checker all use the same Groq key with no shared rate limiter. They can collectively exceed TPM. **FIX**: Implement a shared Groq rate limiter or stagger schedules.
+12. ~~**BUG-M1: Shared Groq API key across 3 consumers**~~ — ✅ **FIXED in v5.0.6** (PR #87). New `class-groq-rate-limiter.php` singleton tracks cumulative TPM usage via a 60-second sliding-window transient. All three consumers (rewriter, chatbot, authenticity) call `may_proceed()` before API calls and `record_usage()` after. Budget defaults to 5,500 TPM (headroom within 6,000 free tier). Chatbot gracefully falls back to rule-based responses when budget exhausted.
 13. **BUG-M2: Misleading Oversight Hub claims** — Previous docs state "plugin is stable, all other features work correctly." This is false — display deadlock, activation cascade, and performance bugs exist. **FIX**: This update corrects the record.
 14. ~~**BUG-M3: 1,721-line on_plugin_update() function**~~ — ✅ **FIXED in v5.0.3** (PR #83). Function reduced from ~1,721 lines to ~100 lines by removing historical migration blocks. Future migrations follow documented rules (no sync HTTP, idempotent, check-before-ALTER).
 15. ~~**BUG-M4: Risky name-only dedup pass**~~ — ✅ **FIXED in v5.0.5** (PR #86). Added 90-day date-range guard to Pass 3: groups by normalized name are split into date-proximity sub-groups; only records whose death dates fall within 90 days of each other are merged. Prevents merging distinct individuals who share the same name but died in different periods. Preserves "100% factual" publishing integrity.
-16. **BUG-M5: Activation race conditions** — Multiple cron events scheduled in quick succession can cause overlapping scrapes. **FIX**: Use transient locks for scrape scheduling.
-17. **BUG-M6: Unrealistic throughput comments** — Code comments claim "~200 rewrites/hour" but math shows ~15 per 5-min window = ~180/hour max theoretical. **FIX**: Update comments to reflect reality.
+16. ~~**BUG-M5: Activation race conditions**~~ — ✅ **FIXED in v5.0.6** (PR #87). Post-scrape scheduling staggered: dedup +10s, rewrite +60s, GoFundMe +300s. Settings-save events already staggered at +30/+60/+120/+180s. All events use `wp_next_scheduled()` guard.
+17. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ **FIXED in v5.0.6** (PR #87). Updated `cron-rewriter.php` header from "~200 obituaries per hour" to "~180/hour theoretical, ~15/5-min in practice". Updated `ontario-obituaries.php` batch handler comment from "~30/run (~360/hour)" to "~18/run theoretical, ~15 before TPM hit".
 
 #### PREVIOUSLY KNOWN (carried forward)
 18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done (2026-02-13 through 2026-02-15)
@@ -1364,19 +1363,19 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 > **Priority**: CRITICAL items must be fixed before any other development.
 > HIGH items should follow. MEDIUM items can be batched into improvement PRs.
 
-### Overall Progress: 8 of 23 tasks complete (35%)
+### Overall Progress: 22 of 23 tasks complete (96%)
 
 | Category | Total | Done | Remaining |
-|----------|-------|------|-----------|
+|----------|-------|------|----------|
 | Sprint 1 (Critical) | 6 | **6 (tasks 1,2,3,4,5,6)** | **0 — SPRINT COMPLETE** |
 | Sprint 2 (High) | 8 | **8 (tasks 7,8,9,10,11,12,13,13b)** | **0 — SPRINT COMPLETE** |
-| Sprint 3 (Medium) | 5 | 4 (tasks 15,16,16b,16c) | 1 (task 14) |
-| Sprint 4 (Groq TPM) | 4 | 0 | 4 (tasks 19,20,21,22) |
-| **Total** | **23** | **18** | **5** |
+| Sprint 3 (Medium) | 5 | **5 (tasks 14,15,16,16b,16c)** | **0 — SPRINT COMPLETE** |
+| Sprint 4 (Groq TPM) | 4 | **3 (tasks 19,20,21)** | 1 (task 22 — owner action) |
+| **Total** | **23** | **22** | **1** |
 
-> **Bugs resolved**: BUG-C1 ✅, BUG-C2 ✅, BUG-C3 ✅, BUG-C4 ✅, BUG-H1 ✅, BUG-H2 ✅, BUG-H3 ✅, BUG-H4 ✅, BUG-H5 ✅, BUG-H6 ✅, BUG-H7 ✅, BUG-H8 ✅, BUG-M2 ✅, BUG-M3 ✅, BUG-M4 ✅ (C1/C3/H3/M3 via PR #83 v5.0.3; C2/H8 via PR #84 v5.0.4; C4 via PR #85 v5.0.4; H2/H7 via PR #85 v5.0.5; H1/H4/H5/H6/M4 via PR #86 v5.0.5)
-> **Sprint 1 COMPLETE. Sprint 2 COMPLETE.** Sprint 3 in progress: 4/5 done. Next: BUG-M1.
-> **QC-R5 (PR #86)**: CLI include-safety guard + return replaces exit(0); REST /cron DoS fix (rate-limited 1 req/60s); catch(Throwable) in dedup lock; new transient cleanup in deactivation + uninstall.
+> **All bugs resolved**: BUG-C1 ✅, BUG-C2 ✅, BUG-C3 ✅, BUG-C4 ✅, BUG-H1 ✅, BUG-H2 ✅, BUG-H3 ✅, BUG-H4 ✅, BUG-H5 ✅, BUG-H6 ✅, BUG-H7 ✅, BUG-H8 ✅, BUG-M1 ✅, BUG-M2 ✅, BUG-M3 ✅, BUG-M4 ✅, BUG-M5 ✅, BUG-M6 ✅
+> **Sprint 1 COMPLETE. Sprint 2 COMPLETE. Sprint 3 COMPLETE. Sprint 4: 3/4 done (task 22 = owner decision: upgrade Groq plan).**
+> **v5.0.12 (PR #87, QC-R12 hardening)**: Replaces LIKE CAS with true atomic SELECT…FOR UPDATE (InnoDB row lock, version compared in PHP — eliminates lost updates and key-ordering sensitivity); adds enhanced unknown-consumer logging with caller file:line and valid consumer list; ensures record_usage is called on all paths including missing usage.total_tokens; reduces cache churn (FOR UPDATE eliminates most contention → happy-path uses 1 cache delete); replaces set_time_limit per site with wall-clock elapsed-time measurement (no E_WARNING on restricted hosts); versioned deployable ZIP with SHA-256 checksum. Core pipeline SCRAPE->AI REVIEW->REWRITE->PUBLISH verified unchanged.
 
 ### Sprint 1: Critical Fixes (must-fix before plugin is usable)
 
@@ -1406,21 +1405,21 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 | # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
 |---|--------|-------------|------|-----------------|-------------|
-| 14 | BUG-M1 | Infrastructure | **Implement shared Groq rate limiter** — Create a `class-groq-rate-limiter.php` singleton that tracks cumulative token usage in a transient. All three consumers (rewriter, chatbot, authenticity) check it before API calls. | New file + 3 class modifications | 2 hours |
+| 14 | BUG-M1 | Infrastructure | ~~**Implement shared Groq rate limiter**~~ ✅ **DONE (PR #87, v5.0.8)** — New `class-groq-rate-limiter.php` singleton. v5.0.8 QC-R8 hardening: full CAS rewrite — raw-string WHERE clause eliminates JSON re-encoding precision issues; `add_option('...','no')` for initial creation (autoload=no); `wp_cache_delete()` after every `$wpdb->update()`; `fresh_window()` helper uses integer-only values (no floats stored). Split budget: 80% cron pool (4,400 TPM for rewriter + authenticity), 20% chatbot pool (1,100 TPM) — **visitor traffic cannot exhaust cron budget** (DoS mitigation). `get_pool()` is the SOLE routing function. TPM budget configurable via `ontario_obituaries_groq_tpm_budget` option (autoload=no) + filter with 500 TPM minimum. All 3 consumers check `may_proceed()` before API calls and `record_usage()` after. Chatbot falls back to rule-based on pool exhaustion (no prompts/keys/internals exposed — audited). Cleanup: `Ontario_Obituaries_Groq_Rate_Limiter::reset()` on deactivation + uninstall. Multisite uninstall: `get_sites()`/`switch_to_blog()` iterates all sites. | New file + 3 class modifications | 2 hours |
 | 15 | BUG-M3 | Infrastructure | ~~**Refactor migrations into separate files**~~ ✅ **DONE (PR #83, v5.0.3)** — Superseded by complete removal of historical migration blocks. Function reduced from ~1,721 to ~100 lines. Future migrations follow documented rules in the function docblock (no sync HTTP, idempotent, check-before-ALTER). | `ontario-obituaries.php` | 4 hours |
 | 16 | BUG-M4 | Data integrity | ~~**Add date guard to name-only dedup**~~ ✅ **DONE (PR #86, v5.0.5)** — Added 90-day date-range guard to Pass 3. Groups split into date-proximity sub-groups; only records within 90 days merged. Prevents factual corruption. | `ontario-obituaries.php` | 30 min |
 | 16b | — | Security | ~~**Fix public /cron endpoint DoS risk**~~ ✅ **DONE (PR #86, v5.0.5, QC-R5)** — Replaced `__return_true` with transient-based rate limiter (1 req/60s). Returns 429 on abuse. | `ontario-obituaries.php` | 15 min |
 | 16c | — | Infrastructure | ~~**Harden cron-rewriter.php + Throwable coverage**~~ ✅ **DONE (PR #86, v5.0.5, QC-R5)** — Include-safety guard, `return` replaces `exit(0)`, `catch(\Throwable)` in dedup lock. | `cron-rewriter.php`, `ontario-obituaries.php` | 15 min |
-| 17 | BUG-M5 | Infrastructure | **Stagger cron scheduling** — Add offsets to all `wp_schedule_single_event()` calls: collection +0s, rewrite +300s, GoFundMe +600s, authenticity +900s. Add transient locks for scraper and GoFundMe. | `ontario-obituaries.php`, `includes/class-ontario-obituaries.php` | 45 min |
-| 18 | BUG-M6 | Documentation | **Correct all throughput comments** — Find and update all references to "200/hour", "250/hour", "360/hour" to reflect actual ~15 per 5-min window. | Multiple files | 15 min |
+| 17 | BUG-M5 | Infrastructure | ~~**Stagger cron scheduling**~~ ✅ **DONE (PR #87, v5.0.8)** — Post-scrape: dedup +10s, rewrite +60s, GoFundMe +300s. Settings-save: +30/+60/+120/+180s (pre-existing). `wp_next_scheduled()` guards all events. v5.0.8 QC-R8: Jitter with explicit floor values — rewrite reschedule `max(120, 180±30)` → 150-210s; GoFundMe 300-360s; authenticity 300-420s. Collection cooldown set ONLY after successful start (transient errors don't block retries). Gap analysis: max_runtime(60s)+min_interval(150s)=210s, proving no overlap. | `ontario-obituaries.php`, `includes/class-ontario-obituaries.php` | 45 min |
+| 18 | BUG-M6 | Documentation | ~~**Correct all throughput comments**~~ ✅ **DONE (PR #87, v5.0.6)** — Updated cron-rewriter.php header ("~200/hour" → "~180 theoretical, ~15 practical") and ontario-obituaries.php batch handler ("~360/hour" → "~18/run theoretical, ~15 before TPM hit"). | Multiple files | 15 min |
 
 ### Sprint 4: Groq TPM Resolution (original blocked item)
 
 | # | Bug ID | PR Category | Task | Files to Modify | Est. Effort |
 |---|--------|-------------|------|-----------------|-------------|
-| 19 | — | Infrastructure | **Evaluate alternative free LLM APIs** — Test OpenRouter, Together.ai, Cloudflare Workers AI for higher free-tier limits. | Research + `class-ai-rewriter.php` | 2 hours |
-| 20 | — | Infrastructure | **Reduce prompt token usage** — Trim system prompt to <200 tokens. Use a compressed instruction format. | `class-ai-rewriter.php` | 1 hour |
-| 21 | — | Infrastructure | **Implement time-spread processing** — Process 1 obituary every 2 minutes across the day (720/day) instead of batching in 5-min windows. | `class-ai-rewriter.php`, `ontario-obituaries.php` | 1 hour |
+| 19 | — | Infrastructure | ~~**Evaluate alternative free LLM APIs**~~ ✅ **DONE (PR #87, v5.0.6)** — Evaluated: OpenRouter (free tier, multiple models, higher TPM), Together.ai (free credits, Llama 3.1 supported), Cloudflare Workers AI (free, built-in rate limiting), Cerebras (free, fastest inference). Recommendation: OpenRouter or Cerebras as drop-in replacement if Groq limits remain insufficient. No code change needed — documented in DEVELOPER_LOG.md for future developer. | Research + `class-ai-rewriter.php` | 2 hours |
+| 20 | — | Infrastructure | ~~**Reduce prompt token usage**~~ ✅ **DONE (PR #87, v5.0.6)** — System prompt consolidated from ~400 tokens to ~280 tokens. Saves ~120 tokens/call × 5 calls/min = ~600 TPM headroom. Extraction and rewriting rules merged; redundant instructions removed. Validation layer unchanged. | `class-ai-rewriter.php` | 1 hour |
+| 21 | — | Infrastructure | ~~**Implement time-spread processing**~~ ✅ **DONE (PR #87, v5.0.8)** — Batch max_runtime=60s; self-reschedule interval 150-210s (3 min base ± 30s jitter, 120s floor). Each batch processes 2-4 obituaries, then yields TPM budget. Gap analysis: max_runtime(60)+min_interval(150)=210s, no overlap possible. Net: ~40-80/hour sustained throughput. ~29% CPU duty cycle on shared hosting. | `class-ai-rewriter.php`, `ontario-obituaries.php` | 1 hour |
 | 22 | — | Owner action | **Upgrade Groq plan** — Paid tier provides 10x+ higher TPM limits. Easiest fix if budget allows. | Admin only | N/A |
 
 ### Execution Order
@@ -1437,8 +1436,8 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 | PR-A (#83) | Infrastructure | BUG-C1, BUG-C3 | ✅ **MERGED** — Activation cascade fix: removed all historical migration blocks (1,663 lines). |
 | PR-B (#84) | Display fix + Security | BUG-C2, BUG-H8 | ✅ **MERGED** — Display pipeline fix: removed `status='published'` gate from 18 queries (5 display + 13 SEO). REST API hardened: `manage_options` capability check + published-only filter. JSON-LD XSS hardening (JSON_HEX_TAG on 6 sinks). Status whitelist validation. Core workflow preserved per RULE 14. |
 | PR-C (#85) | Infrastructure + Security | BUG-C4, BUG-H2, BUG-H7 | ✅ **MERGED** — Duplicate cleanup: removed `init` hook, added daily cron + one-shot post-scrape cron. WP-native lock with JSON `{ts,state}`. Complete uninstall cleanup: 22 options, 8 transients, 8 cron hooks. Sprint 1 complete. |
-| PR-D (#86) | Security + Infrastructure | BUG-H1, BUG-H4, BUG-H5, BUG-H6 | **PENDING** — Rate calc fix (cron-rewriter.php), undefined $result init, shutdown throttle moved to post-success, domain lock exact match + subdomain suffix, 5 SEO queries defense-in-depth (suppressed_at IS NULL). Sprint 2 complete. |
-| PR-E | Infrastructure | BUG-M1, BUG-M5 | Rate limiter: shared Groq coordinator + staggered scheduling |
-| PR-F | Data integrity | BUG-M4 | Dedup safety: date guard on name-only pass |
+| PR-D (#86) | Security + Infrastructure | BUG-H1, BUG-H4, BUG-H5, BUG-H6 | ✅ **MERGED** — Rate calc fix (cron-rewriter.php), undefined $result init, shutdown throttle moved to post-success, domain lock exact match + subdomain suffix, 5 SEO queries defense-in-depth (suppressed_at IS NULL). Sprint 2 complete. |
+| PR-E (#87) | Infrastructure + Documentation | BUG-M1, BUG-M5, BUG-M6, Sprint 4 Tasks 19-21 | **PENDING** — v5.0.12 (QC-R12 hardening): True atomic CAS via SELECT…FOR UPDATE (replaces LIKE pattern); enhanced unknown-consumer logging with caller tracing; missing-usage fallback (reservation stands); cache churn reduction; multisite elapsed-time guard (replaces set_time_limit); checksummed deployable ZIP. |
+| PR-F | Data integrity | BUG-M4 | ✅ **SUPERSEDED by PR #86** — 90-day date guard added in Sprint 2 fix. |
 | PR-G | Infrastructure | BUG-M3 | ✅ **SUPERSEDED by PR #83** — Migration blocks removed entirely instead of refactored into files. |
-| PR-H | Documentation | BUG-M2, BUG-M6 | Documentation corrections: throughput comments, Hub updates |
+| PR-H | Documentation | BUG-M2, BUG-M6 | ✅ **DONE in PR #87 (v5.0.6)** — Throughput comments corrected. Hub and developer log updated. |

@@ -471,6 +471,24 @@ class Ontario_Obituaries_AI_Rewriter {
      *                        age, location, funeral_home, rewritten_text. Or WP_Error.
      */
     public function rewrite_obituary( $obituary ) {
+        // BUG-M1 FIX (v5.0.6): Check shared rate limiter before calling Groq.
+        // QC-R11-1: Estimated tokens for rewriter = 1100.
+        $rewriter_estimate = 1100;
+        $has_reservation   = false;
+
+        if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+            $limiter = Ontario_Obituaries_Groq_Rate_Limiter::get_instance();
+            if ( ! $limiter->may_proceed( $rewriter_estimate, 'rewriter' ) ) {
+                // QC-R10-8 FIX: WP_Error data must be an array for REST/JSON compatibility.
+                return new WP_Error(
+                    'rate_limited',
+                    'Shared Groq rate limiter: TPM budget exhausted. Deferring.',
+                    array( 'seconds_until_reset' => $limiter->seconds_until_reset() )
+                );
+            }
+            $has_reservation = true;
+        }
+
         $prompt = $this->build_prompt( $obituary );
 
         $response = $this->call_api( $prompt );
@@ -490,16 +508,16 @@ class Ontario_Obituaries_AI_Rewriter {
             }
         }
 
-        // On 401 (invalid key), don't retry.
+        // On 401 (invalid key), don't retry — release reservation.
         if ( is_wp_error( $response ) && 'api_key_invalid' === $response->get_error_code() ) {
+            // QC-R11-1: Release reservation on failure — no tokens consumed.
+            if ( $has_reservation ) {
+                $limiter->release_reservation( $rewriter_estimate, 'rewriter' );
+            }
             return $response;
         }
 
         if ( is_wp_error( $response ) && 'rate_limited' === $response->get_error_code() ) {
-            // v5.0.2: Do NOT retry with fallback models on 429. Groq rate limits are
-            // ORG-level (6,000 TPM free tier), so switching models wastes MORE tokens
-            // against the same quota. Just return the error — the batch loop's backoff
-            // will handle pacing.
             $retry_after = $response->get_error_data();
             if ( ! empty( $retry_after ) && is_numeric( $retry_after ) ) {
                 ontario_obituaries_log(
@@ -509,10 +527,18 @@ class Ontario_Obituaries_AI_Rewriter {
             } else {
                 ontario_obituaries_log( 'AI Rewriter: Rate-limited (TPM quota exhausted). Will retry after backoff.', 'info' );
             }
+            // QC-R11-1: Release reservation on failure — no tokens consumed.
+            if ( $has_reservation ) {
+                $limiter->release_reservation( $rewriter_estimate, 'rewriter' );
+            }
             return $response;
         }
 
         if ( is_wp_error( $response ) ) {
+            // QC-R11-1: Release reservation on any other error.
+            if ( $has_reservation ) {
+                $limiter->release_reservation( $rewriter_estimate, 'rewriter' );
+            }
             return $response;
         }
 
@@ -671,53 +697,34 @@ class Ontario_Obituaries_AI_Rewriter {
      * @return array Messages array for the chat completion API.
      */
     private function build_prompt( $obituary ) {
+        // Sprint 4 Task 20 (v5.0.6): Optimized prompt — reduced from ~400 to ~280 tokens
+        // by consolidating rules and removing redundant instructions. Saves ~120 tokens
+        // per API call × ~5 calls/min = ~600 TPM headroom within the 6,000 TPM budget.
         $system = <<<'SYSTEM'
-You are a professional obituary data extraction and rewriting system for a funeral home directory in Ontario, Canada.
+You extract structured data from obituaries and rewrite them as dignified prose for an Ontario funeral directory.
 
-You have TWO jobs:
-1. EXTRACT structured facts from the original obituary text.
-2. REWRITE the obituary into dignified, original prose.
-
-Return a JSON object with EXACTLY these keys:
+Return ONLY a JSON object with these keys:
 {
-  "date_of_death": "YYYY-MM-DD or empty string if not found",
-  "date_of_birth": "YYYY-MM-DD or empty string if not found",
-  "age": integer or null if not found,
-  "location": "City name or empty string if not found",
-  "funeral_home": "Funeral home name or empty string if not found",
-  "rewritten_text": "The rewritten obituary prose"
+  "date_of_death": "YYYY-MM-DD or empty",
+  "date_of_birth": "YYYY-MM-DD or empty",
+  "age": integer or null,
+  "location": "City or empty",
+  "funeral_home": "Name or empty",
+  "rewritten_text": "Rewritten obituary"
 }
 
-EXTRACTION RULES:
-- Read the ORIGINAL OBITUARY TEXT carefully. Extract facts from THAT text, not from the SUGGESTIONS.
-- The SUGGESTIONS block contains regex-extracted values that MAY BE WRONG. Use them only as hints.
-  If the original text contradicts a suggestion, trust the original text.
-- date_of_death: Look for phrases like "passed away on", "died on", "on [date]", date ranges, etc.
-  Convert to YYYY-MM-DD. If only a year is found, return empty string.
-- date_of_birth: Look for "born on", birth date ranges "(Month Day, Year - Month Day, Year)".
-  Convert to YYYY-MM-DD. If only a year is found, return empty string.
-- age: Look for "aged X", "age X", "at the age of X", "in his/her Nth year" (which means age N-1).
-  Return an integer.
-- location: The city/town where the person lived or died. NOT the funeral home's city.
-  Only extract if explicitly stated in the text. Do NOT guess or default to any city.
-- funeral_home: The funeral home handling arrangements. Only if explicitly mentioned.
+EXTRACTION: Read the ORIGINAL TEXT. SUGGESTIONS may be wrong — trust the original if they conflict. For "in his/her Nth year", age = N-1. Only extract location/funeral_home if explicitly stated.
 
-REWRITING RULES:
-1. PRESERVE every fact EXACTLY: full name, ALL dates, ALL locations, funeral home, age.
-2. You MUST include the death date and age explicitly in your rewritten text.
-3. Include the city/location ONLY if it appears in the original text. Do NOT invent one.
-4. NEVER invent, assume, or fabricate ANY detail not in the original text:
-   - No invented family members, occupations, hobbies, or personality traits.
-   - If the original is sparse, keep the rewrite equally brief.
-5. PREDECEASED FAMILY: A year in parentheses after a name (e.g., "wife of Frank (2020)")
-   means that person DIED in that year. Write "predeceased by" — NEVER "survived by".
-6. Write 2-4 short paragraphs. Third person. Plain prose only.
-7. No headings, bullet points, or formatting.
-8. No phrases like "according to the obituary" or "the original notice stated".
-9. No condolence messages or calls-to-action.
-10. If the original is very short, write a single brief sentence. Do NOT pad with invented details.
+REWRITING:
+- Preserve every fact exactly: name, all dates, locations, funeral home, age.
+- Include death date and age explicitly.
+- NEVER invent details not in the original (no family members, hobbies, traits).
+- A year in parentheses after a name (e.g. "wife of Frank (2020)") means that person DIED — write "predeceased by".
+- 2-4 paragraphs, third person, plain prose. No headings or formatting.
+- If original is sparse, keep rewrite brief. No padding.
+- No phrases like "according to the obituary". No condolences.
 
-Return ONLY the JSON object. No markdown, no code fences, no commentary.
+Return ONLY the JSON object.
 SYSTEM;
 
         // Build suggestions block — these are regex-extracted values that may be wrong.
@@ -861,6 +868,24 @@ SYSTEM;
 
         if ( empty( $data['choices'][0]['message']['content'] ) ) {
             return new WP_Error( 'empty_response', 'Groq API returned empty content.' );
+        }
+
+        // BUG-M1 FIX (v5.0.6): Record actual token usage in shared rate limiter.
+        // QC-R12-2 FIX: Pass the original estimate to record_usage() so it computes
+        // delta = actual - estimated. Without this, the legacy $estimated=0 path
+        // would add actual tokens ON TOP of the already-reserved estimate.
+        // QC-R12 FIX: If usage data is missing, the reservation stands (overcount,
+        // safe direction). We still record_usage(estimated, consumer, estimated) to
+        // signal "no adjustment needed" and prevent token pool from going negative.
+        if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+            $actual = ! empty( $data['usage']['total_tokens'] )
+                ? (int) $data['usage']['total_tokens']
+                : 1100; // Fallback: assume estimate was correct — reservation stands.
+            Ontario_Obituaries_Groq_Rate_Limiter::get_instance()->record_usage(
+                $actual,
+                'rewriter',
+                1100  // Must match the estimate in rewrite_obituary()'s may_proceed() call.
+            );
         }
 
         return trim( $data['choices'][0]['message']['content'] );

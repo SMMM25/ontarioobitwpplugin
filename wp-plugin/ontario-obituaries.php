@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.0.5
+ * Version: 5.0.12
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.0.5' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.0.12' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -244,6 +244,11 @@ function ontario_obituaries_includes() {
 
     // v4.1.0: AI Rewriter — always loaded so stats/display work on frontend
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+
+    // v5.0.6 BUG-M1 FIX: Shared Groq rate limiter — coordinates TPM usage
+    // across AI Rewriter, AI Chatbot, and Authenticity Checker. Must load
+    // before any consumer class makes API calls.
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-groq-rate-limiter.php';
 
     // v4.2.0: IndexNow — instant search engine notification on new obituaries
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-indexnow.php';
@@ -1300,6 +1305,15 @@ function ontario_obituaries_deactivate() {
     delete_option( 'ontario_obituaries_dedup_lock' );
     delete_option( 'ontario_obituaries_dedup_throttle_log' );
     delete_transient( 'ontario_obituaries_cron_rest_limiter' ); // QC-R5: REST /cron rate limiter.
+    // BUG-M1 FIX (v5.0.6): Shared Groq rate limiter cleanup.
+    // v5.0.9: Migrated from transient to wp_options for atomic CAS.
+    delete_transient( 'ontario_obituaries_groq_tpm_window' );    // Legacy transient (pre-v5.0.7).
+    if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+        Ontario_Obituaries_Groq_Rate_Limiter::reset();
+    } else {
+        delete_option( 'ontario_obituaries_groq_rate_window' );
+    }
+    delete_transient( 'ontario_obituaries_collection_cooldown' ); // QC-R10 (v5.0.10): Collection burst guard.
 
     // v3.0.0: Remove SEO rewrite rules
     flush_rewrite_rules();
@@ -1309,6 +1323,13 @@ register_deactivation_hook( __FILE__, 'ontario_obituaries_deactivate' );
 /**
  * Scheduled task hook for collecting obituaries.
  * v3.0.0: Uses Source Collector (adapter-based) as primary, falls back to legacy scraper.
+ *
+ * QC-R10 FIX (v5.0.10): Collection cooldown (10 min) set ONLY after
+ * $collector->collect() returns successfully. This ensures that:
+ *   - Domain check failures do NOT set cooldown (retries immediately).
+ *   - Constructor failures do NOT set cooldown (retries immediately).
+ *   - collect() exceptions/fatals do NOT set cooldown (retries immediately).
+ * Only a successful scrape-start-and-return sets the 10-min guard.
  */
 function ontario_obituaries_scheduled_collection() {
     // v4.2.0: Domain lock — don't scrape on unauthorized domains.
@@ -1317,18 +1338,35 @@ function ontario_obituaries_scheduled_collection() {
         return;
     }
 
+    // QC-R10 FIX (v5.0.10): Prevent burst scraping (duplicate WP-Cron fires,
+    // rapid admin rescrape clicks). Minimum 10 min between collection runs.
+    // Cooldown is checked here but SET only AFTER collect() returns (below).
+    if ( get_transient( 'ontario_obituaries_collection_cooldown' ) ) {
+        ontario_obituaries_log( 'Collection: Skipped — cooldown active (< 10 min since last run).', 'info' );
+        return;
+    }
+
     // v3.0.0: Use the new Source Collector
     if ( class_exists( 'Ontario_Obituaries_Source_Collector' ) ) {
         $collector = new Ontario_Obituaries_Source_Collector();
-        $results   = $collector->collect();
     } else {
         // Fallback to legacy scraper
         if ( ! class_exists( 'Ontario_Obituaries_Scraper' ) ) {
             require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-scraper.php';
         }
-        $scraper = new Ontario_Obituaries_Scraper();
-        $results = $scraper->collect();
+        $collector = new Ontario_Obituaries_Scraper();
     }
+
+    // NOTE: Cooldown is NOT set here. It is set AFTER collect() returns
+    // successfully (below). If collect() throws an exception or fatal,
+    // the cooldown transient is never written, allowing immediate retry.
+    $results = $collector->collect();
+
+    // QC-R10 FIX (v5.0.10): Cooldown set ONLY after collect() completed.
+    // If $collector->collect() threw an uncaught exception or triggered a
+    // PHP fatal, execution never reaches this line — no cooldown is set,
+    // and the next cron tick can retry immediately.
+    set_transient( 'ontario_obituaries_collection_cooldown', time(), 600 ); // 10 min TTL.
 
     update_option( 'ontario_obituaries_last_collection', array(
         'timestamp' => current_time( 'mysql' ),
@@ -1375,20 +1413,22 @@ function ontario_obituaries_scheduled_collection() {
     // v4.6.3: After collection, schedule AI rewrite batch if Groq key is configured.
     // No longer gated behind 'ai_rewrite_enabled' checkbox — the v4.6.0 pipeline
     // requires AI rewrites for ANY record to become published. Having a key IS the intent.
+    // BUG-M5 FIX (v5.0.6): Staggered +60s to avoid overlap with dedup (+10s).
     $groq_key_for_rewrite = get_option( 'ontario_obituaries_groq_api_key', '' );
     if ( ! empty( $groq_key_for_rewrite ) ) {
         if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-            wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
-            ontario_obituaries_log( 'v4.6.3: Scheduled AI rewrite batch (30s after collection).', 'info' );
+            wp_schedule_single_event( time() + 60, 'ontario_obituaries_ai_rewrite_batch' );
+            ontario_obituaries_log( 'v4.6.3: Scheduled AI rewrite batch (60s after collection).', 'info' );
         }
     }
 
     // v4.3.0: After collection, schedule GoFundMe linker batch if enabled.
+    // BUG-M5 FIX (v5.0.6): Staggered +300s to avoid overlap with rewrite (+60s).
     $settings_for_rewrite = ontario_obituaries_get_settings();
     if ( ! empty( $settings_for_rewrite['gofundme_enabled'] ) ) {
         if ( ! wp_next_scheduled( 'ontario_obituaries_gofundme_batch' ) ) {
-            wp_schedule_single_event( time() + 180, 'ontario_obituaries_gofundme_batch' );
-            ontario_obituaries_log( 'v4.3.0: Scheduled GoFundMe linker batch (180s after collection).', 'info' );
+            wp_schedule_single_event( time() + 300, 'ontario_obituaries_gofundme_batch' );
+            ontario_obituaries_log( 'v4.3.0: Scheduled GoFundMe linker batch (300s after collection).', 'info' );
         }
     }
 }
@@ -1400,8 +1440,9 @@ add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled
  * v5.0.1: Simplified — processes ONE obituary at a time in a loop.
  *
  * When triggered by cPanel cron (php wp-cron.php every 5 min), this runs
- * server-side. It processes 1 obituary per iteration with 6s delays,
- * looping for up to 4 minutes = ~30 obituaries per run (~360/hour).
+ * server-side. It processes 1 obituary per iteration with 12s delays,
+ * looping for up to 4 minutes = ~18 per run (theoretical max).
+ * In practice, ~15 per 5-min window before Groq free-tier 6,000 TPM hit.
  *
  * Uses a transient lock so it won’t overlap with the shutdown hook or AJAX.
  * Self-reschedules if more remain.
@@ -1430,7 +1471,22 @@ function ontario_obituaries_ai_rewrite_batch() {
     }
 
     $start_time        = time();
-    $max_runtime       = 240; // 4 minutes.
+    // QC-R10 FIX (v5.0.10): max_runtime=60s, reschedule every 150-210s (3 min ± 30s).
+    //   Gap analysis: max_runtime (60s) + minimum reschedule interval (150s) = 210s.
+    //   A prior job CANNOT overlap the next because 60s runtime + 150s delay = 210s
+    //   minimum gap, while cron resolution is 60s. Even if WP-Cron fires early by
+    //   60s, the transient lock ('ontario_obituaries_rewriter_running', 300s TTL)
+    //   prevents overlap.
+    //   Throughput: 2-4 obituaries/batch × ~20 batches/hr ≈ 40-80 obituaries/hr.
+    //   CPU duty cycle: 60s work / 210s cycle ≈ 29%, safe for shared hosting.
+    //   JITTER PATHS AUDIT (QC-R10): Only this code block reschedules the rewriter.
+    //     - ontario_obituaries_scheduled_collection() schedules a one-shot +60s event
+    //       ONLY if no event exists (wp_next_scheduled guard at line ~1414).
+    //     - shutdown rewriter does NOT self-reschedule (it's a one-shot piggyback).
+    //     - AJAX rewriter does NOT self-reschedule (JS auto-repeats client-side).
+    //     - cron-rewriter.php (CLI) has its own 12s delay loop, does not use WP-Cron.
+    //     Therefore, this is the ONLY self-reschedule path. No double-scheduling.
+    $max_runtime       = 60;
     $total_ok          = 0;
     $total_fail        = 0;
     $consecutive_fails = 0;
@@ -1500,12 +1556,23 @@ function ontario_obituaries_ai_rewrite_batch() {
         'info'
     );
 
-    // If there are more pending, schedule another batch in 5 minutes.
+    // QC-R10 FIX (v5.0.10): Time-spread processing with verified interval.
+    //   base=180s, jitter=±30s → actual range 150-210s.
+    //   max_runtime=60s, so worst-case next start = 60+150 = 210s from batch start.
+    //   Minimum gap between batch END and next batch START = 150s (jitter=-30).
+    //   This guarantees no overlap even if WP-Cron fires slightly early.
     $pending = $rewriter->get_pending_count();
     if ( $pending > 0 && ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-        wp_schedule_single_event( time() + 300, 'ontario_obituaries_ai_rewrite_batch' );
+        $base_interval = 180;  // 3 minutes base.
+        $jitter        = wp_rand( -30, 30 ); // ±30s random jitter → 150-210s.
+        $interval      = max( 120, $base_interval + $jitter ); // Floor at 2 min (safety).
+        $next_run      = time() + $interval;
+        wp_schedule_single_event( $next_run, 'ontario_obituaries_ai_rewrite_batch' );
         ontario_obituaries_log(
-            sprintf( 'AI Rewriter: %d obituaries pending — scheduling next batch in 5 min.', $pending ),
+            sprintf(
+                'AI Rewriter: %d pending — next batch in %ds (base=%d, jitter=%+d).',
+                $pending, $interval, $base_interval, $jitter
+            ),
             'info'
         );
     }
@@ -1877,9 +1944,11 @@ function ontario_obituaries_gofundme_batch() {
     );
 
     // Schedule next batch if there are pending obituaries.
+    // QC-R10 FIX (v5.0.10): Jitter with floor to prevent negative/zero intervals.
     $stats = $linker->get_stats();
     if ( $stats['pending'] > 0 && ! wp_next_scheduled( 'ontario_obituaries_gofundme_batch' ) ) {
-        wp_schedule_single_event( time() + 300, 'ontario_obituaries_gofundme_batch' );
+        $interval = 300 + wp_rand( 0, 60 ); // 300-360s (5-6 min).
+        wp_schedule_single_event( time() + $interval, 'ontario_obituaries_gofundme_batch' );
     }
 
     if ( $result['matched'] > 0 ) {
@@ -1932,8 +2001,12 @@ add_action( 'ontario_obituaries_authenticity_audit', 'ontario_obituaries_authent
 function ontario_obituaries_schedule_authenticity_audit() {
     $settings = get_option( 'ontario_obituaries_settings', array() );
 
+    // QC-R10 FIX (v5.0.10): Jitter (+0-120s) to prevent exact alignment with
+    // other 4-hour recurring events. wp_rand() is WP's crypto-safe random.
+    // Interval: 300-420s (5-7 min) from now.
     if ( ! empty( $settings['authenticity_enabled'] ) && ! wp_next_scheduled( 'ontario_obituaries_authenticity_audit' ) ) {
-        wp_schedule_event( time() + 300, 'four_hours', 'ontario_obituaries_authenticity_audit' );
+        $offset = 300 + wp_rand( 0, 120 );
+        wp_schedule_event( time() + $offset, 'four_hours', 'ontario_obituaries_authenticity_audit' );
     }
 }
 add_action( 'init', 'ontario_obituaries_schedule_authenticity_audit', 20 );
