@@ -31,12 +31,12 @@ to prevent further breakage.
 - **Hosting**: Shared hosting with cPanel, no SSH access, no WP-CLI
 - **Deployment**: Manual upload via cPanel File Manager (WP Pusher can't do private repos)
 
-### Current Versions (as of 2026-02-15)
+### Current Versions (as of 2026-02-16)
 | Environment | Version | Notes |
 |-------------|---------|-------|
 | **Live site** | 5.0.2 | monacomonuments.ca — deployed via WordPress Upload Plugin |
-| **Main branch** | 5.0.2 | PR #80 merged |
-| **Sandbox** | 5.0.3 | BUG-C1/C3 fix — pending PR review |
+| **Main branch** | 5.0.3 | PR #83 merged |
+| **Sandbox** | 5.0.4 | BUG-C2 fix — pending PR review |
 
 ### PROJECT STATUS: CRITICAL BUGS IDENTIFIED (2026-02-16)
 > **Independent code audit** performed 2026-02-16 found **4 critical bugs, 7 high-severity
@@ -148,7 +148,7 @@ to prevent further breakage.
 6. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
 7. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
 8. **Schema redesign needed** for records without death date → future work
-9. **Display deadlock** — 710+ of 725 records invisible due to `status='published'` filter in display queries. See BUG-C2 in Section 26. **HIGH PRIORITY FIX.**
+9. ~~**Display deadlock** — 710+ of 725 records invisible due to `status='published'` filter in display queries.~~ → ✅ **FIXED (v5.0.4, PR #84)** — All display/SEO queries now show all non-suppressed records regardless of status.
 10. **Name-only dedup risk** — 3rd dedup pass could merge different people with same name. See BUG-M4 in Section 26.
 
 ### Key Files to Know
@@ -203,7 +203,8 @@ to prevent further breakage.
 | #78 | Merged | v5.0.0 | Bulletproof CLI cron — 10/batch @ 6s (~250/hour) |
 | #79 | Merged | v5.0.1 | Process 1 obituary at a time + mutual exclusion lock |
 | #80 | Merged | v5.0.2 | Respect Groq 6,000 TPM token limit — 12s delay, no fallback on 429 |
-| #83 | Pending | v5.0.3 | BUG-C1/C3 fix: Remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
+| #83 | Merged | v5.0.3 | BUG-C1/C3 fix: Remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
+| #84 | Pending | v5.0.4 | BUG-C2 fix: Remove status='published' gate from 18 display/SEO queries + add RULE 14 (Core Workflow Integrity) |
 
 ### Remaining Work (priority order — updated 2026-02-16 after code audit)
 
@@ -409,6 +410,66 @@ After EVERY commit/merge, the developer MUST:
 
 This ensures continuity across sessions — AI developers have limited memory and
 MUST rely on these documents to understand project state.
+
+---
+
+## RULE 14: Core Workflow Integrity — DO NOT ALTER
+
+> **THIS IS THE MOST IMPORTANT RULE.** All bug fixes, refactors, and new features
+> MUST preserve the plugin's core plan and vision. Any PR that breaks this workflow
+> will be rejected.
+
+**The Plugin's Core Pipeline:**
+
+```
+SCRAPE → AI VIEWS DATA → AI REWRITES OBITUARY → SYSTEM PUBLISHES
+```
+
+1. **SCRAPE**: The collector scrapes Ontario obituary sources on a scheduled cron.
+   Raw obituary data (name, dates, location, description) is stored in the DB
+   with `status = 'pending'`.
+2. **AI VIEWS DATA**: The AI rewriter reads the raw scraped data from the DB.
+3. **AI REWRITES OBITUARY**: The AI produces an original, fact-preserving rewrite
+   stored in `ai_description`. The record's status is updated to `published`.
+4. **SYSTEM PUBLISHES**: The display and SEO classes render obituaries on
+   `www.monacomonuments.ca` with full Schema.org markup, sitemaps, and memorial pages.
+
+**Factual Integrity Requirement:**
+- Published data MUST be **100% factual**: names, dates of birth, dates of death,
+  locations, funeral homes, and all other obituary details must come directly from
+  the original scraped source.
+- The AI rewrite is an **enhancement** (better prose, structured extraction) — it
+  MUST NOT fabricate, alter, or omit any factual data.
+- Templates MUST display `ai_description` when available, falling back to the
+  original `description` when the AI rewrite has not yet completed.
+
+**What This Means for Bug Fixes:**
+- Removing `status='published'` from display queries (BUG-C2) is allowed because
+  it makes records visible sooner using their **original factual data**. The AI
+  rewrite still runs in the background and enhances the display when complete.
+- Any change that would skip, bypass, or disable the AI rewrite pipeline requires
+  explicit owner approval.
+- Any change that would display fabricated or altered data is **PROHIBITED**.
+
+**Known Visibility Side‑Effects (v5.0.4, PR #84):**
+
+After removing the `status='published'` gate, these exposures exist by design:
+
+| # | Risk | Status | Evidence |
+|---|------|--------|----------|
+| 1 | ~~**REST API exposes pending records**~~ | ✅ **FIXED (v5.0.4)** — REST endpoints now require `manage_options` capability (admin-only). API also applies `status='published'` filter internally, preserving the original API contract. Eliminates unauthenticated access, bulk enumeration, and DoS. See `class-ontario-obituaries.php` `rest_permission_check()` and `get_obituaries_api()`. |
+| 2 | **System split‑brain** — Frontend/SEO shows all non‑suppressed records; IndexNow, GoFundMe linker, authenticity checker, dashboard stats, and REST API still filter on `status='published'`. | **INTENTIONAL** — Frontend serves factual scraped data immediately. AI‑dependent subsystems (IndexNow, GoFundMe, authenticity, REST API) correctly operate only on AI‑reviewed (`published`) records. Dashboard stats should be updated in a future PR to show both counts. |
+| 3 | **SEO indexing gate** — Length check (`CHAR_LENGTH > 100`) may allow low‑quality boilerplate to be indexed. | **PRE‑EXISTING** — Unchanged from before BUG‑C2 fix. Pages with short descriptions get `noindex` (SEO lines 415‑423). Future improvement: add content‑quality heuristic. |
+| 4 | **Status column has no DB‑level constraint** — Only 'pending' and 'published' are written in code (`class-source-collector.php:481`, `class-ai-rewriter.php:388`, `ontario-obituaries.php:495`). Canonical whitelist defined in `ontario_obituaries_valid_statuses()` (`ontario-obituaries.php`). Display layer's optional status filter validates via `ontario_obituaries_is_valid_status()`. Backfill query builds its IN-list from the same function, using `LOWER(COALESCE(status,''))` for collation safety and `LIMIT 500` for bounded execution. | **MITIGATED** — Single source of truth: `ontario_obituaries_valid_statuses()`. Adding a new status requires updating one function. Dirty/legacy/NULL statuses auto‑cleaned on plugin update (batched, collation‑safe). DB CHECK constraint is a future hardening task. |
+| 5 | **Cache invalidation** — Transients cleared after every scrape (`class-source-collector.php:1042‑1043`) and on plugin update, admin delete, debug reset, and rescan. Not status‑specific. | **NOT A RISK** — Caches were never keyed on status; invalidation covers all insert/delete paths. |
+| 6 | **Performance at scale** — Dropping `status='published'` scans all non‑suppressed rows (~725 now). | **ACCEPTED** — Trivial at current scale. Add composite index `(suppressed_at, date_of_death)` when rows exceed 5,000. |
+| 7 | **API/frontend count divergence** — REST API count is published‑only; frontend count is all‑visible. Admin seeing "725 on site, 15 in API" is expected. | **INTENTIONAL** — REST API preserves original contract (`published` only). Frontend shows all factual scraped data per RULE 14. No current API consumers exist (verified via codebase grep). If future consumers need all‑visible counts, they can pass `status` parameter or a new endpoint can be added. |
+
+**JSON‑LD XSS Hardening (v5.0.4):**
+- All 6 `wp_json_encode()` calls inside `<script type="application/ld+json">` blocks now use `JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT`.
+- This escapes `<` → `\u003C` and `>` → `\u003E`, preventing `</script>` breakout from scraped content.
+- Affected files: `class-ontario-obituaries-seo.php` (4 sinks), `templates/seo/individual.php` (1 sink), `mu-plugins/monaco-site-hardening.php` (1 sink).
+- Reference: WordPress Core Trac #63851 confirms `wp_json_encode()` without `JSON_HEX_TAG` is insufficient for script contexts.
 
 ---
 
@@ -1020,25 +1081,28 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 
 ---
 
-#### BUG-C2: Display Pipeline Deadlock — Obituaries Invisible Without AI Rewrite
+#### BUG-C2: Display Pipeline Deadlock — Obituaries Invisible Without AI Rewrite — ✅ FIXED (v5.0.4, PR #84)
 
-**Location**: `includes/class-ontario-obituaries-display.php`, `get_obituaries()` and `get_obituary()` methods
+**Location**: `includes/class-ontario-obituaries-display.php`, `includes/class-ontario-obituaries-seo.php`
 
-**What happens**:
-1. The scraper inserts obituary records with `status = 'pending'` (or no explicit status field — the column may not exist in some code paths).
-2. `get_obituaries()` adds `WHERE status = 'published'` to every query.
-3. Records only become `published` after the AI rewriter successfully processes them and updates the row.
-4. But the AI rewriter is rate-limited (Groq TPM), so only ~15 records get rewritten per run.
-5. **Result**: 710+ of 725 obituaries in the database are invisible on the frontend because they were never AI-rewritten and thus never marked `published`.
+**What happened**:
+1. The scraper inserts obituary records with `status = 'pending'`.
+2. `get_obituaries()` and all SEO queries added `WHERE status = 'published'` to every query.
+3. Records only became `published` after the AI rewriter successfully processed them.
+4. The AI rewriter was rate-limited (Groq TPM), so only ~15 records got rewritten per run.
+5. **Result**: 710+ of 725 obituaries were invisible on the frontend.
 
-**Why the previous developer missed this**: The display class was modified independently of the rewriter. The `status = 'published'` filter was intended as a quality gate, but it creates a hard dependency on the AI rewriter — which is broken.
-
-**Impact**: The plugin appears to work (725 records in DB) but the public site shows far fewer obituaries than expected. Users see a fraction of the actual data.
-
-**Fix plan**:
-- Show all non-suppressed obituaries by default (remove or relax the `status = 'published'` requirement).
-- Use `ai_description` as an enhancement layer, not a publication gate.
-- Add a fallback: display `description` (raw scraped text) when `ai_description` is not yet available.
+**Fix applied (v5.0.4)**:
+- Removed `AND status = 'published'` from all 5 display queries and all 13 SEO queries (18 total).
+- Records are now visible as soon as they are scraped, using their original factual data.
+- The AI rewrite pipeline continues to run — when complete, `ai_description` replaces `description` in display.
+- The `status` column still tracks progress (`pending` → `published`) but no longer gates visibility.
+- This preserves the core workflow (SCRAPE → AI VIEW → AI REWRITE → PUBLISH) per RULE 14.
+- Unchanged: AI rewriter, authenticity checker, GoFundMe linker, IndexNow — all still operate only on `published` records.
+- **REST API hardening (BUG-H8)**: REST endpoints now require `manage_options` capability (admin-only). REST API also applies `status='published'` filter internally, preserving the original API contract. Display layer's `get_obituaries()` and `count_obituaries()` accept an optional `status` parameter validated via the centralized `ontario_obituaries_is_valid_status()` helper (single source of truth defined in `ontario-obituaries.php`). Backfill query also derives its IN-list from `ontario_obituaries_valid_statuses()` — adding a new status requires updating one function.
+- **JSON-LD XSS hardening**: Added `JSON_HEX_TAG` flag to all 6 `wp_json_encode()` calls inside `<script type="application/ld+json">` blocks to prevent `</script>` breakout from scraped content. See RULE 14 section for full details.
+- **SQL cleanup**: Removed blank-line artifacts left by status-gate removal; all queries are now cleanly formatted.
+- **Status validation**: Display layer enforces strict `in_array('pending','published')` whitelist on optional status filter. Backfill uses `LOWER(COALESCE())` for collation safety with `LIMIT 500` for bounded execution.
 
 ---
 
@@ -1283,18 +1347,18 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 > **Priority**: CRITICAL items must be fixed before any other development.
 > HIGH items should follow. MEDIUM items can be batched into improvement PRs.
 
-### Overall Progress: 5 of 22 tasks complete (23%)
+### Overall Progress: 8 of 23 tasks complete (35%)
 
 | Category | Total | Done | Remaining |
 |----------|-------|------|-----------|
-| Sprint 1 (Critical) | 6 | 3 (tasks 1,2,5) | 3 (tasks 3,4,6) |
-| Sprint 2 (High) | 7 | 1 (task 10) | 6 (tasks 7,8,9,11,12,13) |
+| Sprint 1 (Critical) | 6 | 5 (tasks 1,2,3,4,5) | 1 (task 6) |
+| Sprint 2 (High) | 8 | 2 (tasks 10,13b) | 6 (tasks 7,8,9,11,12,13) |
 | Sprint 3 (Medium) | 5 | 1 (task 15) | 4 (tasks 14,16,17,18) |
 | Sprint 4 (Groq TPM) | 4 | 0 | 4 (tasks 19,20,21,22) |
-| **Total** | **22** | **5** | **17** |
+| **Total** | **23** | **8** | **15** |
 
-> **Bugs resolved**: BUG-C1 ✅, BUG-C3 ✅, BUG-H3 ✅, BUG-M3 ✅ (all via PR #83 v5.0.3)
-> **Next up**: BUG-C2 (display pipeline deadlock), BUG-C4 (dedup on init)
+> **Bugs resolved**: BUG-C1 ✅, BUG-C2 ✅, BUG-C3 ✅, BUG-H3 ✅, BUG-H8 ✅, BUG-M3 ✅ (C1/C3/H3/M3 via PR #83 v5.0.3; C2/H8 via PR #84 v5.0.4)
+> **Next up**: BUG-C4 (dedup on init), BUG-H1-H7 (high-severity sprint)
 
 ### Sprint 1: Critical Fixes (must-fix before plugin is usable)
 
@@ -1302,8 +1366,8 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 |---|--------|-------------|------|-----------------|-------------|
 | 1 | BUG-C1 | Infrastructure | ~~**Add fresh-install guard to `on_plugin_update()`**~~ ✅ **DONE (PR #83, v5.0.3)** — All historical migration blocks removed entirely. Function reduced from ~1,721 to ~100 lines. Fresh installs hit only idempotent operations. | `ontario-obituaries.php` | 30 min |
 | 2 | BUG-C1 | Infrastructure | ~~**Move all scrape triggers to deferred cron**~~ ✅ **DONE (PR #83, v5.0.3)** — All 5 synchronous HTTP blocks removed (v3.10.0 collect, v3.15.3 usleep enrichment, v3.16.0/1 collect, v4.0.1 wp_remote_head loop). Data freshness handled by existing cron + heartbeat. | `ontario-obituaries.php` | 1 hour |
-| 3 | BUG-C2 | Display fix | **Remove `status='published'` gate from display queries** — Change `get_obituaries()` and `get_obituary()` to show all non-suppressed records. Use `ai_description` as enhancement, display `description` as fallback. | `includes/class-ontario-obituaries-display.php` | 45 min |
-| 4 | BUG-C2 | Display fix | **Update templates to gracefully handle missing `ai_description`** — Show raw description when AI rewrite is not available; add a visual indicator ("AI-enhanced" badge) when it is. | `templates/obituaries.php`, `templates/seo/individual.php` | 30 min |
+| 3 | BUG-C2 | Display fix | ~~**Remove `status='published'` gate from display queries**~~ ✅ **DONE (PR #84, v5.0.4)** — Removed `AND status='published'` from 5 display queries and 13 SEO queries (18 total). Records now visible as soon as scraped. AI rewrite enhances description in background. Core workflow preserved per RULE 14. | `includes/class-ontario-obituaries-display.php`, `includes/class-ontario-obituaries-seo.php` | 45 min |
+| 4 | BUG-C2 | Display fix | ~~**Update templates to gracefully handle missing `ai_description`**~~ ✅ **DONE (PR #84, v5.0.4)** — Templates already fall back to `description` when `ai_description` is absent. SEO class prefers `ai_description` for indexing, falls back to `description`. No template changes needed. | `templates/obituaries.php`, `templates/seo/individual.php` | 30 min |
 | 5 | BUG-C3 | Infrastructure | ~~**Make migrations idempotent**~~ ✅ **DONE (PR #83, v5.0.3)** — Historical migration blocks removed; remaining operations are all naturally idempotent (rewrite flush, cache purge, transient delete, registry upsert, cron schedule). `deployed_version` write moved to end of function for safe retry on partial failure. | `ontario-obituaries.php` | 1.5 hours |
 | 6 | BUG-C4 | Infrastructure | **Move duplicate cleanup off `init` hook** — Remove from `init`; attach to `ontario_obituaries_scheduled_collection` completion or a daily cron. Add transient throttle (max once per hour). | `ontario-obituaries.php` | 30 min |
 
@@ -1318,6 +1382,7 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 | 11 | BUG-H4 | Infrastructure | **Initialize $result variable** — Add `$result = null;` before the conditional block at line ~1208. | `ontario-obituaries.php` | 5 min |
 | 12 | BUG-H5 | Infrastructure | **Fix shutdown rewriter throttle** — Move transient set to AFTER successful processing. On failure, delete the throttle transient to allow immediate retry. | `ontario-obituaries.php` | 20 min |
 | 13 | BUG-H6 | Security | **Fix domain lock to exact match** — Replace `strpos()` with strict `===` comparison against `parse_url(home_url(), PHP_URL_HOST)`. | `ontario-obituaries.php` | 15 min |
+| 13b | BUG-H8 | Security | ~~**Harden REST API auth + preserve contract**~~ ✅ **DONE (PR #84, v5.0.4)** — Replaced `__return_true` with `manage_options` capability check on both REST endpoints. Added `status='published'` filter to REST queries so API contract is unchanged. Display layer `get_obituaries()`/`count_obituaries()` now accept optional `status` param validated via centralized `ontario_obituaries_is_valid_status()` helper. Backfill derives IN-list from `ontario_obituaries_valid_statuses()` (collation-safe, batched LIMIT 500). Single source of truth — adding a status requires updating one function. | `class-ontario-obituaries.php`, `class-ontario-obituaries-display.php`, `ontario-obituaries.php` | 30 min |
 
 ### Sprint 3: Medium-Severity Improvements
 
@@ -1350,7 +1415,7 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 | PR | Category | Bug IDs Covered | Description |
 |----|----------|-----------------|-------------|
 | PR-A (#83) | Infrastructure | BUG-C1, BUG-C3 | ✅ **MERGED** — Activation cascade fix: removed all historical migration blocks (1,663 lines). BUG-C4 moved to separate PR. |
-| PR-B | Display fix | BUG-C2 | Display pipeline fix: remove published gate, show all non-suppressed records |
+| PR-B (#84) | Display fix + Security | BUG-C2, BUG-H8 | ✅ **MERGED** — Display pipeline fix: removed `status='published'` gate from 18 queries (5 display + 13 SEO). REST API hardened: `manage_options` capability check + published-only filter. JSON-LD XSS hardening (JSON_HEX_TAG on 6 sinks). Status whitelist validation. Core workflow preserved per RULE 14. |
 | PR-C | Security | BUG-H2, BUG-H6, BUG-H7 | Security hardening: complete uninstall, fix domain lock, clear all cron hooks |
 | PR-D | Infrastructure | BUG-H1, BUG-H3, BUG-H4, BUG-H5 | Minor infrastructure fixes: rate calc, index guard, init vars, throttle fix |
 | PR-E | Infrastructure | BUG-M1, BUG-M5 | Rate limiter: shared Groq coordinator + staggered scheduling |

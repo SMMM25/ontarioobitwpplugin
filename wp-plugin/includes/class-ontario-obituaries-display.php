@@ -9,6 +9,15 @@
  *  P2-3  : get_locations() and get_funeral_homes() use transient caching
  *  P1-10 : render_obituaries() passes pre-fetched data to the template to
  *           avoid double queries (template uses passed variables)
+ *  BUG-C2: Removed status='published' gate from all display queries.
+ *          Records are now shown as soon as they are scraped (with their
+ *          original factual data). The AI rewrite pipeline still runs in
+ *          the background — when it completes, ai_description replaces
+ *          description in the display. The status column still tracks
+ *          pipeline progress (pending→published) but no longer gates
+ *          frontend visibility. This prevents the deadlock where 710+
+ *          of 725 records were invisible because the Groq-powered
+ *          rewriter was rate-limited/paused.
  */
 
 // Exit if accessed directly
@@ -146,9 +155,19 @@ class Ontario_Obituaries_Display {
         $table = $this->table_name();
 
         // Build WHERE — v3.0.0: exclude suppressed records
-        // v4.6.0: Only show 'published' records (passed AI rewrite + validation pipeline)
-        $where_clauses = array( '1=1', 'suppressed_at IS NULL', "status = 'published'" );
+        // BUG-C2 FIX: Removed status='published' gate. Records are visible
+        // as soon as scraped; AI rewrite enhances description in background.
+        // BUG-H8 FIX: Optional 'status' arg allows callers (REST API) to
+        // re-apply status filtering when needed for backward compatibility.
+        $where_clauses = array( '1=1', 'suppressed_at IS NULL' );
         $values        = array();
+
+        // Optional status filter — used by REST API to maintain published-only contract.
+        // Validated against ontario_obituaries_valid_statuses() (single source of truth).
+        if ( ! empty( $args['status'] ) && ontario_obituaries_is_valid_status( $args['status'] ) ) {
+            $where_clauses[] = 'status = %s';
+            $values[]        = $args['status'];
+        }
 
         if ( ! empty( $args['location'] ) ) {
             $where_clauses[] = 'location = %s';
@@ -230,9 +249,9 @@ class Ontario_Obituaries_Display {
         }
 
         // v3.3.0: Exclude suppressed records from single lookups too
-        // v4.6.0: Only show published records
+        // BUG-C2 FIX: Removed status='published' gate — show all non-suppressed.
         $row = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
+            "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
 
@@ -261,9 +280,9 @@ class Ontario_Obituaries_Display {
             return array();
         }
 
-        // v4.6.0: Only show locations from published records
+        // BUG-C2 FIX: Show locations from all non-suppressed records.
         $locations = $wpdb->get_col(
-            "SELECT DISTINCT location FROM `{$this->table_name()}` WHERE location != '' AND suppressed_at IS NULL AND status = 'published' ORDER BY location"
+            "SELECT DISTINCT location FROM `{$this->table_name()}` WHERE location != '' AND suppressed_at IS NULL ORDER BY location"
         );
 
         $locations = $locations ? $locations : array();
@@ -288,9 +307,9 @@ class Ontario_Obituaries_Display {
             return array();
         }
 
-        // v4.6.0: Only show funeral homes from published records
+        // BUG-C2 FIX: Show funeral homes from all non-suppressed records.
         $homes = $wpdb->get_col(
-            "SELECT DISTINCT funeral_home FROM `{$this->table_name()}` WHERE funeral_home != '' AND suppressed_at IS NULL AND status = 'published' ORDER BY funeral_home"
+            "SELECT DISTINCT funeral_home FROM `{$this->table_name()}` WHERE funeral_home != '' AND suppressed_at IS NULL ORDER BY funeral_home"
         );
 
         $homes = $homes ? $homes : array();
@@ -325,9 +344,17 @@ class Ontario_Obituaries_Display {
         $table = $this->table_name();
 
         // v3.0.0: exclude suppressed records
-        // v4.6.0: Only count published records
-        $where_clauses = array( '1=1', 'suppressed_at IS NULL', "status = 'published'" );
+        // BUG-C2 FIX: Count all non-suppressed records.
+        // BUG-H8 FIX: Optional 'status' arg for REST API backward compatibility.
+        $where_clauses = array( '1=1', 'suppressed_at IS NULL' );
         $values        = array();
+
+        // Optional status filter — used by REST API to maintain published-only contract.
+        // Validated against ontario_obituaries_valid_statuses() (single source of truth).
+        if ( ! empty( $args['status'] ) && ontario_obituaries_is_valid_status( $args['status'] ) ) {
+            $where_clauses[] = 'status = %s';
+            $values[]        = $args['status'];
+        }
 
         if ( ! empty( $args['location'] ) ) {
             $where_clauses[] = 'location = %s';
