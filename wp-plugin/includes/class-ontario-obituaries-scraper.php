@@ -524,7 +524,9 @@ class Ontario_Obituaries_Scraper {
      * @return string 'complete', 'partial', or 'invalid'.
      */
     private function check_data_completeness( $obituary ) {
-        if ( empty( $obituary['name'] ) || empty( $obituary['date_of_death'] ) ) {
+        // v5.1.0 FIX: Also reject '0000-00-00' — PHP empty() returns false for
+        // non-empty strings, but '0000-00-00' is semantically empty (no real date).
+        if ( empty( $obituary['name'] ) || empty( $obituary['date_of_death'] ) || '0000-00-00' === $obituary['date_of_death'] ) {
             return 'invalid';
         }
 
