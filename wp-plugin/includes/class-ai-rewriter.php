@@ -937,6 +937,11 @@ SYSTEM;
         }
 
         // ── 3. Death date check — use Groq-extracted date if available ──
+        // v5.1.2 FIX: Demoted from hard-fail to warning. Same deadlock pattern as
+        // location_missing (v5.1.1): Groq may paraphrase dates ("early February" vs
+        // "February 4"), use a different format, or omit the day. With batch_size=1,
+        // a single record that consistently fails blocks the entire queue.
+        // The structured date_of_death field is preserved in the DB row regardless.
         $check_dod = ! empty( $extracted_data['date_of_death'] ) ? $extracted_data['date_of_death'] : '';
         if ( empty( $check_dod ) && ! empty( $obituary->date_of_death ) && '0000-00-00' !== $obituary->date_of_death ) {
             $check_dod = $obituary->date_of_death;
@@ -947,15 +952,26 @@ SYSTEM;
                 $year = $dod_parts[0];
                 $day  = ltrim( $dod_parts[2], '0' );
                 if ( false === strpos( $rewritten, $year ) ) {
-                    return new WP_Error( 'death_year_missing', sprintf( 'Rewrite does not mention death year %s.', $year ) );
+                    ontario_obituaries_log(
+                        sprintf( 'AI Rewriter: Validation warning — rewrite does not mention death year %s (ID %d). Continuing.', $year, $obituary->id ),
+                        'warning'
+                    );
                 }
                 if ( false === strpos( $rewritten, $day ) ) {
-                    return new WP_Error( 'death_day_missing', sprintf( 'Rewrite does not mention death day %s.', $day ) );
+                    ontario_obituaries_log(
+                        sprintf( 'AI Rewriter: Validation warning — rewrite does not mention death day %s (ID %d). Continuing.', $day, $obituary->id ),
+                        'warning'
+                    );
                 }
             }
         }
 
         // ── 4. Age check — use Groq-extracted age if available ──
+        // v5.1.2 FIX: Demoted from hard-fail to warning. Proven blocker on ID 1311
+        // ("Rewrite does not mention age 71"). Groq may express age differently
+        // ("seventy-one", "in her 72nd year", compute a different age from DOB/DOD),
+        // or the DB age may itself be wrong (see v5.1.0 extract_age_from_text fix).
+        // The structured age field is preserved in the DB row regardless.
         $check_age = ! empty( $extracted_data['age'] ) ? intval( $extracted_data['age'] ) : 0;
         if ( 0 === $check_age && ! empty( $obituary->age ) ) {
             $check_age = intval( $obituary->age );
@@ -963,7 +979,10 @@ SYSTEM;
         if ( $check_age > 0 ) {
             $age_str = strval( $check_age );
             if ( false === strpos( $rewritten, $age_str ) ) {
-                return new WP_Error( 'age_missing', sprintf( 'Rewrite does not mention age %s.', $age_str ) );
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Validation warning — rewrite does not mention age %s (ID %d). Continuing.', $age_str, $obituary->id ),
+                    'warning'
+                );
             }
         }
 
