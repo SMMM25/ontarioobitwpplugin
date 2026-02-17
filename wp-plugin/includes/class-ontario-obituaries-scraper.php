@@ -530,6 +530,16 @@ class Ontario_Obituaries_Scraper {
             return 'invalid';
         }
 
+        // v5.1.1 FIX: Reject poison dates — DOD before 2000 or DOD <= DOB.
+        $dod = $obituary['date_of_death'];
+        if ( $dod < '2000-01-01' ) {
+            return 'invalid';
+        }
+        $dob = isset( $obituary['date_of_birth'] ) ? $obituary['date_of_birth'] : '';
+        if ( ! empty( $dob ) && '0000-00-00' !== $dob && $dod <= $dob ) {
+            return 'invalid';
+        }
+
         $required = array( 'name', 'date_of_death', 'funeral_home', 'location', 'description' );
         $complete = true;
 
