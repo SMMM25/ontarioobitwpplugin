@@ -25,6 +25,17 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
     protected $user_agent = 'Mozilla/5.0 (compatible; OntarioObituariesBot/3.0; +https://monacomonuments.ca)';
 
     /**
+     * v5.1.0: Death-context keywords regex fragment (shared by all adapters).
+     *
+     * Used by extract_age_from_text() and subclass detail-page extractors to
+     * ensure "at the age of N" / "aged N" patterns only match inside sentences
+     * that contain a death-related keyword.
+     *
+     * @var string Regex alternation (no delimiters, case-insensitive use).
+     */
+    const DEATH_KEYWORDS_REGEX = 'passed\s+away|passed|died|peacefully|suddenly|unexpectedly|passing|departed|entered\s+into\s+rest';
+
+    /**
      * v3.12.2: Last HTTP request diagnostics.
      *
      * Populated by http_get() on every call. Allows the Source Collector
@@ -334,10 +345,28 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
     /**
      * Extract age from descriptive text (e.g. "aged 85", "age 92", "at the age of 78").
      *
+     * v5.1.0 FIX (ID-454): Restrict "at the age of N" and "aged N" patterns to
+     * sentences containing a death-related keyword. Previously, these patterns
+     * matched anywhere in the text, causing biographical age mentions (e.g.,
+     * "admitted to Teacher's College at the age of 16") to be mis-classified
+     * as the death age. The "Nth year" patterns are inherently death-context
+     * (obituaries only use "in his/her Nth year" for the final age) so they
+     * remain full-text.
+     *
      * @param string $text Obituary text.
      * @return int Age or 0.
      */
     protected function extract_age_from_text( $text ) {
+        // v5.1.0: Normalize text before sentence splitting to handle HTML remnants,
+        // collapsed whitespace, and abbreviation-period false splits.
+        // strip_tags handles <p>, <br>, <div> boundaries; we replace them with ". "
+        // first so tag boundaries become sentence breaks.
+        $text = preg_replace( '/<\s*(?:br|p|div)[^>]*>/i', '. ', $text );
+        $text = wp_strip_all_tags( $text );
+        $text = preg_replace( '/\s+/', ' ', $text );  // collapse whitespace
+        $text = trim( $text );
+
+        // ── Pass 1: "in his/her Nth year" — always death-context; full-text scan ──
         // v5.0.0: "in his/her Nth year" means age N-1 (they completed N-1 years).
         // This pattern MUST come first because "aged 93" might also appear in text
         // that says "in her 93rd year" — the Nth year form is more precise.
@@ -347,12 +376,26 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
         if ( preg_match( '/(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $text, $m ) ) {
             return intval( $m[1] ) - 1;
         }
-        if ( preg_match( '/\bat\s+the\s+age\s+of\s+(\d{1,3})\b/i', $text, $m ) ) {
-            return intval( $m[1] );
+
+        // ── Pass 2: sentence-scoped "at the age of N" / "aged N" ──
+        // v5.1.0: Only match when the same sentence contains a death keyword.
+        // Split on sentence-ending punctuation. The text normalization above
+        // ensures HTML tags don't break sentence boundaries.
+        $sentences = preg_split( '/(?<=[.!?;])\s+/', $text );
+        foreach ( $sentences as $sentence ) {
+            if ( ! preg_match( '/' . self::DEATH_KEYWORDS_REGEX . '/i', $sentence ) ) {
+                continue;
+            }
+            if ( preg_match( '/\bat\s+the\s+age\s+of\s+(\d{1,3})\b/i', $sentence, $m ) ) {
+                return intval( $m[1] );
+            }
+            if ( preg_match( '/\bage[d]?\s+(\d{1,3})\b/i', $sentence, $m ) ) {
+                return intval( $m[1] );
+            }
         }
-        if ( preg_match( '/\bage[d]?\s+(\d{1,3})\b/i', $text, $m ) ) {
-            return intval( $m[1] );
-        }
+
+        // No death-context age found; return 0 so the caller can fall back
+        // to calculate_age( DOB, DOD ) when both dates are available.
         return 0;
     }
 

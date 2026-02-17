@@ -640,18 +640,41 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             // Example: "in her 93rd year" = she was 92 (had completed 92 years, was in the 93rd).
             // Previously this extracted 93 as the age, which was wrong.
             // Same fix applies to "lived into her Nth year" and "his/her Nth year" patterns.
+            //
+            // v5.1.0 FIX (ID-454): "at the age of N" and "aged N" patterns now require
+            // the same sentence to contain a death keyword. This prevents biographical
+            // mentions (e.g. "admitted at the age of 16") from being captured as death age.
             if ( preg_match( '/(?:in|into|lived\s+into)\s+(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $desc_text, $age_m ) ) {
                 $detail['detail_age'] = intval( $age_m[1] ) - 1;
-            } elseif ( preg_match( '/\bat\s+the\s+age\s+of\s+(\d+)/i', $desc_text, $age_m3 ) ) {
-                $detail['detail_age'] = intval( $age_m3[1] );
-            } elseif ( preg_match( '/\bage(?:d)?\s+(\d+)/i', $desc_text, $age_m2 ) ) {
-                $detail['detail_age'] = intval( $age_m2[1] );
             } elseif ( preg_match( '/(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+birthday/i', $desc_text, $age_m4 ) ) {
                 // "her 96th birthday" — means they reached/would have reached age 96.
                 $detail['detail_age'] = intval( $age_m4[1] );
             } elseif ( preg_match( '/(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+year/i', $desc_text, $age_m5 ) ) {
                 // "his 80th year" — same as "in his 80th year" = age 79.
                 $detail['detail_age'] = intval( $age_m5[1] ) - 1;
+            } else {
+                // v5.1.0: sentence-scoped "at the age of N" / "aged N" — require death keyword.
+                // Use shared constant from base adapter for keyword consistency.
+                // Normalize text first: strip HTML tags (replace block-level with ". "),
+                // collapse whitespace, so sentence splitting is reliable.
+                $clean_text = preg_replace( '/<\s*(?:br|p|div)[^>]*>/i', '. ', $desc_text );
+                $clean_text = wp_strip_all_tags( $clean_text );
+                $clean_text = preg_replace( '/\s+/', ' ', $clean_text );
+                $clean_text = trim( $clean_text );
+                $sentences = preg_split( '/(?<=[.!?;])\s+/', $clean_text );
+                foreach ( $sentences as $s ) {
+                    if ( ! preg_match( '/' . self::DEATH_KEYWORDS_REGEX . '/i', $s ) ) {
+                        continue;
+                    }
+                    if ( preg_match( '/\bat\s+the\s+age\s+of\s+(\d+)/i', $s, $age_m3 ) ) {
+                        $detail['detail_age'] = intval( $age_m3[1] );
+                        break;
+                    }
+                    if ( preg_match( '/\bage(?:d)?\s+(\d+)/i', $s, $age_m2 ) ) {
+                        $detail['detail_age'] = intval( $age_m2[1] );
+                        break;
+                    }
+                }
             }
 
             // Birth date from text: "born on Month Day, Year" or "born Month Day, Year"
@@ -816,11 +839,22 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
             }
         }
 
-        // Fall back to published_date as an approximate death date
-        // (obituaries are typically published within days of death).
-        if ( empty( $date_of_death ) && ! empty( $card['published_date'] ) ) {
-            $date_of_death = $this->normalize_date( $card['published_date'] );
-        }
+        // v5.1.0 FIX (ID-454): REMOVED fallback that copied published_date into
+        // date_of_death. This violated the 100% factual rule — the publication
+        // date is NOT the death date. When no death date can be extracted, the
+        // record MUST have an empty date_of_death, which the collector's
+        // validation gate (class-source-collector.php line 327) will block from
+        // ingest. This is the correct behaviour: we do not publish records we
+        // cannot date reliably.
+        //
+        // Previously (v3.12.0):
+        //   if ( empty( $date_of_death ) && ! empty( $card['published_date'] ) ) {
+        //       $date_of_death = $this->normalize_date( $card['published_date'] );
+        //   }
+        //
+        // The published_date is still captured in extract_card() (line 303) and
+        // stored in the card array for audit/debugging, but it is no longer
+        // promoted to date_of_death.
 
         // v3.15.2: Birth-date extraction — detail page takes priority.
         if ( empty( $date_of_birth ) && ! empty( $card['detail_birth_date'] ) ) {

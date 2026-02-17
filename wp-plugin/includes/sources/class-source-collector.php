@@ -324,7 +324,11 @@ class Ontario_Obituaries_Source_Collector {
                     $record = $adapter->normalize( $card, $source );
 
                     // Validate minimum fields
-                    if ( empty( $record['name'] ) || empty( $record['date_of_death'] ) ) {
+                    // v5.1.0 FIX: Also reject '0000-00-00' which PHP's empty() treats
+                    // as non-empty (it's a non-empty string). normalize_date() can
+                    // return this placeholder in edge cases, and MySQL accepts it as a
+                    // valid DATE, but it is semantically empty — no real death date.
+                    if ( empty( $record['name'] ) || empty( $record['date_of_death'] ) || '0000-00-00' === $record['date_of_death'] ) {
                         continue;
                     }
 
