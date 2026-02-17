@@ -589,11 +589,13 @@ class Ontario_Obituaries_AI_Rewriter {
             'corrections'    => array(), // Track what we corrected for logging.
         );
 
-        // Date of death — must be valid YYYY-MM-DD, not in the future, not before 1900.
+        // Date of death — must be valid YYYY-MM-DD, not in the future, not before 2000.
+        // v5.1.1: Tightened from 1900 to 2000 — Ontario obituary data starts ~2020+;
+        // pre-2000 dates from Groq extraction are artefacts, not real death dates.
         if ( ! empty( $data['date_of_death'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $data['date_of_death'] ) ) {
             $dod = $data['date_of_death'];
             $dod_ts = strtotime( $dod );
-            if ( $dod_ts && $dod <= date( 'Y-m-d' ) && $dod >= '1900-01-01' ) {
+            if ( $dod_ts && $dod <= date( 'Y-m-d' ) && $dod >= '2000-01-01' ) {
                 $result['date_of_death'] = $dod;
                 // Log correction if different from regex value.
                 if ( ! empty( $obituary->date_of_death ) && $obituary->date_of_death !== $dod ) {
@@ -977,7 +979,30 @@ SYSTEM;
             $city_check = preg_split( '/[,\-]/', $check_loc );
             $city_check = trim( $city_check[0] );
             if ( strlen( $city_check ) >= 3 && false === stripos( $rewritten, $city_check ) ) {
-                return new WP_Error( 'location_missing', sprintf( 'Rewrite does not mention location "%s".', $city_check ) );
+                // v5.1.1 FIX (production hotfix upstream): Demoted from hard-fail to warning.
+                //
+                // Root cause: Groq extracts a location from text (e.g. "Grand River Hospital",
+                // "Port Colborne") even when the DB location column is empty. The validator then
+                // requires the rewritten prose to mention this extracted location, but the model
+                // may paraphrase or omit it. With batch_size=1 and ORDER BY created_at DESC,
+                // a single record that consistently fails this check blocks the entire queue
+                // indefinitely ("0 succeeded / 1 failed" deadlock).
+                //
+                // Acceptable risk: a rewrite may omit a location mention. This is less harmful
+                // than publishing nothing (the original description is still available as fallback,
+                // and the structured location field is preserved in the DB row regardless).
+                //
+                // TODO (v5.2.0): Improve by injecting location into build_prompt() system message
+                // ("You MUST mention {location} in the rewrite") so the model is more likely to
+                // include it, then re-enable hard validation.
+                ontario_obituaries_log(
+                    sprintf(
+                        'AI Rewriter: Validation warning — rewrite did not mention location "%s" (ID %d). Continuing.',
+                        $city_check,
+                        $obituary->id
+                    ),
+                    'warning'
+                );
             }
         }
 

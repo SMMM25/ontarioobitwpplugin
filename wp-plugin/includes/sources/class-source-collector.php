@@ -332,6 +332,33 @@ class Ontario_Obituaries_Source_Collector {
                         continue;
                     }
 
+                    // v5.1.1 FIX: Reject "poison date" records at ingest.
+                    // These produce rows that block the AI rewriter queue and display
+                    // implausible data on the frontend.
+                    //
+                    // Rules:
+                    //   1. DOD before 2000-01-01 — Ontario obituary data starts ~2020+;
+                    //      pre-2000 dates are extraction artefacts.
+                    //   2. DOD == DOB — impossible unless stillbirth (not our coverage).
+                    //   3. DOD <= DOB when both are non-empty and non-zero — inverted
+                    //      range means at least one date is wrong.
+                    $dod = $record['date_of_death'];
+                    if ( $dod < '2000-01-01' ) {
+                        ontario_obituaries_log(
+                            sprintf( 'Collector: Rejected "%s" — DOD %s is before 2000.', $record['name'], $dod ),
+                            'warning'
+                        );
+                        continue;
+                    }
+                    $dob = isset( $record['date_of_birth'] ) ? $record['date_of_birth'] : '';
+                    if ( ! empty( $dob ) && '0000-00-00' !== $dob && $dod <= $dob ) {
+                        ontario_obituaries_log(
+                            sprintf( 'Collector: Rejected "%s" — DOD %s <= DOB %s.', $record['name'], $dod, $dob ),
+                            'warning'
+                        );
+                        continue;
+                    }
+
                     // Check suppression (do-not-republish)
                     if ( $this->is_suppressed( $record ) ) {
                         continue;
