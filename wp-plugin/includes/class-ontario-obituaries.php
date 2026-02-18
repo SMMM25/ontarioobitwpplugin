@@ -139,17 +139,21 @@ class Ontario_Obituaries {
             }
         }
 
-        // v4.2.4: When AI rewrites are enabled AND a key is set, schedule the
-        // first rewrite batch immediately (30s delay). Previously the batch only
-        // fired after a collection event, meaning enabling AI rewrites wouldn't
-        // do anything until the next 12h cron cycle.
+        // v5.1.4: Ensure repeating rewrite schedule matches settings state.
+        // Schedule when BOTH ai_rewrite_enabled AND Groq key are set.
+        // Clear when either is missing — checkbox must mean what it says.
         $groq_key = get_option( 'ontario_obituaries_groq_api_key', '' );
         if ( ! empty( $sanitized['ai_rewrite_enabled'] ) && ! empty( $groq_key ) ) {
             if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-                wp_schedule_single_event( time() + 30, 'ontario_obituaries_ai_rewrite_batch' );
+                wp_schedule_event( time() + 30, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
                 if ( function_exists( 'ontario_obituaries_log' ) ) {
-                    ontario_obituaries_log( 'v4.2.4: AI Rewrite batch scheduled (30s) — triggered by settings save.', 'info' );
+                    ontario_obituaries_log( 'v5.1.4: Rewrite schedule registered on settings save.', 'info' );
                 }
+            }
+        } else {
+            wp_clear_scheduled_hook( 'ontario_obituaries_ai_rewrite_batch' );
+            if ( function_exists( 'ontario_obituaries_log' ) ) {
+                ontario_obituaries_log( 'v5.1.4: AI rewrites disabled or key missing — rewrite schedule cleared.', 'info' );
             }
         }
 
@@ -382,6 +386,15 @@ class Ontario_Obituaries {
             wp_die( esc_html__( 'You do not have permission to access this page.', 'ontario-obituaries' ) );
         }
 
+        // v5.1.3 FIX: Prevent LiteSpeed (and browser) from caching the admin
+        // settings page. The AI Rewrite Status row queries the DB live, so a
+        // cached response shows stale counts (user reported 27 → 30 → 32 only
+        // visible after manual LiteSpeed cache clear).
+        if ( ! headers_sent() ) {
+            header( 'X-LiteSpeed-Cache-Control: no-cache' );
+            nocache_headers(); // WordPress built-in: Cache-Control, Expires, Pragma.
+        }
+
         $settings = ontario_obituaries_get_settings();
 
         // Handle manual scrape (POST, before output — BUG-10 FIX)
@@ -569,6 +582,8 @@ class Ontario_Obituaries {
                             if ( class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
                                 $rewriter = new Ontario_Obituaries_AI_Rewriter();
                                 $stats    = $rewriter->get_stats();
+                                // v5.1.3: Wrap in a span so AJAX can refresh it without full page reload.
+                                echo '<span id="oo-rewrite-status">';
                                 printf(
                                     '<strong>%s</strong> scraped &nbsp;|&nbsp; <strong style="color:blue;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:green;">%s</strong> published (live) &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong>%s%%</strong> complete',
                                     esc_html( number_format_i18n( $stats['total'] ) ),
@@ -577,7 +592,37 @@ class Ontario_Obituaries {
                                     esc_html( number_format_i18n( $stats['pending'] ) ),
                                     esc_html( number_format_i18n( $stats['percent_complete'], 1 ) )
                                 );
+                                echo '</span>';
                                 echo '<br><small style="color:#666;">Pipeline: Scrape &rarr; Groq JSON Extraction + Rewrite &rarr; Validate &rarr; Publish. Corrects dates, age, and location before publishing. Runs automatically every 5 minutes via server cron.</small>';
+                                // v5.1.3: Auto-refresh the status line every 30 seconds via AJAX
+                                // so the admin never sees stale cache data.
+                                echo '<br><small id="oo-rewrite-updated" style="color:#999;">Last refreshed: just now</small>';
+                                ?>
+                                <script>
+                                (function(){
+                                    var el = document.getElementById('oo-rewrite-status');
+                                    var ts = document.getElementById('oo-rewrite-updated');
+                                    if (!el) return;
+                                    setInterval(function(){
+                                        var xhr = new XMLHttpRequest();
+                                        xhr.open('POST', ajaxurl);
+                                        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                                        xhr.onload = function(){
+                                            if (xhr.status === 200) {
+                                                try {
+                                                    var d = JSON.parse(xhr.responseText);
+                                                    if (d.success && d.data && d.data.html) {
+                                                        el.innerHTML = d.data.html;
+                                                        ts.textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+                                                    }
+                                                } catch(e){}
+                                            }
+                                        };
+                                        xhr.send('action=oo_rewrite_status&_wpnonce=<?php echo esc_js( wp_create_nonce( 'oo_rewrite_status' ) ); ?>');
+                                    }, 30000);
+                                })();
+                                </script>
+                                <?php
                             } else {
                                 esc_html_e( 'AI Rewriter class not loaded.', 'ontario-obituaries' );
                             }
