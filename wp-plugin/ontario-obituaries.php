@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.1.2
+ * Version: 5.1.4
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.1.2' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.1.4' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -565,6 +565,18 @@ function ontario_obituaries_activate() {
     // instead of running synchronously during activation (which causes timeouts).
     if ( ! wp_next_scheduled( 'ontario_obituaries_initial_collection' ) ) {
         wp_schedule_single_event( time() + 30, 'ontario_obituaries_initial_collection' );
+    }
+
+    // v5.1.4: Register AI rewrite batch as a repeating 5-minute event.
+    // Only if AI rewrites are enabled AND a Groq key is configured.
+    // Previously used wp_schedule_single_event() which self-rescheduled after
+    // each run — that pattern had no recovery path if the event was lost.
+    // A repeating event stays in the schedule permanently.
+    wp_clear_scheduled_hook( 'ontario_obituaries_ai_rewrite_batch' );
+    $activation_settings = ontario_obituaries_get_settings();
+    $activation_groq_key = get_option( 'ontario_obituaries_groq_api_key', '' );
+    if ( ! empty( $activation_settings['ai_rewrite_enabled'] ) && ! empty( $activation_groq_key ) ) {
+        wp_schedule_event( time() + 120, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
     }
 
     // v3.0.0: Auto-create the Obituaries page with shortcode if it doesn't exist.
@@ -1299,6 +1311,10 @@ function ontario_obituaries_deactivate() {
     wp_clear_scheduled_hook( 'ontario_obituaries_collection_event' );
     wp_clear_scheduled_hook( 'ontario_obituaries_initial_collection' );
 
+    // v5.1.4: Clear the repeating AI rewrite batch event.
+    // Without this, the cron keeps firing after plugin deactivation.
+    wp_clear_scheduled_hook( 'ontario_obituaries_ai_rewrite_batch' );
+
     // BUG-C4 FIX (v5.0.4): Clear both dedup cron hooks and the lock.
     wp_clear_scheduled_hook( 'ontario_obituaries_dedup_daily' );
     wp_clear_scheduled_hook( 'ontario_obituaries_dedup_once' );
@@ -1410,15 +1426,14 @@ function ontario_obituaries_scheduled_collection() {
     // not after scraping. Pending records should NOT be submitted to search engines.
     // See ontario_obituaries_ai_rewrite_batch() for the IndexNow trigger.
 
-    // v4.6.3: After collection, schedule AI rewrite batch if Groq key is configured.
-    // No longer gated behind 'ai_rewrite_enabled' checkbox — the v4.6.0 pipeline
-    // requires AI rewrites for ANY record to become published. Having a key IS the intent.
-    // BUG-M5 FIX (v5.0.6): Staggered +60s to avoid overlap with dedup (+10s).
-    $groq_key_for_rewrite = get_option( 'ontario_obituaries_groq_api_key', '' );
-    if ( ! empty( $groq_key_for_rewrite ) ) {
+    // v5.1.4: Rewrite batch is now a repeating event. Ensure it exists if
+    // AI rewrites are enabled and a Groq key is configured.
+    $groq_key_for_rewrite  = get_option( 'ontario_obituaries_groq_api_key', '' );
+    $settings_for_rewrite  = ontario_obituaries_get_settings();
+    if ( ! empty( $settings_for_rewrite['ai_rewrite_enabled'] ) && ! empty( $groq_key_for_rewrite ) ) {
         if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-            wp_schedule_single_event( time() + 60, 'ontario_obituaries_ai_rewrite_batch' );
-            ontario_obituaries_log( 'v4.6.3: Scheduled AI rewrite batch (60s after collection).', 'info' );
+            wp_schedule_event( time() + 60, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
+            ontario_obituaries_log( 'v5.1.4: Rewrite schedule was missing after collection — re-registered.', 'warning' );
         }
     }
 
@@ -1556,25 +1571,14 @@ function ontario_obituaries_ai_rewrite_batch() {
         'info'
     );
 
-    // QC-R10 FIX (v5.0.10): Time-spread processing with verified interval.
-    //   base=180s, jitter=±30s → actual range 150-210s.
-    //   max_runtime=60s, so worst-case next start = 60+150 = 210s from batch start.
-    //   Minimum gap between batch END and next batch START = 150s (jitter=-30).
-    //   This guarantees no overlap even if WP-Cron fires slightly early.
-    $pending = $rewriter->get_pending_count();
-    if ( $pending > 0 && ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-        $base_interval = 180;  // 3 minutes base.
-        $jitter        = wp_rand( -30, 30 ); // ±30s random jitter → 150-210s.
-        $interval      = max( 120, $base_interval + $jitter ); // Floor at 2 min (safety).
-        $next_run      = time() + $interval;
-        wp_schedule_single_event( $next_run, 'ontario_obituaries_ai_rewrite_batch' );
-        ontario_obituaries_log(
-            sprintf(
-                'AI Rewriter: %d pending — next batch in %ds (base=%d, jitter=%+d).',
-                $pending, $interval, $base_interval, $jitter
-            ),
-            'info'
-        );
+    // v5.1.4: Repeating schedule — no self-reschedule needed.
+    // Safety net: if the repeating event was somehow lost (DB corruption,
+    // manual wp_clear_scheduled_hook, etc.), re-register it once.
+    // Respects the ai_rewrite_enabled setting.
+    $settings_for_reschedule = ontario_obituaries_get_settings();
+    if ( ! empty( $settings_for_reschedule['ai_rewrite_enabled'] ) && ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+        wp_schedule_event( time() + 300, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
+        ontario_obituaries_log( 'AI Rewriter: Repeating schedule was missing — re-registered.', 'warning' );
     }
 
     // Purge cache and submit newly published records to IndexNow.
@@ -1919,6 +1923,40 @@ function ontario_obituaries_ajax_validate_api_key() {
 add_action( 'wp_ajax_ontario_obituaries_validate_api_key', 'ontario_obituaries_ajax_validate_api_key' );
 
 /**
+ * v5.1.3: AJAX endpoint for live AI Rewrite Status refresh.
+ *
+ * Called every 30 seconds by the settings page JavaScript to update the
+ * rewrite counters without a full page reload. This bypasses LiteSpeed cache
+ * because AJAX POST requests are never cached.
+ */
+function ontario_obituaries_ajax_rewrite_status() {
+    check_ajax_referer( 'oo_rewrite_status' );
+
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Unauthorized', 403 );
+    }
+
+    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        wp_send_json_error( 'Rewriter class not loaded.' );
+    }
+
+    $rewriter = new Ontario_Obituaries_AI_Rewriter();
+    $stats    = $rewriter->get_stats();
+
+    $html = sprintf(
+        '<strong>%s</strong> scraped &nbsp;|&nbsp; <strong style="color:blue;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:green;">%s</strong> published (live) &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong>%s%%</strong> complete',
+        esc_html( number_format_i18n( $stats['total'] ) ),
+        esc_html( number_format_i18n( $stats['rewritten'] ) ),
+        esc_html( number_format_i18n( isset( $stats['published'] ) ? $stats['published'] : 0 ) ),
+        esc_html( number_format_i18n( $stats['pending'] ) ),
+        esc_html( number_format_i18n( $stats['percent_complete'], 1 ) )
+    );
+
+    wp_send_json_success( array( 'html' => $html, 'stats' => $stats ) );
+}
+add_action( 'wp_ajax_oo_rewrite_status', 'ontario_obituaries_ajax_rewrite_status' );
+
+/**
  * v4.3.0: GoFundMe Auto-Linker batch.
  *
  * Runs after collection and on its own schedule. Searches GoFundMe for
@@ -2063,6 +2101,14 @@ function ontario_obituaries_cron_intervals( $schedules ) {
         $schedules['four_hours'] = array(
             'interval' => 14400,
             'display'  => __( 'Every 4 Hours', 'ontario-obituaries' ),
+        );
+    }
+    // v5.1.4: 5-minute interval for the AI rewrite batch.
+    // Matches the cPanel */5 server cron cadence for reliable autonomous operation.
+    if ( ! isset( $schedules['ontario_five_minutes'] ) ) {
+        $schedules['ontario_five_minutes'] = array(
+            'interval' => 300,
+            'display'  => __( 'Every 5 Minutes (Ontario Obituaries)', 'ontario-obituaries' ),
         );
     }
     return $schedules;
