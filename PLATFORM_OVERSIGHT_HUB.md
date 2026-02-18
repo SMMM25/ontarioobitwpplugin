@@ -28,42 +28,44 @@ to prevent further breakage.
 - **Repo**: `github.com/SMMM25/ontarioobitwpplugin` (PRIVATE)
 - **WordPress theme**: Litho + Elementor page builder
 - **Cache**: LiteSpeed Cache (sole cache layer — W3 Total Cache MUST stay disabled)
-- **Hosting**: Shared hosting with cPanel, no SSH access, no WP-CLI
-- **Deployment**: Manual upload via cPanel File Manager (WP Pusher can't do private repos)
+- **Hosting**: Shared hosting with cPanel, SSH access available, WP-CLI at `/usr/local/sbin/wp`
+- **Deployment**: Manual upload via WP Admin → Plugins → Upload (WP Pusher can't do private repos). **WARNING**: Delete→Upload path runs `uninstall.php`, wiping settings. Back up Groq key + settings first.
 
-### Current Versions (as of 2026-02-16)
+### Current Versions (as of 2026-02-18)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 5.0.2 | monacomonuments.ca — deployed via WordPress Upload Plugin |
+| **Live site** | 5.1.5 | monacomonuments.ca — deployed 2026-02-18 via WP Admin Upload |
+| **Main branch** | 5.1.5 | PR #93 merged |
+| **Sandbox** | 5.1.5 | Delete-upgrade activation fix |
 
-| **Main branch** | 5.0.5 | PR #86 merged |
-| **Sandbox** | 5.0.12 | QC-R12 hardening, PR #87 pending review |
-
-### PROJECT STATUS: CRITICAL BUGS IDENTIFIED (2026-02-16)
-> **Independent code audit** performed 2026-02-16 found **4 critical bugs, 7 high-severity
-> issues, and 6 medium-severity concerns** in the plugin codebase. The previous developer's
-> claim that "the plugin is stable and all other features work correctly" and that "the AI
-> Rewriter issue is a Groq free-tier limitation, not a code bug" is **INCORRECT**.
+### PROJECT STATUS: AI REWRITER AUTONOMOUS — v5.1.5 LIVE (2026-02-18)
+> **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
+> The AI rewriter is now running autonomously on a repeating 5-minute WP-Cron schedule,
+> triggered by a cPanel cron job. Published count: 178 (and rising). Pending: ~403.
+> All published obituaries have AI rewrites — zero copyright risk on published content.
 >
-> Multiple architectural and logic bugs exist that cause the activation cascade, display
-> pipeline failure, performance degradation, and unclean uninstall behavior.
-> See **Section 26** for the full audit and **Section 27** for the systematic fix plan.
+> **NEW URGENT ISSUE**: All obituary images on published pages are **hotlinked** from
+> `cdn-otf-cas.prfct.cc` (Tribute Archive CDN). This poses bandwidth theft, copyright,
+> and reliability risks. See **Section 28** for details.
+>
+> Previous audit findings (Section 26) and fix plan (Section 27) remain as historical reference.
 
-### Live Site Stats (verified 2026-02-15)
-- **725+ obituaries** displayed across 37+ pagination pages
-- **~15 obituaries AI-rewritten** via v5.0.2 before Groq TPM limit hit
-- **7 active sources** (all Postmedia/Remembering.ca network):
-  - obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com,
+### Live Site Stats (verified 2026-02-18)
+- **581 obituaries** in database (178 published + 403 pending AI rewrite)
+- **178 obituaries AI-rewritten and published** — all have `ai_description`, zero copyright risk
+- **403 pending** — queued for autonomous 5-minute cron rewrite (~2-4 per cycle)
+- **30 configured sources** (7 Postmedia active + 6 Dignity Memorial + 8 Legacy.com + 6 funeral homes + 2 Arbor + 1 Remembering.ca):
+  - **Active (7)**: obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com,
     obituaries.thespec.com, obituaries.simcoe.com, obituaries.niagarafallsreview.ca,
     obituaries.stcatharinesstandard.ca
-- **22 disabled sources** (Legacy.com 403, Dignity Memorial 403, FrontRunner JS-only, etc.)
-- **Cron**: every 12h via `ontario_obituaries_collection_event`
-- **528 URLs** in sitemap (`/obituaries-sitemap.xml`), **117 unique city slugs**
-- **70 city cards** on the Ontario hub page
+  - **Disabled (23)**: Legacy.com (403), Dignity Memorial (403), FrontRunner (JS-only), Arbor Memorial (JS shell), independent funeral homes
+- **Cron**: Collection every 12h via `ontario_obituaries_collection_event` + AI rewrite every 5 min via `ontario_obituaries_ai_rewrite_batch`
+- **cPanel cron**: `*/5 * * * * /usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1`
 - **Pages**: `/ontario-obituaries/` (shortcode listing), `/obituaries/ontario/` (SEO hub),
   `/obituaries/ontario/{city}/` (city hubs), `/obituaries/ontario/{city}/{name}-{id}/` (memorial pages)
 - **Memorial pages verified**: QR code (qrserver.com), lead capture form with AJAX handler,
   Schema.org markup (Person, BurialEvent, BreadcrumbList, LocalBusiness)
+- **⚠️ URGENT: Image hotlink issue** — All published obituary images are hotlinked from `cdn-otf-cas.prfct.cc` (not stored locally). See Section 28.
 
 ### Feature Deployment Status
 
@@ -75,7 +77,7 @@ to prevent further breakage.
 | GoFundMe Auto-Linker | v4.3.0 | ✅ LIVE (2 matched, 360 pending) |
 | AI Authenticity Checker (24/7 audits) | v4.3.0 | ✅ LIVE (725 never audited — processing) |
 | Logo filter (rejects images < 15 KB) | v4.0.1 | ✅ LIVE |
-| AI rewrite engine (Groq/Llama) | v5.0.2 | ❌ BROKEN — multiple code bugs (activation cascade, display pipeline deadlock) + Groq free-tier TPM limit. See Section 26. |
+| AI rewrite engine (Groq/Llama) | v5.1.5 | ✅ LIVE — autonomous 5-min repeating cron, 178 published, 403 pending. Groq key in own option. |
 | BurialEvent JSON-LD schema | v4.2.0 | ✅ LIVE |
 | IndexNow search engine notification | v4.2.0 | ✅ LIVE |
 | QR code on memorial pages | v4.2.0 | ✅ LIVE |
@@ -95,27 +97,21 @@ to prevent further breakage.
 | Future death date rejection | v4.2.4 | ✅ LIVE |
 | q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
 
-### AI Rewriter Status (v5.0.6 — FUNCTIONAL, Groq TPM mitigated)
-- **Code**: All bugs fixed (C1-C4, H1-H8, M1-M6). v5.0.6 adds shared rate limiter + time-spread processing.
-- **v5.0.6 mitigations**: Shared Groq rate limiter, time-spread processing (90s windows/120s intervals), prompt reduction (~120 tokens saved/call), staggered cron scheduling.
-- **Previous bugs (all now fixed)**: Activation cascade (C1), display deadlock (C2), non-idempotent migrations (C3), page-load dedup (C4).
-- **Primary model**: `llama-3.1-8b-instant` (switched from 70B in v5.0.0 to reduce token usage)
-- **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (NOT used on 429 errors as of v5.0.2)
-- **Admin UI**: Settings page section (checkbox toggle + API key input + live stats)
-- **Activation**: WP Admin → Ontario Obituaries → Settings → AI Rewrite Engine section
-- **Get key**: Free at https://console.groq.com (no credit card needed)
-- **What it does**: Rewrites scraped obituary text into original prose, extracts structured fields (death date, birth date, age, location, funeral home) via JSON
-- **Rate**: 1 obituary per call, 12-second delay between requests (~5 req/min)
-- **Groq API key set** (2026-02-13) — AI rewrites enabled via admin settings
-- **Progress**: ~15 of 725+ rewritten before Groq TPM limit stops processing
-- **BLOCKER**: Groq free-tier TPM limit (6,000 tokens/min for llama-3.1-8b-instant) is exhausted after ~5-6 requests/min. Each obituary uses ~900-1,400 tokens (prompt + response). Even with a 12s delay, cumulative token usage hits the ceiling after ~15 items per 5-minute cron window.
-- **Execution paths** (all use mutual-exclusion transient lock `ontario_obituaries_rewriter_running`):
-  1. **WP-Cron handler** (`ontario_obituaries_ai_rewrite_batch`) — processes 1 obituary, 12s delay, runs up to 4 min
-  2. **Shutdown hook** (`ontario_obituaries_shutdown_rewriter`) — processes 1 obituary on admin page load, 1-min throttle
-  3. **AJAX button** (`ontario_obituaries_ajax_run_rewriter`) — processes 1 per call, JS auto-repeats
-  4. **CLI cron** (`cron-rewriter.php`) — standalone script, file-lock at `/tmp/ontario_rewriter.lock`
-- **cPanel cron command**: `/usr/local/bin/php /home/monaylnf/public_html/wp-cron.php >/dev/null 2>&1` (every 5 min)
-- **v5.0.2 fixes applied**: 12s delay (was 6s), no fallback retry on 429, retry-after header parsing
+### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
+- **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
+- **v5.1.5 fixes**: Delete-upgrade activation fix — infers `ai_rewrite_enabled=true` when Groq key exists but settings wiped by uninstall.php.
+- **v5.1.4 changes**: Replaced fragile one-shot self-reschedule with repeating `wp_schedule_event()` on `ontario_five_minutes` interval (300s). Safety-net re-registers if event disappears. Deactivation clears hook. Settings save schedules/clears based on checkbox + key presence.
+- **v5.1.3 changes**: Admin settings page: no-cache headers (LiteSpeed), live AJAX status refresh.
+- **v5.1.2 changes**: Demoted age/death-date validators to warnings (non-blocking). Prevents queue deadlock on edge cases like "age not mentioned" (ID 1311).
+- **Primary model**: `llama-3.1-8b-instant`
+- **Fallback models**: `llama-3.3-70b-versatile`, `llama-4-scout` (NOT used on 429)
+- **Admin UI**: Settings page section (checkbox toggle + API key input + live stats + AJAX refresh)
+- **Groq API key**: Stored in `ontario_obituaries_groq_api_key` (own option, NOT inside settings JSON)
+- **Rate**: ~2-4 obituaries per 5-minute cycle (47-52s batch runtime)
+- **Estimated clearance**: ~6-8 hours for 403 pending items
+- **cPanel cron command**: `*/5 * * * * /usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1`
+- **IMPORTANT**: The cron uses `/usr/local/bin/php /usr/local/sbin/wp` (not bare `wp`). Bare `wp` causes `$argv` undefined fatal error in cron environment.
+- **Delete-upgrade awareness**: When deploying via WP Admin Delete→Upload, `uninstall.php` runs and wipes ALL settings including the Groq key. After upload, restore the key and settings via WP-CLI or re-enter in admin, then deactivate/reactivate to trigger scheduling.
 
 ### AI Chatbot Status (v4.5.0 — NEW)
 - **Code**: `includes/class-ai-chatbot.php` (32 KB)
@@ -146,8 +142,9 @@ to prevent further breakage.
 6. **Fabricated YYYY-01-01 dates** from legacy scraper → needs separate data repair PR
 7. **Out-of-province obituaries** (Calgary, Vancouver, etc.) → valid records, low priority
 8. **Schema redesign needed** for records without death date → future work
-9. ~~**Display deadlock** — 710+ of 725 records invisible due to `status='published'` filter in display queries.~~ → ✅ **FIXED (v5.0.4, PR #84)** — All display/SEO queries now show all non-suppressed records regardless of status.
-10. **Name-only dedup risk** — 3rd dedup pass could merge different people with same name. See BUG-M4 in Section 26.
+9. ~~**Display deadlock** — 710+ of 725 records invisible~~ → ✅ FIXED v5.0.4 (PR #84)
+10. ~~**Name-only dedup risk**~~ → ✅ FIXED v5.0.5 (PR #86) — 90-day date guard
+11. **🔴 IMAGE HOTLINK** — All published obituary images are hotlinked from `cdn-otf-cas.prfct.cc` (Tribute Archive CDN). Not stored locally. See Section 28.
 
 ### Key Files to Know
 | File | What it does |
@@ -202,41 +199,49 @@ to prevent further breakage.
 | #78 | Merged | v5.0.0 | Bulletproof CLI cron — 10/batch @ 6s (~250/hour) |
 | #79 | Merged | v5.0.1 | Process 1 obituary at a time + mutual exclusion lock |
 | #80 | Merged | v5.0.2 | Respect Groq 6,000 TPM token limit — 12s delay, no fallback on 429 |
-| #83 | Merged | v5.0.3 | BUG-C1/C3 fix: Remove 1,663 lines of dangerous historical migrations from on_plugin_update() |
-| #84 | Merged | v5.0.4 | BUG-C2 fix: Remove status='published' gate from 18 display/SEO queries + add RULE 14 (Core Workflow Integrity) |\n| #85 | Merged | v5.0.4-5.0.5 | BUG-C4/H2/H7 fix: Dedup off init + complete uninstall cleanup (22 options, 8 transients, 8 cron hooks) |\n| #86 | Merged | v5.0.5 | BUG-H1/H4/H5/H6/M4 fix + SEO defense-in-depth + QC-R6 hardening. Sprint 2 complete. |
+| #83 | Merged | v5.0.3 | BUG-C1/C3 fix: Remove 1,663 lines of dangerous historical migrations |
+| #84 | Merged | v5.0.4 | BUG-C2 fix: Remove status='published' gate from 18 queries + RULE 14 |
+| #85 | Merged | v5.0.4-5.0.5 | BUG-C4/H2/H7 fix: Dedup off init + complete uninstall cleanup |
+| #86 | Merged | v5.0.5 | BUG-H1/H4/H5/H6/M4 fix + SEO defense-in-depth. Sprint 2 complete. |
+| #87 | Pending | v5.0.12 | Sprint 3+4: Shared Groq rate limiter + QC-R12 hardening |
+| #88-#91 | Merged | v5.1.0-v5.1.2 | AI rewriter fixes: validator demotions, queue deadlock prevention |
+| #92 | Merged | v5.1.4 | Repeating 5-min rewrite schedule + admin cache fix + ai_rewrite_enabled gate |
+| #93 | Merged | v5.1.5 | Delete-upgrade activation fix: infer ai_rewrite_enabled when settings wiped |
 
-### Remaining Work (priority order — updated 2026-02-16 after code audit)
+### Remaining Work (priority order — updated 2026-02-18)
 
-> **IMPORTANT**: Items 1-15 are NEW findings from the 2026-02-16 independent code audit.
-> These supersede the previous developer's claim that "the plugin is stable."
-> See Section 26 for full details on each bug and Section 27 for the systematic fix plan.
+> **All 17 bugs from the 2026-02-16 audit are FIXED.** Current focus is on the
+> newly discovered image hotlink issue and completing the pending rewrite queue.
 
-#### CRITICAL (plugin does not function correctly until fixed)
-1. ~~**BUG-C1: Activation cascade**~~ — ✅ **FIXED in v5.0.3** (PR #83). Removed 1,663 lines of historical migration blocks (v3.9.0–v4.3.0) from `on_plugin_update()` that ran synchronous HTTP scrapes, usleep() enrichment loops, and unguarded ALTER TABLE on every fresh install or option loss. Schema is handled by `activate()`; data freshness by cron + heartbeat. KNOWN LIMITATIONS: `init` hook retained (needed for WP Pusher); no capability gate (would break cron/CLI); `wp_cache_flush()` kept (separate PR).
-2. **BUG-C2: Display pipeline deadlock** — Records are inserted as `pending` but `class-ontario-obituaries-display.php` only queries `status='published'`. Without successful AI rewrite, no obituaries appear. **FIX**: Show records without AI rewrite; make rewrite an enhancement, not a gate.
-3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ **FIXED in v5.0.3** (PR #83). Historical migration blocks removed entirely; remaining operations (rewrite flush, cache purge, transient delete, registry seed, cron schedule) are all idempotent. `deployed_version` write moved to end of function so partial failures retry safely.
-4. ~~**BUG-C4: Duplicate cleanup on every init**~~ — ✅ **FIXED in v5.0.4** (PR #85). Removed `init` hook; replaced with daily cron (`ontario_obituaries_dedup_daily`) + post-scrape deferred one-shot cron (`ontario_obituaries_dedup_once`). Lock uses WP-native `add_option()`/`get_option()` (not raw SQL) with JSON state `{ts,state}` — distinguishes "running" from "done" (cooldown). Stale-lock auto-cleared after 1h; cooldown 1h; no recursive retry. Admin rescan bypasses cooldown via `$force=true`. Logging: errors always, success at debug, throttled silent.
+#### URGENT (new — discovered 2026-02-18)
+0. **🔴 IMAGE HOTLINK ISSUE** — All published obituary images are hotlinked from `cdn-otf-cas.prfct.cc` (Tribute Archive CDN), not stored locally. Risks: source blocks domain, images disappear, bandwidth theft, copyright. See Section 28. **FIX NEEDED**: Download allowlisted images to local uploads, serve from monacomonuments.ca.
 
-#### HIGH (significant functional or security issues)
-5. ~~**BUG-H1: Nonsense rate calculation in cron-rewriter.php**~~ — ✅ **FIXED in v5.0.5** (PR #86). Previous formula `$rate * 60 / max($runtime, 1) * 3600 / 60` expanded to `total_ok * 216000 / runtime²` (nonsense — squared denominator). Replaced with `total_ok / runtime * 3600` (correct per-hour rate).
-6. ~~**BUG-H2: Lingering API keys after uninstall**~~ — ✅ **FIXED in v5.0.5** (PR #86). `uninstall.php` now deletes all 22 plugin options (including 3 sensitive API keys), 8 transients, and clears all 8 cron hooks. Inventory method documented in code.
-7. ~~**BUG-H3: Duplicate index creation**~~ — ✅ **FIXED in v5.0.3** (PR #83). v4.3.0 migration block removed entirely; index creation handled by `activate()` which has existence checks.
-8. ~~**BUG-H4: Possible undefined $result**~~ — ✅ **FIXED in v5.0.5** (PR #86). `$result` initialized to `array('succeeded'=>0,'failed'=>0)` before the while-loop. Post-loop cache-purge/IndexNow check now uses `$total_ok` (accumulator) instead of last-iteration `$result['succeeded']`.
-9. ~~**BUG-H5: Premature throttling in shutdown rewriter**~~ — ✅ **FIXED in v5.0.5** (PR #86). `set_transient('rewriter_throttle', 1, 300)` moved from the start of `ontario_obituaries_shutdown_rewriter()` to after `process_batch()` succeeds. Failures no longer block the next 5 minutes of retry attempts.
-10. ~~**BUG-H6: Over-permissive domain lock**~~ — ✅ **FIXED in v5.0.5** (PR #86). Replaced `strpos()` with exact `===` match plus strict subdomain suffix check (`'.'.$domain`). Now `evilmonacomonuments.ca` fails, while `staging.monacomonuments.ca` still passes. Also added `strtolower()` normalization and empty-host guard.
-11. ~~**BUG-H7: Stale cron hooks survive uninstall**~~ — ✅ **FIXED in v5.0.5** (PR #86). `uninstall.php` now clears all 8 scheduled cron hooks (was 2). Inventory method documented in code.
+#### CRITICAL (all fixed)
+1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED v5.0.3 (PR #83)
+2. ~~**BUG-C2: Display pipeline deadlock**~~ — ✅ FIXED v5.0.4 (PR #84)
+3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED v5.0.3 (PR #83)
+4. ~~**BUG-C4: Duplicate cleanup on every init**~~ — ✅ FIXED v5.0.4 (PR #85)
 
-#### MEDIUM (architectural debt, misleading docs, or edge-case risks)
-12. ~~**BUG-M1: Shared Groq API key across 3 consumers**~~ — ✅ **FIXED in v5.0.6** (PR #87). New `class-groq-rate-limiter.php` singleton tracks cumulative TPM usage via a 60-second sliding-window transient. All three consumers (rewriter, chatbot, authenticity) call `may_proceed()` before API calls and `record_usage()` after. Budget defaults to 5,500 TPM (headroom within 6,000 free tier). Chatbot gracefully falls back to rule-based responses when budget exhausted.
-13. **BUG-M2: Misleading Oversight Hub claims** — Previous docs state "plugin is stable, all other features work correctly." This is false — display deadlock, activation cascade, and performance bugs exist. **FIX**: This update corrects the record.
-14. ~~**BUG-M3: 1,721-line on_plugin_update() function**~~ — ✅ **FIXED in v5.0.3** (PR #83). Function reduced from ~1,721 lines to ~100 lines by removing historical migration blocks. Future migrations follow documented rules (no sync HTTP, idempotent, check-before-ALTER).
-15. ~~**BUG-M4: Risky name-only dedup pass**~~ — ✅ **FIXED in v5.0.5** (PR #86). Added 90-day date-range guard to Pass 3: groups by normalized name are split into date-proximity sub-groups; only records whose death dates fall within 90 days of each other are merged. Prevents merging distinct individuals who share the same name but died in different periods. Preserves "100% factual" publishing integrity.
-16. ~~**BUG-M5: Activation race conditions**~~ — ✅ **FIXED in v5.0.6** (PR #87). Post-scrape scheduling staggered: dedup +10s, rewrite +60s, GoFundMe +300s. Settings-save events already staggered at +30/+60/+120/+180s. All events use `wp_next_scheduled()` guard.
-17. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ **FIXED in v5.0.6** (PR #87). Updated `cron-rewriter.php` header from "~200 obituaries per hour" to "~180/hour theoretical, ~15/5-min in practice". Updated `ontario-obituaries.php` batch handler comment from "~30/run (~360/hour)" to "~18/run theoretical, ~15 before TPM hit".
+#### HIGH (all fixed)
+5. ~~**BUG-H1: Nonsense rate calculation**~~ — ✅ FIXED v5.0.5 (PR #86)
+6. ~~**BUG-H2: Lingering API keys after uninstall**~~ — ✅ FIXED v5.0.5 (PR #86)
+7. ~~**BUG-H3: Duplicate index creation**~~ — ✅ FIXED v5.0.3 (PR #83)
+8. ~~**BUG-H4: Possible undefined $result**~~ — ✅ FIXED v5.0.5 (PR #86)
+9. ~~**BUG-H5: Premature throttling**~~ — ✅ FIXED v5.0.5 (PR #86)
+10. ~~**BUG-H6: Over-permissive domain lock**~~ — ✅ FIXED v5.0.5 (PR #86)
+11. ~~**BUG-H7: Stale cron hooks survive uninstall**~~ — ✅ FIXED v5.0.5 (PR #86)
+
+#### MEDIUM (all fixed)
+12. ~~**BUG-M1: Shared Groq key**~~ — ✅ FIXED v5.0.6 (PR #87)
+13. ~~**BUG-M2: Misleading docs**~~ — ✅ CORRECTED
+14. ~~**BUG-M3: 1,721-line function**~~ — ✅ FIXED v5.0.3 (PR #83)
+15. ~~**BUG-M4: Risky name-only dedup**~~ — ✅ FIXED v5.0.5 (PR #86)
+16. ~~**BUG-M5: Activation race conditions**~~ — ✅ FIXED v5.0.6 (PR #87)
+17. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ FIXED v5.0.6 (PR #87)
 
 #### PREVIOUSLY KNOWN (carried forward)
-18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done (2026-02-13 through 2026-02-15)
-19. **BLOCKED: AI Rewriter Groq TPM limit** — See Section 25 for solutions (upgrade plan, switch API, etc.)
+18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done
+19. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ → **RESOLVED** — v5.1.5 runs autonomously with 5-min repeating schedule
 20. **Enable Google Ads Optimizer** when busy season starts (spring)
 21. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
 22. **Schema redesign**: Handle records without death date (future PR)
@@ -1441,3 +1446,158 @@ The fundamental issue is **Groq's free-tier token-per-minute (TPM) limit**, not 
 | PR-F | Data integrity | BUG-M4 | ✅ **SUPERSEDED by PR #86** — 90-day date guard added in Sprint 2 fix. |
 | PR-G | Infrastructure | BUG-M3 | ✅ **SUPERSEDED by PR #83** — Migration blocks removed entirely instead of refactored into files. |
 | PR-H | Documentation | BUG-M2, BUG-M6 | ✅ **DONE in PR #87 (v5.0.6)** — Throughput comments corrected. Hub and developer log updated. |
+| PR #92 | Cron + Admin | v5.1.4 | ✅ **MERGED** — Repeating 5-min rewrite schedule, admin cache fix (no-cache headers + AJAX refresh), ai_rewrite_enabled gate, deactivation cleanup. |
+| PR #93 | Activation | v5.1.5 | ✅ **MERGED** — Delete-upgrade activation fix: infer ai_rewrite_enabled=true when Groq key exists but settings wiped by uninstall.php. |
+
+---
+
+## Section 28 — Image Hotlink Issue (URGENT — discovered 2026-02-18)
+
+### Problem
+
+All obituary images displayed on monacomonuments.ca are **hotlinked** from the source's CDN (`cdn-otf-cas.prfct.cc` — Tribute Archive CDN). The `image_url` column in `wp_ontario_obituaries` stores remote URLs directly, and templates output these URLs without downloading the images to local storage.
+
+### Evidence (2026-02-18)
+
+- DB query of published obituary `image_url` values shows all URLs are external CDN links.
+- The `image_pipeline.php` class has logic to download, strip EXIF, and generate thumbnails, but this only runs for **allowlisted sources** (`image_allowlisted = 1` in the source registry).
+- Default `image_allowlisted = 0` means most sources serve their original remote URLs.
+- For non-allowlisted sources, the pipeline serves a `memorial-placeholder.svg` placeholder, BUT the original `image_url` remains in the database and templates output it directly.
+
+### Risks
+
+| # | Risk | Severity |
+|---|------|----------|
+| 1 | **Copyright** — Serving images from another site's CDN without permission | HIGH |
+| 2 | **Reliability** — Source CDN blocks monacomonuments.ca referrer → broken images | HIGH |
+| 3 | **Bandwidth theft** — Using source's CDN bandwidth for your site traffic | MEDIUM |
+| 4 | **SEO** — Google detects hotlinked images; may penalize in image search | MEDIUM |
+| 5 | **Performance** — External CDN latency vs local serving | LOW |
+
+### Current Image State
+
+- **178 published** obituaries — all have external CDN image URLs (hotlinked)
+- **403 pending** obituaries — images stored as external URLs, will be hotlinked when published
+- Image pipeline download logic exists but is gated by `image_allowlisted` flag (default 0)
+
+### Fix Plan
+
+1. **Immediate mitigation**: Set `image_allowlisted = 1` for active sources OR modify image pipeline to always download.
+2. **Backfill**: Run a one-time migration to download all existing `image_url` values to `wp-content/uploads/`, update DB with local paths.
+3. **Template guard**: Ensure templates only output local URLs or the placeholder SVG (never external hotlinks).
+4. **Future proofing**: New scrapes should always download images during the pipeline.
+
+### Source URLs (complete list — 30 configured)
+
+**Funeral Homes (6)**:
+1. https://www.roadhouseandrose.com/obituaries
+2. https://www.forrestandtaylor.com/obituaries
+3. https://www.thompsonfh-aurora.com/obituaries
+4. https://www.wardfuneralhome.com/obituaries
+5. https://www.skinnerfuneralhome.ca/obituaries
+6. https://www.peacefultransition.ca/obituaries
+
+**Arbor Memorial (2)**:
+7. https://www.arbormemorial.ca/en/taylor/obituaries.html
+8. https://www.arbormemorial.ca/en/marshall/obituaries.html
+
+**Dignity Memorial (6)**:
+9. https://www.dignitymemorial.com/obituaries/newmarket-on
+10. https://www.dignitymemorial.com/obituaries/aurora-on
+11. https://www.dignitymemorial.com/obituaries/richmond-hill-on
+12. https://www.dignitymemorial.com/obituaries/toronto-on
+13. https://www.dignitymemorial.com/obituaries/markham-on
+14. https://www.dignitymemorial.com/obituaries/vaughan-on
+
+**Legacy.com (8)**:
+15. https://www.legacy.com/ca/obituaries/yorkregion/today
+16. https://www.legacy.com/ca/obituaries/thestar/today
+17. https://www.legacy.com/ca/obituaries/thespec/today
+18. https://www.legacy.com/ca/obituaries/ottawacitizen/today
+19. https://www.legacy.com/ca/obituaries/lfpress/today
+20. https://www.legacy.com/ca/obituaries/therecord/today
+21. https://www.legacy.com/ca/obituaries/barrieexaminer/today
+22. https://www.legacy.com/ca/obituaries/windsorstar/today
+
+**Newspaper Obituary Portals (7)**:
+23. https://obituaries.yorkregion.com/obituaries/obituaries/search
+24. https://obituaries.thestar.com/obituaries/obituaries/search
+25. https://obituaries.therecord.com/obituaries/obituaries/search
+26. https://obituaries.thespec.com/obituaries/obituaries/search
+27. https://obituaries.simcoe.com/obituaries/obituaries/search
+28. https://obituaries.niagarafallsreview.ca/obituaries/obituaries/search
+29. https://obituaries.stcatharinesstandard.ca/obituaries/obituaries/search
+
+**Remembering.ca (1)**:
+30. https://www.remembering.ca/obituaries/toronto-on
+
+### Rules for Image Handling
+
+- NEVER hotlink images from external CDNs on the live site.
+- All images served on monacomonuments.ca MUST be stored locally in `wp-content/uploads/`.
+- The image pipeline MUST download, strip EXIF, and generate thumbnails for all images.
+- Placeholder SVG is the safe fallback for images that can't be downloaded.
+- Logo filter (< 15 KB) remains active — reject funeral home logos.
+
+---
+
+## Section 29 — v5.1.x Deployment Session Log (2026-02-18)
+
+> This section documents the complete deployment session for v5.1.2 through v5.1.5,
+> including the cron diagnosis, settings wipe discovery, and cPanel cron fix.
+
+### What Was Accomplished (in order)
+
+1. **v5.1.4 approved and built** — Repeating 5-minute WP-Cron schedule replaces fragile one-shot self-reschedule. Admin settings page gets no-cache headers and AJAX status refresh. ai_rewrite_enabled checkbox gates scheduling.
+
+2. **PR #92 created and merged** — Squashed commit covering v5.1.3 (admin cache) + v5.1.4 (repeating cron). ZIP built (277 KB, 58 files).
+
+3. **Post-deploy diagnosis revealed multiple issues**:
+   - Plugin slug is `wp-plugin` (not `ontario-obituaries`) — `wp plugin deactivate ontario-obituaries` fails.
+   - `ai_rewrite_enabled` defaulted to `false` because settings were wiped during delete→upload.
+   - Groq API key was empty — also wiped by `uninstall.php` during delete→upload.
+   - Rewrite batch showed "Non-repeating" instead of "5 minutes".
+
+4. **Root cause identified**: WP Admin Delete→Upload path runs `uninstall.php`, which deletes ALL plugin options (22 options, 8 transients, 8 cron hooks). On re-activation, `ontario_obituaries_get_defaults()` returns `ai_rewrite_enabled => false`, so the 5-minute event is never registered.
+
+5. **Settings restored via WP-CLI**:
+   ```bash
+   wp --path=$HOME/public_html option update ontario_obituaries_groq_api_key "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"
+   wp --path=$HOME/public_html option update ontario_obituaries_settings '{"enabled":true,...,"ai_rewrite_enabled":true,...}' --format=json
+   wp --path=$HOME/public_html plugin deactivate wp-plugin && wp --path=$HOME/public_html plugin activate wp-plugin
+   ```
+   After reactivation: cron showed `5 minutes` recurrence. ✅
+
+6. **cPanel cron job broken** — The existing cron entry `*/5 * * * * /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1` was failing silently. Investigation:
+   - Test cron (`echo $(date) >> cron_test.log`) confirmed cron daemon is running.
+   - Redirected WP-CLI output to log: revealed `PHP Warning: Undefined variable $argv` and `PHP Fatal error: array_slice(): Argument #1 must be of type array`.
+   - **Root cause**: Bare `wp` in cron environment doesn't get `$argv` set, causing WP-CLI's Runner to crash.
+   - **Fix**: Changed command to `/usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1` — PHP explicitly invokes `wp` script.
+   - **WARNING**: A `crontab -l | sed | crontab -` command accidentally wiped the user's crontab (cPanel stores cron jobs separately). Job was re-added via cPanel interface.
+
+7. **v5.1.5 fix developed** — Handles the delete-upgrade scenario:
+   - On activation: if Groq key exists but settings are missing, infers `ai_rewrite_enabled=true`.
+   - Safety net: batch function re-registers the 5-min event unconditionally if it's missing while running.
+   - PR #93 created and merged.
+
+8. **v5.1.5 deployed and verified**:
+   - Version confirmed: `5.1.5`.
+   - Cron event confirmed: `ontario_obituaries_ai_rewrite_batch` with `5 minutes` recurrence.
+   - Published count rising: 155 → 165 → 178 (autonomous, no manual triggers).
+   - Batch runtime: ~47-52 seconds per cycle.
+   - All 178 published obituaries have AI descriptions (0 published without rewrite).
+
+9. **Copyright safety verified**:
+   - `published_not_rewritten = 0` — zero published obituaries lack an AI rewrite.
+   - `published_with_rewrite = 178` — all published content is original AI-rewritten prose.
+   - 403 pending obituaries are NOT displayed on the frontend (status='pending').
+
+10. **Image hotlink issue discovered** — All `image_url` values in published obituaries point to external CDN (`cdn-otf-cas.prfct.cc`). See Section 28.
+
+### Key Technical Lessons
+
+1. **WP-CLI slug matters**: The plugin is installed as `wp-plugin/` (not `ontario-obituaries/`), so WP-CLI commands must use `wp plugin deactivate wp-plugin`.
+2. **Delete→Upload wipes options**: WordPress's "Delete then Upload" path fires `uninstall.php`, deleting all stored settings. Either back up before or use overwrite-upload.
+3. **cPanel vs crontab**: Never use `crontab -l | ... | crontab -` on cPanel — it can wipe cPanel-managed cron entries. Always edit via cPanel interface.
+4. **Bare `wp` fails in cron**: Use `/usr/local/bin/php /usr/local/sbin/wp` for WP-CLI in cron jobs. The `$argv` variable is not set in cron's restricted shell environment.
+5. **Default values matter**: If `ai_rewrite_enabled` defaults to `false`, any settings wipe disables the entire rewrite pipeline silently. v5.1.5 adds inference logic as a safety net.

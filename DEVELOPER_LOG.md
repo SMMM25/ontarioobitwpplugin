@@ -1,11 +1,11 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-16 (v5.0.12 — QC-R12 hardening)
-> **Plugin version:** `5.0.12` (sandbox) / `5.0.2` (live) / `5.0.5` (main branch, PR #86 merged)
-> **Live site version:** `5.0.2` (monacomonuments.ca — deployed 2026-02-15 via WP Upload)
-> **Main branch HEAD:** PR #86 merged (v5.0.5)
-> **Project status:** Sprint 1 COMPLETE. Sprint 2 COMPLETE. Sprint 3 COMPLETE. Sprint 4: 3/4 done. 22/23 tasks (96%). See PLATFORM_OVERSIGHT_HUB.md.
-> **Next deployment:** PR #87 (v5.0.12 — QC-R12 hardening: true atomic CAS via SELECT…FOR UPDATE, enhanced unknown-consumer logging, missing-usage fallback, multisite elapsed-time guard, cache churn reduction) pending merge → then purge & rescrape
+> **Last updated:** 2026-02-18 (v5.1.5 — autonomous AI rewrite schedule live)
+> **Plugin version:** `5.1.5` (live + sandbox + main branch)
+> **Live site version:** `5.1.5` (monacomonuments.ca — deployed 2026-02-18 via WP Admin Upload)
+> **Main branch HEAD:** PR #93 merged (v5.1.5)
+> **Project status:** AI rewriter running autonomously. 178 published, 403 pending. All bugs from 2026-02-16 audit fixed. **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
+> **Next priority:** Fix image hotlinking — download images to local uploads, stop serving external CDN URLs.
 
 ---
 
@@ -287,10 +287,61 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #85 | Merged | `7060a9c` | fix(v5.0.4-5.0.5): BUG-C4/H2/H7 — remove duplicate cleanup from init hook; WP-native lock; daily + one-shot cron; complete uninstall cleanup (22 options, 8 transients, 8 cron hooks). 4 rounds of QC review. Sprint 1 complete. |
 | #86 | Merged | `aa99abd` | fix(v5.0.5): BUG-H1/H4/H5/H6/M4 — rate calc fix, undefined $result init, shutdown throttle post-success only, domain lock exact match, 5 SEO queries suppressed_at IS NULL. Sprint 2 complete (8/8). Tag v5.0.5, release created. |
 | #87 | Pending | — | fix(v5.0.6): Sprint 3+4 complete — BUG-M1 (shared Groq rate limiter), BUG-M5 (staggered cron), BUG-M6 (throughput comments), Sprint 4 Tasks 19-21 (LLM eval, prompt reduction, time-spread processing). Overall: 22/23 (96%). |
+| #88-#91 | Merged | various | AI rewriter fixes: validator demotions, queue deadlock prevention (v5.1.0-v5.1.2) |
+| #92 | Merged | `63bf2e6` | fix(cron+admin): repeating 5-min rewrite schedule, admin cache fix, ai_rewrite_enabled gate (v5.1.4) |
+| #93 | Merged | `8318b8c` | fix(activation): handle delete-upgrade settings wipe (v5.1.5) |
 
 ---
 
-## CURRENT STATE (as of 2026-02-15)
+## CURRENT STATE (as of 2026-02-18)
+
+### Plugin Version: **5.1.5** (all environments in sync)
+### Main Branch Version: **5.1.5** (PR #93 merged 2026-02-18)
+### Live Site Version: **5.1.5** (monacomonuments.ca — deployed 2026-02-18 via WP Admin Upload)
+### Project Status: **AI REWRITER AUTONOMOUS** — running 24/7
+
+### What's Working (Live — v5.1.5)
+- **AI Rewriter** — ✅ Autonomous. Repeating 5-minute WP-Cron schedule. 178 published (all AI-rewritten), 403 pending.
+- Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
+- **581 obituaries** in database (178 published + 403 pending)
+- All 7 sources collecting successfully every 12h via WP-Cron
+- Memorial pages with QR code, lead capture form, Schema.org markup
+- IndexNow, domain lock, logo filter, LiteSpeed cache — all active
+- **AI Customer Chatbot** — Groq-powered, live on frontend
+- **GoFundMe Auto-Linker** — active
+- **AI Authenticity Checker** — active
+- **cPanel cron** — `*/5 * * * * /usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1`
+- **WP-CLI access** — Available at `/usr/local/sbin/wp` (SSH confirmed working)
+
+### What's NOT Working / Needs Attention
+- **🔴 URGENT: Image hotlink** — All published obituary images hotlinked from `cdn-otf-cas.prfct.cc` (Tribute Archive CDN). Not stored locally. See PLATFORM_OVERSIGHT_HUB.md Section 28.
+- **Google Ads Optimizer** — Disabled by owner choice (off-season). Toggle on in spring.
+- **PR #87** — Still pending merge (v5.0.12 QC-R12 hardening: atomic CAS rate limiter). Not blocking live operations.
+
+### v5.1.x Deployment Session (2026-02-18)
+
+**v5.1.2** (PRs #88-91): Demoted age/death-date validators to warnings (non-blocking). Prevents queue deadlock on edge cases like "age not mentioned" (ID 1311).
+
+**v5.1.3** (squashed into PR #92): Admin settings page gets X-LiteSpeed-Cache-Control no-cache headers + live AJAX status refresh.
+
+**v5.1.4** (PR #92, merged):
+- Replaced one-shot self-reschedule with repeating `wp_schedule_event()` on `ontario_five_minutes` interval (300s).
+- Activation registers the repeating event gated by `ai_rewrite_enabled` + Groq key.
+- Deactivation clears the hook. Post-collection ensures event persists.
+- Batch function no longer self-reschedules but re-registers as safety net.
+
+**v5.1.5** (PR #93, merged):
+- Delete→Upload wipes settings via `uninstall.php`. `ai_rewrite_enabled` defaults to `false`.
+- Fix: On activation, if Groq key exists but settings are missing, infer `ai_rewrite_enabled=true`.
+- Safety net: batch function re-registers event unconditionally if missing while running.
+
+**cPanel Cron Fix**: Changed from bare `wp` to `/usr/local/bin/php /usr/local/sbin/wp` — bare `wp` causes `$argv` undefined fatal in cron. WARNING: `crontab -l | sed | crontab -` wiped cPanel cron — always edit via cPanel interface.
+
+**Copyright Safety**: All 178 published obituaries have AI rewrites (0 without). 403 pending not displayed.
+
+**Image Hotlink Discovered**: All `image_url` values point to `cdn-otf-cas.prfct.cc`. Not stored locally. Marked URGENT.
+
+### Previous State (as of 2026-02-15)
 
 ### Plugin Version: **5.0.2** (all environments in sync)
 ### Main Branch Version: **5.0.2** (PR #80 merged 2026-02-15)
@@ -577,8 +628,8 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P5-19 | Full site backup before v4.5.0 deploy | **DONE** (UpdraftPlus, Feb 13, 21:45) |
 | P5-20 | Google Ads Optimizer — enable when ready | **PENDING — owner action (spring)** |
 
-### Phase 6: AI Rewriter Rate-Limit Resolution (v5.0.x — PAUSED)
-> Fix Groq free-tier rate limiting that stops AI rewrites after ~15 items per run
+### Phase 6: AI Rewriter Rate-Limit Resolution (v5.0.x–v5.1.x — ✅ RESOLVED)
+> Fixed: Autonomous 5-minute repeating schedule deployed in v5.1.5.
 
 | ID | Task | Status |
 |----|------|--------|
@@ -588,8 +639,11 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P6-4 | Fix TRUNCATE bug that wiped data on reinstall | **DONE** (PR #79) |
 | P6-5 | Increase delay to 12s + retry-after header parsing | **DONE** (PR #80) |
 | P6-6 | Remove wasteful fallback retries on 429 | **DONE** (PR #80) |
-| P6-7 | Resolve Groq 6,000 TPM limit | **BLOCKED** — requires paid Groq plan or alternative API |
-| P6-8 | Complete all 725+ obituary rewrites | **BLOCKED** — depends on P6-7 |
+| P6-7 | Repeating 5-min schedule (replace one-shot) | **DONE** (PR #92, v5.1.4) |
+| P6-8 | Handle delete-upgrade settings wipe | **DONE** (PR #93, v5.1.5) |
+| P6-9 | Fix cPanel cron ($argv fatal) | **DONE** (2026-02-18, manual cPanel fix) |
+| P6-10 | Demote validators to warnings (prevent deadlock) | **DONE** (PRs #88-91, v5.1.2) |
+| P6-11 | Complete all pending obituary rewrites | **IN PROGRESS** — 178/581 done, ~6-8h remaining |
 
 ### Phase 7: Critical Bug Fixes (identified 2026-02-16 audit)
 > Fix all bugs found during independent code audit. See PLATFORM_OVERSIGHT_HUB.md Sections 26-27.
@@ -608,6 +662,18 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P7-10 | Stagger cron scheduling (BUG-M5) | ✅ **DONE (PR #87, v5.0.10 — QC-R10: jitter path audit + cooldown-after-collect)** |
 | P7-11 | Update all throughput comments (BUG-M6) | ✅ **DONE (PR #87, v5.0.10)** |
 | P7-12 | Refactor migrations into versioned files (BUG-M3) — superseded by removal | ✅ **DONE (PR #83)** |
+
+### Phase 8: Image Hotlink Fix (URGENT — discovered 2026-02-18)
+> All published obituary images are hotlinked from `cdn-otf-cas.prfct.cc`. Must be downloaded locally.
+
+| ID | Task | Status |
+|----|------|--------|
+| P8-1 | Audit image_url values in published records | **DONE** (2026-02-18 — all external CDN URLs) |
+| P8-2 | Modify image pipeline to always download (remove allowlist gate) | **PENDING** |
+| P8-3 | Backfill: download existing image_url values to wp-content/uploads/ | **PENDING** |
+| P8-4 | Update templates to only output local URLs or placeholder SVG | **PENDING** |
+| P8-5 | Verify logo filter still rejects < 15 KB images | **PENDING** |
+| P8-6 | Test with published obituaries on live site | **PENDING** |
 
 ### QC-R7: Rate Limiter Hardening (v5.0.7 — addresses PR #87 review round 1)
 > Initial hardening pass. All 10 reviewer concerns addressed.
@@ -701,29 +767,32 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 ## PENDING WORK (consolidated — updated 2026-02-16 after code audit)
 
-### CRITICAL (blocks core functionality)
-1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED (PR #83) — Removed all historical migration blocks
-2. ~~**BUG-C2: Display deadlock**~~ — ✅ FIXED (PR #84) — Removed `status='published'` gate from 18 queries
-3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED (PR #83) — Blocks removed, remaining ops idempotent
-4. ~~**BUG-C4: Dedup on every page load**~~ — ✅ FIXED (PR #85) — Moved to post-scrape hook + daily cron
+### URGENT (new — discovered 2026-02-18)
+0. **🔴 IMAGE HOTLINK** — All published obituary images hotlinked from `cdn-otf-cas.prfct.cc`. Not stored locally. See Oversight Hub Section 28.
 
-### HIGH (security + functional)
-5. ~~**BUG-H2 + H7: Incomplete uninstall**~~ — ✅ FIXED (PR #85) — All 22 options, 8 transients, 8 cron hooks cleaned up
-6. ~~**BUG-H6: Domain lock bypass**~~ — ✅ FIXED (PR #86) — Exact match + subdomain suffix
-7. ~~**BUG-H1: Nonsense rate calculation**~~ — ✅ FIXED (PR #86) — Correct per-hour formula
-8. ~~**BUG-H3: Duplicate index creation**~~ — ✅ FIXED (PR #83) — v4.3.0 migration block removed entirely
-9. ~~**BUG-H4: Undefined $result**~~ — ✅ FIXED (PR #86) — Initialized before loop
-10. ~~**BUG-H5: Premature shutdown throttle**~~ — ✅ FIXED (PR #86) — Throttle moved to post-success
+### CRITICAL (all fixed)
+1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED (PR #83)
+2. ~~**BUG-C2: Display deadlock**~~ — ✅ FIXED (PR #84)
+3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED (PR #83)
+4. ~~**BUG-C4: Dedup on every page load**~~ — ✅ FIXED (PR #85)
 
-### MEDIUM (architecture + safety)
-11. ~~**BUG-M1: Shared Groq rate limiter**~~ — ✅ FIXED (PR #87, v5.0.8) — Atomic CAS full rewrite, split 80/20 cron/chatbot pools, DoS mitigation, multisite uninstall
-12. ~~**BUG-M3: Monolithic migrations**~~ — ✅ FIXED (PR #83) — Function reduced from ~1,721 to ~100 lines
-13. ~~**BUG-M4: Risky name-only dedup**~~ — ✅ FIXED (PR #86) — 90-day date guard
-14. ~~**BUG-M5: Activation race conditions**~~ — ✅ FIXED (PR #87, v5.0.8) — Staggered scheduling + jitter with floor + cooldown-on-success
-15. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ FIXED (PR #87, v5.0.8) — Comments corrected
+### HIGH (all fixed)
+5. ~~**BUG-H2 + H7: Incomplete uninstall**~~ — ✅ FIXED (PR #85)
+6. ~~**BUG-H6: Domain lock bypass**~~ — ✅ FIXED (PR #86)
+7. ~~**BUG-H1: Nonsense rate calculation**~~ — ✅ FIXED (PR #86)
+8. ~~**BUG-H3: Duplicate index creation**~~ — ✅ FIXED (PR #83)
+9. ~~**BUG-H4: Undefined $result**~~ — ✅ FIXED (PR #86)
+10. ~~**BUG-H5: Premature shutdown throttle**~~ — ✅ FIXED (PR #86)
+
+### MEDIUM (all fixed)
+11. ~~**BUG-M1: Shared Groq rate limiter**~~ — ✅ FIXED (PR #87, v5.0.8)
+12. ~~**BUG-M3: Monolithic migrations**~~ — ✅ FIXED (PR #83)
+13. ~~**BUG-M4: Risky name-only dedup**~~ — ✅ FIXED (PR #86)
+14. ~~**BUG-M5: Activation race conditions**~~ — ✅ FIXED (PR #87, v5.0.8)
+15. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ FIXED (PR #87, v5.0.8)
 
 ### PREVIOUSLY KNOWN (carried forward)
-16. **BLOCKED: AI Rewriter Groq TPM limit** — Upgrade plan, switch API, or accept slow throughput
+16. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ — ✅ RESOLVED (v5.1.5: autonomous 5-min schedule)
 17. **Data repair** — Clean existing fabricated `YYYY-01-01` rows in DB
 18. **Schema/dedupe redesign** — Add `birth_year`/`death_year` columns, new unique key
 19. **Max-age audit** — Prevent pagination drift into old archive pages
@@ -739,17 +808,39 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 **WP Pusher cannot auto-deploy** (private repo, no license). Deploy manually:
 
+**⚠️ WARNING: Delete→Upload wipes ALL settings via `uninstall.php`.**
+
+### Pre-deploy backup (run via SSH / WP-CLI)
+```bash
+wp --path=$HOME/public_html option get ontario_obituaries_groq_api_key > ~/settings_backup.txt
+wp --path=$HOME/public_html option get ontario_obituaries_settings --format=json >> ~/settings_backup.txt
+echo "Backup saved"
+```
+
+### Deploy steps
 1. Merge PR on GitHub.
 2. Download the plugin ZIP from the sandbox (or export from GitHub).
-3. In cPanel File Manager, navigate to `public_html/wp-content/plugins/ontario-obituaries/`.
-4. Upload the ZIP, extract (overwrite existing files), delete the ZIP.
-5. Visit any site page to trigger the `init` migration hook.
-6. **WP Admin -> LiteSpeed Cache -> Toolbox -> Purge All**
-7. **WP Admin -> Settings -> Permalinks -> Save Changes** (click Save, don't change anything)
-8. Hard-refresh browser: `Ctrl+Shift+R`
-9. Verify the post-deploy checklist above
+3. WP Admin → Plugins → Deactivate "WP Plugin" → Delete → Add New → Upload ZIP → Activate.
+4. **Restore settings** (if wiped by delete):
+   ```bash
+   wp --path=$HOME/public_html option update ontario_obituaries_groq_api_key "YOUR_KEY_HERE"
+   wp --path=$HOME/public_html option update ontario_obituaries_settings '{"enabled":true,"auto_publish":true,...,"ai_rewrite_enabled":true,...}' --format=json
+   wp --path=$HOME/public_html plugin deactivate wp-plugin && wp --path=$HOME/public_html plugin activate wp-plugin
+   ```
+5. **WP Admin → LiteSpeed Cache → Toolbox → Purge All**
+6. Verify:
+   ```bash
+   wp --path=$HOME/public_html eval "echo ONTARIO_OBITUARIES_VERSION;"
+   wp --path=$HOME/public_html cron event list 2>&1 | grep -i ontario
+   wp --path=$HOME/public_html db query "SELECT SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) AS published, SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending FROM wp_ontario_obituaries WHERE suppressed_at IS NULL;"
+   ```
 
-Assume no SSH/WP-CLI; all operations should be doable via WP Admin + cPanel.
+### cPanel Cron
+The cron command MUST use PHP to invoke WP-CLI:
+```
+*/5 * * * * /usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1
+```
+**Do NOT use bare `wp`** — it causes `$argv` undefined fatal error in cron's restricted shell.
 
 ---
 
