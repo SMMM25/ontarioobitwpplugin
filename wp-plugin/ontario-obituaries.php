@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.1.4
+ * Version: 5.1.5
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.1.4' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.1.5' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -567,16 +567,30 @@ function ontario_obituaries_activate() {
         wp_schedule_single_event( time() + 30, 'ontario_obituaries_initial_collection' );
     }
 
-    // v5.1.4: Register AI rewrite batch as a repeating 5-minute event.
+    // v5.1.5: Register AI rewrite batch as a repeating 5-minute event.
     // Only if AI rewrites are enabled AND a Groq key is configured.
-    // Previously used wp_schedule_single_event() which self-rescheduled after
-    // each run — that pattern had no recovery path if the event was lost.
     // A repeating event stays in the schedule permanently.
+    //
+    // DEPLOY-FIX: When upgrading via "Delete + Upload", uninstall.php wipes
+    // ontario_obituaries_settings and ontario_obituaries_groq_api_key.
+    // The user must re-enter the Groq key and check AI Rewrite in settings
+    // after a delete-upgrade. However, if settings are absent but a Groq key
+    // IS present (e.g. restored via WP-CLI), treat ai_rewrite_enabled as true
+    // because the key itself signals intent.
     wp_clear_scheduled_hook( 'ontario_obituaries_ai_rewrite_batch' );
-    $activation_settings = ontario_obituaries_get_settings();
-    $activation_groq_key = get_option( 'ontario_obituaries_groq_api_key', '' );
-    if ( ! empty( $activation_settings['ai_rewrite_enabled'] ) && ! empty( $activation_groq_key ) ) {
+    $activation_settings  = ontario_obituaries_get_settings();
+    $activation_groq_key  = get_option( 'ontario_obituaries_groq_api_key', '' );
+    $raw_settings         = get_option( 'ontario_obituaries_settings', false );
+    // If settings were never saved (false = option doesn't exist), AND a key
+    // is present, assume the user wants rewrites on. This covers the
+    // delete-upgrade path where uninstall.php wiped settings but the key was
+    // restored before activation.
+    $ai_enabled = ( false === $raw_settings && ! empty( $activation_groq_key ) )
+        ? true
+        : ! empty( $activation_settings['ai_rewrite_enabled'] );
+    if ( $ai_enabled && ! empty( $activation_groq_key ) ) {
         wp_schedule_event( time() + 120, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
+        ontario_obituaries_log( 'v5.1.5: Repeating AI rewrite batch registered on activation (5-min).', 'info' );
     }
 
     // v3.0.0: Auto-create the Obituaries page with shortcode if it doesn't exist.
@@ -1571,12 +1585,12 @@ function ontario_obituaries_ai_rewrite_batch() {
         'info'
     );
 
-    // v5.1.4: Repeating schedule — no self-reschedule needed.
+    // v5.1.5: Repeating schedule — no self-reschedule needed.
     // Safety net: if the repeating event was somehow lost (DB corruption,
     // manual wp_clear_scheduled_hook, etc.), re-register it once.
-    // Respects the ai_rewrite_enabled setting.
-    $settings_for_reschedule = ontario_obituaries_get_settings();
-    if ( ! empty( $settings_for_reschedule['ai_rewrite_enabled'] ) && ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+    // If we're inside this function, the batch IS running — so the schedule
+    // should exist. Re-register unconditionally if missing.
+    if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
         wp_schedule_event( time() + 300, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
         ontario_obituaries_log( 'AI Rewriter: Repeating schedule was missing — re-registered.', 'warning' );
     }
