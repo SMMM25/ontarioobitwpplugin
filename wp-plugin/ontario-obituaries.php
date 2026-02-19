@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.1.5
+ * Version: 5.2.0
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,10 +17,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.1.5' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.2.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
+
+// v5.2.0: Request start time — used by Image Localizer to avoid exceeding
+// LiteSpeed's 120s timeout during long-running scrape requests.
+if ( ! defined( 'ONTARIO_OBITUARIES_REQUEST_START' ) ) {
+    define( 'ONTARIO_OBITUARIES_REQUEST_START', time() );
+}
 
 /**
  * Status whitelist — single source of truth.
@@ -264,6 +270,9 @@ function ontario_obituaries_includes() {
 
     // v4.5.0: AI Chatbot — Groq-powered customer service assistant
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-chatbot.php';
+
+    // v5.2.0: Image Localizer — downloads external images to local server
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-image-localizer.php';
 
     // SEO — needed on frontend for rewrite rules
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
@@ -591,6 +600,12 @@ function ontario_obituaries_activate() {
     if ( $ai_enabled && ! empty( $activation_groq_key ) ) {
         wp_schedule_event( time() + 120, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
         ontario_obituaries_log( 'v5.1.5: Repeating AI rewrite batch registered on activation (5-min).', 'info' );
+    }
+
+    // v5.2.0: Schedule image localization migration if external images exist.
+    // Runs every 5 min, processes 20 images/batch, self-removes when done.
+    if ( class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
+        Ontario_Obituaries_Image_Localizer::maybe_schedule_migration();
     }
 
     // v3.0.0: Auto-create the Obituaries page with shortcode if it doesn't exist.
@@ -1329,6 +1344,11 @@ function ontario_obituaries_deactivate() {
     // Without this, the cron keeps firing after plugin deactivation.
     wp_clear_scheduled_hook( 'ontario_obituaries_ai_rewrite_batch' );
 
+    // v5.2.0: Clear image localizer cron and lock.
+    if ( class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
+        Ontario_Obituaries_Image_Localizer::deactivate();
+    }
+
     // BUG-C4 FIX (v5.0.4): Clear both dedup cron hooks and the lock.
     wp_clear_scheduled_hook( 'ontario_obituaries_dedup_daily' );
     wp_clear_scheduled_hook( 'ontario_obituaries_dedup_once' );
@@ -1619,6 +1639,32 @@ function ontario_obituaries_ai_rewrite_batch() {
     }
 }
 add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrite_batch' );
+
+/**
+ * v5.2.0: Image Localizer migration cron handler.
+ *
+ * Processes a batch of external images, downloading them to the local server.
+ * Self-removes the cron hook when all images have been localized.
+ * Runs every 5 minutes via the 'ontario_five_minutes' schedule.
+ */
+function ontario_obituaries_image_migration_handler() {
+    if ( ! class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-image-localizer.php';
+    }
+    // GAP-FIX #6: Wrap in try/catch so an uncaught exception in the batch
+    // doesn't silently kill the cron handler. The recurring schedule stays
+    // intact and the next tick retries. Without this, WP logs a cron error
+    // but gives no actionable detail.
+    try {
+        Ontario_Obituaries_Image_Localizer::handle_migration_cron();
+    } catch ( \Throwable $e ) {
+        ontario_obituaries_log(
+            sprintf( 'Image migration cron error: %s in %s:%d', $e->getMessage(), $e->getFile(), $e->getLine() ),
+            'error'
+        );
+    }
+}
+add_action( 'ontario_obituaries_image_migration', 'ontario_obituaries_image_migration_handler' );
 
 /**
  * v4.6.3: Piggyback AI rewriter on admin page loads using 'shutdown' hook.
@@ -2406,6 +2452,12 @@ function ontario_obituaries_on_plugin_update() {
         if ( function_exists( 'ontario_obituaries_log' ) ) {
             ontario_obituaries_log( 'Recurring collection cron was missing — re-scheduled.', 'info' );
         }
+    }
+
+    // v5.2.0: Ensure image localizer migration is scheduled on version update.
+    // Covers WP Pusher deploys where activation hook doesn't fire.
+    if ( class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
+        Ontario_Obituaries_Image_Localizer::maybe_schedule_migration();
     }
 
     // ── Future migrations go here ────────────────────────────────────

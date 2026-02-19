@@ -138,6 +138,9 @@ function ontario_obituaries_uninstall_site() {
         // ── Rate limiter (v5.0.10) ────────────────────────────────────
         'ontario_obituaries_groq_rate_window',      // v5.0.7+: Atomic CAS rate-limit window
         'ontario_obituaries_groq_tpm_budget',       // v5.0.7+: Admin-configurable TPM budget
+
+        // ── Image Localizer (v5.2.0) ─────────────────────────────────
+        'ontario_obituaries_image_migration_progress', // Migration batch progress tracker
     );
 
     foreach ( $option_keys as $key ) {
@@ -171,6 +174,9 @@ function ontario_obituaries_uninstall_site() {
         'ontario_obituaries_cron_rest_limiter',    // QC-R5: REST /cron rate limiter
         'ontario_obituaries_groq_tpm_window',      // BUG-M1 FIX (v5.0.6): Legacy transient (pre-v5.0.7)
         'ontario_obituaries_collection_cooldown',  // QC-R9 (v5.0.9): Collection burst guard
+
+        // ── Image Localizer (v5.2.0) ─────────────────────────────────
+        'ontario_obituaries_image_localizer_lock', // Image download batch lock
     );
 
     foreach ( $transient_keys as $key ) {
@@ -203,6 +209,9 @@ function ontario_obituaries_uninstall_site() {
         // BUG-H7 FIX (v5.0.5): was missing
         'ontario_obituaries_dedup_daily',          // Daily recurring dedup
         'ontario_obituaries_dedup_once',           // One-shot post-scrape dedup
+
+        // ── Image Localizer (v5.2.0) ─────────────────────────────────
+        'ontario_obituaries_image_migration',      // Image localization batch cron
     );
 
     foreach ( $cron_hooks as $hook ) {
