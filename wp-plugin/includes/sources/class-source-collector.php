@@ -527,7 +527,30 @@ class Ontario_Obituaries_Source_Collector {
 
         $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
 
-        return $wpdb->rows_affected > 0;
+        $was_inserted = $wpdb->rows_affected > 0;
+
+        // v5.2.0: Localize the image immediately for new inserts.
+        // This runs synchronously (~1-2s) but only for genuinely new records.
+        // Existing records (INSERT IGNORE no-ops) are skipped.
+        // GAP-FIX #5: Wrapped in try/catch(\Throwable) so an image download
+        // failure (TypeError, OOM, network fatal) never breaks the scrape loop.
+        // The migration cron will pick up any missed images within 5 minutes.
+        if ( $was_inserted && ! empty( $record['image_url'] ) && class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
+            $new_id = $wpdb->insert_id;
+            if ( $new_id > 0 ) {
+                try {
+                    Ontario_Obituaries_Image_Localizer::localize_on_insert( $new_id, $record['image_url'] );
+                } catch ( \Throwable $e ) {
+                    // Image localization is non-critical — log and continue.
+                    ontario_obituaries_log(
+                        sprintf( 'Image localize_on_insert failed for #%d: %s', $new_id, $e->getMessage() ),
+                        'warning'
+                    );
+                }
+            }
+        }
+
+        return $was_inserted;
     }
 
     /**
