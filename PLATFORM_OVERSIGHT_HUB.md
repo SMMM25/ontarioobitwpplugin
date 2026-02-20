@@ -105,7 +105,7 @@ to prevent further breakage.
 | Error handling Phase 2b (HTTP Wrappers) | v5.3.2 | ✅ DEPLOYED — All 15 `wp_remote_*` → `oo_safe_http_*`, SSRF, URL sanitization, QC-approved |
 | Error handling Phase 2c (DB Hotspots) | v5.3.3 | ✅ DEPLOYED — 35 `oo_db_check()` calls, strict false checks, NULL token fix |
 | Error handling Phase 2d (AJAX + Remaining DB) | v5.3.4 | ✅ DEPLOYED — AJAX audit logging, rate limiter guard, display read logging |
-| Error handling Phase 3 (Health Dashboard) | v5.3.5 | ✅ DEPLOYED — Admin Health page, admin-bar badge, REST endpoint |
+| Error handling Phase 3 (Health Dashboard) | v5.3.5 | ✅ DEPLOYED — Admin Health page, admin-bar badge, REST endpoint. QC-R1: frontend guard, QC-R2: table-name regex. Merge commit `f36e7f4` |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -232,7 +232,7 @@ to prevent further breakage.
 | #103 | Merged | v5.3.3 | Version bump to v5.3.3 |
 | #104 | Merged | v5.3.4 | Phase 2d — remaining DB checks + AJAX audit logging (4 files, QC fixes) |
 | #105 | Merged | v5.3.4 | Version bump to v5.3.4 |
-| #106 | Merged | v5.3.5 | Phase 3 — Health Dashboard + admin-bar badge + REST endpoint + docs |
+| #106 | Merged | v5.3.5 | Phase 3 — Health Dashboard + admin-bar badge + REST endpoint + QC fixes (R1 frontend guard, R2 table regex). Merge `f36e7f4` |
 
 ### Remaining Work (priority order — updated 2026-02-18)
 

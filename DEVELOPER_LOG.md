@@ -426,8 +426,8 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - 4 files changed, +49/−8 lines
 - All 21 AJAX handlers audited — every one has nonce + capability checks
 
-**Phase 3 — Health Dashboard (PR #106, v5.3.5)**:
-- New `includes/class-health-monitor.php` (~350 lines)
+**Phase 3 — Health Dashboard (PR #106, v5.3.5)** — merged `f36e7f4` 2026-02-20:
+- New `includes/class-health-monitor.php` (~480 lines)
   - Admin submenu page: Ontario Obituaries → System Health
   - Pipeline summary banner (healthy/needs attention)
   - Cron job status table (scheduled/overdue/missing + last success)
@@ -438,6 +438,10 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - REST endpoint: `GET /wp-json/ontario-obituaries/v1/health` (admin-only)
 - No new DB table — reads from existing wp_options and transients
 - Registered via `Ontario_Obituaries::register_admin_menu()` + `Ontario_Obituaries_Health_Monitor::init()`
+- QC fixes applied (conditional approve → approved):
+  - QC-R1: `require_once` + `init()` guarded with `is_admin() || REST_REQUEST` — zero frontend overhead
+  - QC-R2: Table name validated against `/^[A-Za-z0-9_]+$/` regex before raw SQL count query
+  - Non-blocking: REST fallback changed 500 → 503 (feature unavailable, not server error)
 
 ### Previous State (as of 2026-02-18)
 
