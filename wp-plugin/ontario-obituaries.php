@@ -1037,6 +1037,13 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
         // Mark completion — starts the cooldown window.
         update_option( $lock_key, wp_json_encode( array( 'ts' => time(), 'state' => 'done' ) ), false );
         ontario_obituaries_log( 'Dedup completed successfully.', 'debug' );
+        // v5.3.0 Phase 2a: Record "ran" + "progress" on successful dedup.
+        if ( function_exists( 'oo_health_record_ran' ) ) {
+            oo_health_record_ran( 'DEDUP' );
+        }
+        if ( function_exists( 'oo_health_record_success' ) ) {
+            oo_health_record_success( 'DEDUP' );
+        }
     } catch ( \Throwable $e ) {
         // QC-R5 FIX: catch \Throwable (not just \Exception) for PHP 7+ coverage.
         // \TypeError, OOM-triggered \Error, etc. bypass \Exception catch blocks.
@@ -1044,7 +1051,15 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
         // freeze.  Only truly unrecoverable fatals (segfault, OOM kill by OS)
         // leave the lock in "running" state for stale_ttl to clear.
         delete_option( $lock_key );
-        ontario_obituaries_log( 'Dedup failed: ' . $e->getMessage(), 'error' );
+        // v5.3.0 Phase 2a: Structured error logging replaces plain string.
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'error', 'DEDUP', 'CRON_DEDUP_CRASH', $e->getMessage(), array(
+                'exception' => $e,
+                'hook'      => 'ontario_obituaries_dedup',
+            ) );
+        } else {
+            ontario_obituaries_log( 'Dedup failed: ' . $e->getMessage(), 'error' );
+        }
     }
     // On process-kill fatal (not caught by \Throwable): lock stays as "running";
     // stale_ttl (1 hour) clears it on next attempt.
@@ -1444,6 +1459,10 @@ function ontario_obituaries_scheduled_collection() {
     ) );
 
     // v6.0.0: Record successful collection for health monitoring (QC Tweak 5).
+    // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally, "progress" on success.
+    if ( function_exists( 'oo_health_record_ran' ) ) {
+        oo_health_record_ran( 'SCRAPE' );
+    }
     if ( function_exists( 'oo_health_record_success' ) ) {
         oo_health_record_success( 'SCRAPE' );
     }
@@ -1523,26 +1542,63 @@ add_action( 'ontario_obituaries_collection_event', 'ontario_obituaries_scheduled
 function ontario_obituaries_ai_rewrite_batch() {
     @set_time_limit( 300 ); // Allow up to 5 minutes.
 
+    // ── Required fix #2: Settings gate ──────────────────────────────────
+    // If the UI checkbox exists, it must gate execution. Having a configured
+    // key alone is not enough — the admin may have deliberately disabled rewrites.
+    $settings = function_exists( 'ontario_obituaries_get_settings' )
+        ? ontario_obituaries_get_settings()
+        : get_option( 'ontario_obituaries_settings', array() );
+    if ( empty( $settings['ai_rewrite_enabled'] ) ) {
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'info', 'REWRITE', 'CRON_REWRITE_DISABLED', 'AI Rewriter: Skipping batch — disabled in settings.' );
+        } else {
+            ontario_obituaries_log( 'AI Rewriter: Skipping batch — disabled in settings.', 'info' );
+        }
+        return;
+    }
+
+    // ── Required fix #1: Bootstrap in try/catch ─────────────────────────
+    // require_once or constructor can throw (file missing, TypeError, etc.).
+    // Catch early so even bootstrap failures get structured logging.
+    try {
+        if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+            require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
+        }
+        $rewriter = new Ontario_Obituaries_AI_Rewriter( 1 );
+    } catch ( \Throwable $e ) {
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'error', 'REWRITE', 'CRON_REWRITE_BOOTSTRAP_CRASH', $e->getMessage(), array(
+                'exception' => $e,
+                'hook'      => 'ontario_obituaries_ai_rewrite_batch',
+            ) );
+        } else {
+            ontario_obituaries_log( 'AI Rewriter bootstrap crash: ' . $e->getMessage(), 'error' );
+        }
+        return;
+    }
+
+    if ( ! $rewriter->is_configured() ) {
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'info', 'REWRITE', 'CRON_REWRITE_NO_KEY', 'AI Rewriter: Skipping batch — Groq API key not configured.' );
+        } else {
+            ontario_obituaries_log( 'AI Rewriter: Skipping batch — Groq API key not configured.', 'info' );
+        }
+        return;
+    }
+
     // ── MUTUAL EXCLUSION: Prevent overlap with shutdown hook / AJAX ──
     if ( get_transient( 'ontario_obituaries_rewriter_running' ) ) {
-        ontario_obituaries_log( 'AI Rewriter WP-Cron: Another instance running (transient lock). Skipping.', 'info' );
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'info', 'REWRITE', 'CRON_REWRITE_LOCKED', 'AI Rewriter WP-Cron: Another instance running (transient lock). Skipping.' );
+        } else {
+            ontario_obituaries_log( 'AI Rewriter WP-Cron: Another instance running (transient lock). Skipping.', 'info' );
+        }
         return;
     }
     set_transient( 'ontario_obituaries_rewriter_running', 'wp-cron', 300 ); // 5-min TTL.
 
-    if ( ! class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
-        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-rewriter.php';
-    }
-
-    // Process 1 obituary at a time — simple, predictable, no rate-limit surprises.
-    $rewriter = new Ontario_Obituaries_AI_Rewriter( 1 );
-
-    if ( ! $rewriter->is_configured() ) {
-        ontario_obituaries_log( 'AI Rewriter: Skipping batch — Groq API key not configured.', 'info' );
-        delete_transient( 'ontario_obituaries_rewriter_running' );
-        return;
-    }
-
+    // v5.3.0 Phase 2a QC-Adj-1: Initialize ALL counters before try{} so
+    // post-processing code never references undefined variables on early crash.
     $start_time        = time();
     // QC-R10 FIX (v5.0.10): max_runtime=60s, reschedule every 150-210s (3 min ± 30s).
     //   Gap analysis: max_runtime (60s) + minimum reschedule interval (150s) = 210s.
@@ -1570,96 +1626,155 @@ function ontario_obituaries_ai_rewrite_batch() {
     // QC-R2: Full key set matching process_batch() return signature.
     $result            = array( 'processed' => 0, 'succeeded' => 0, 'failed' => 0, 'errors' => array() );
 
-    while ( ( time() - $start_time ) < $max_runtime ) {
+    // v5.3.0 Phase 2a QC-Adj-2: try/catch/finally guarantees lock release on crash.
+    // Once the transient is set (above), there are NO early returns — every exit
+    // path goes through finally{} which deletes the transient.
+    try {
 
-        $remaining = $rewriter->get_pending_count();
-        if ( $remaining < 1 ) {
-            ontario_obituaries_log( 'AI Rewriter WP-Cron: All obituaries processed!', 'info' );
-            break;
+        while ( ( time() - $start_time ) < $max_runtime ) {
+
+            $remaining = $rewriter->get_pending_count();
+            if ( $remaining < 1 ) {
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'info', 'REWRITE', 'CRON_REWRITE_COMPLETE', 'AI Rewriter WP-Cron: All obituaries processed!' );
+                } else {
+                    ontario_obituaries_log( 'AI Rewriter WP-Cron: All obituaries processed!', 'info' );
+                }
+                break;
+            }
+
+            // Time guard: need at least 15s for one API call.
+            if ( ( $max_runtime - ( time() - $start_time ) ) < 15 ) {
+                break;
+            }
+
+            $iteration++;
+            $result = $rewriter->process_batch(); // Processes 1 obituary.
+            $total_ok   += $result['succeeded'];
+            $total_fail += $result['failed'];
+
+            // Recommended fix #1: Use actual remaining count after processing.
+            $remaining_after = $rewriter->get_pending_count();
+
+            ontario_obituaries_log(
+                sprintf(
+                    'AI Rewriter WP-Cron #%d: %s (total: %d ok, %d fail, %d remaining) [%ds]',
+                    $iteration,
+                    $result['succeeded'] > 0 ? 'PUBLISHED' : 'FAILED',
+                    $total_ok, $total_fail, $remaining_after,
+                    time() - $start_time
+                ),
+                'info'
+            );
+
+            // Auth error — stop immediately.
+            if ( ! empty( $result['auth_error'] ) ) {
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'error', 'REWRITE', 'CRON_REWRITE_AUTH_ERROR', 'AI Rewriter WP-Cron: Auth error, stopping.' );
+                } else {
+                    ontario_obituaries_log( 'AI Rewriter WP-Cron: Auth error, stopping.', 'error' );
+                }
+                break;
+            }
+
+            // Track consecutive failures.
+            if ( $result['succeeded'] === 0 ) {
+                $consecutive_fails++;
+                if ( $consecutive_fails >= 3 ) {
+                    if ( function_exists( 'oo_log' ) ) {
+                        oo_log( 'warning', 'REWRITE', 'CRON_REWRITE_CONSECUTIVE_FAIL', 'AI Rewriter WP-Cron: 3 consecutive failures, stopping.', array(
+                            'total_ok'  => $total_ok,
+                            'total_fail' => $total_fail,
+                        ) );
+                    } else {
+                        ontario_obituaries_log( 'AI Rewriter WP-Cron: 3 consecutive failures, stopping.', 'warning' );
+                    }
+                    break;
+                }
+                sleep( 10 ); // Brief backoff after failure.
+            } else {
+                $consecutive_fails = 0;
+                sleep( 12 ); // 12s pause before next — ~5 req/min, within 6,000 TPM.
+            }
         }
 
-        // Time guard: need at least 15s for one API call.
-        if ( ( $max_runtime - ( time() - $start_time ) ) < 15 ) {
-            break;
-        }
-
-        $iteration++;
-        $result = $rewriter->process_batch(); // Processes 1 obituary.
-        $total_ok   += $result['succeeded'];
-        $total_fail += $result['failed'];
+        // ── Post-loop logging and post-processing (inside try) ────────
 
         ontario_obituaries_log(
             sprintf(
-                'AI Rewriter WP-Cron #%d: %s (total: %d ok, %d fail, %d remaining) [%ds]',
-                $iteration,
-                $result['succeeded'] > 0 ? 'PUBLISHED' : 'FAILED',
-                $total_ok, $total_fail, $remaining - 1,
-                time() - $start_time
+                'AI Rewriter WP-Cron: FINISHED — %d published, %d failed in %ds (%d iterations). %d remaining.',
+                $total_ok, $total_fail, time() - $start_time, $iteration, $rewriter->get_pending_count()
             ),
             'info'
         );
 
-        // Auth error — stop immediately.
-        if ( ! empty( $result['auth_error'] ) ) {
-            ontario_obituaries_log( 'AI Rewriter WP-Cron: Auth error, stopping.', 'error' );
-            break;
-        }
-
-        // Track consecutive failures.
-        if ( $result['succeeded'] === 0 ) {
-            $consecutive_fails++;
-            if ( $consecutive_fails >= 3 ) {
-                ontario_obituaries_log( 'AI Rewriter WP-Cron: 3 consecutive failures, stopping.', 'warning' );
-                break;
+        // v5.1.5: Repeating schedule — no self-reschedule needed.
+        // Safety net: if the repeating event was somehow lost (DB corruption,
+        // manual wp_clear_scheduled_hook, etc.), re-register it once.
+        // Required fix #3: Check wp_schedule_event() return and log failure.
+        if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
+            $scheduled = wp_schedule_event( time() + 300, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
+            if ( false === $scheduled ) {
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'warning', 'REWRITE', 'CRON_REWRITE_RESCHEDULE_FAIL', 'Failed to schedule repeating rewrite cron.', array(
+                        'hook'       => 'ontario_obituaries_ai_rewrite_batch',
+                        'recurrence' => 'ontario_five_minutes',
+                    ) );
+                } else {
+                    ontario_obituaries_log( 'AI Rewriter: Failed to re-register repeating schedule.', 'warning' );
+                }
+            } else {
+                ontario_obituaries_log( 'AI Rewriter: Repeating schedule was missing — re-registered.', 'warning' );
             }
-            sleep( 10 ); // Brief backoff after failure.
-        } else {
-            $consecutive_fails = 0;
-            sleep( 12 ); // 12s pause before next — ~5 req/min, within 6,000 TPM.
         }
-    }
 
-    delete_transient( 'ontario_obituaries_rewriter_running' );
+        // Purge cache and submit newly published records to IndexNow.
+        // BUG-H4 FIX (v5.0.5): Use $total_ok (accumulator) instead of $result['succeeded']
+        // (last iteration only). Also avoids undefined $result if loop never ran.
+        if ( $total_ok > 0 ) {
+            ontario_obituaries_purge_litespeed( 'ontario_obits' );
 
-    ontario_obituaries_log(
-        sprintf(
-            'AI Rewriter WP-Cron: FINISHED — %d published, %d failed in %ds (%d iterations). %d remaining.',
-            $total_ok, $total_fail, time() - $start_time, $iteration, $rewriter->get_pending_count()
-        ),
-        'info'
-    );
+            // v4.6.0: Submit newly published obituaries to IndexNow.
+            if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
+                global $wpdb;
+                $table = $wpdb->prefix . 'ontario_obituaries';
+                // Get IDs of obituaries published in the last 10 minutes (this batch).
+                $recent_ids = $wpdb->get_col( $wpdb->prepare(
+                    "SELECT id FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND ai_description != '' AND created_at >= %s AND suppressed_at IS NULL ORDER BY id DESC LIMIT 100",
+                    gmdate( 'Y-m-d H:i:s', strtotime( '-10 minutes' ) )
+                ) );
+                if ( ! empty( $recent_ids ) ) {
+                    $indexnow = new Ontario_Obituaries_IndexNow();
+                    $indexnow->submit_urls( $recent_ids );
+                    ontario_obituaries_log( sprintf( 'v4.6.0: Submitted %d newly published obituaries to IndexNow.', count( $recent_ids ) ), 'info' );
+                }
+            }
+        }
 
-    // v5.1.5: Repeating schedule — no self-reschedule needed.
-    // Safety net: if the repeating event was somehow lost (DB corruption,
-    // manual wp_clear_scheduled_hook, etc.), re-register it once.
-    // If we're inside this function, the batch IS running — so the schedule
-    // should exist. Re-register unconditionally if missing.
-    if ( ! wp_next_scheduled( 'ontario_obituaries_ai_rewrite_batch' ) ) {
-        wp_schedule_event( time() + 300, 'ontario_five_minutes', 'ontario_obituaries_ai_rewrite_batch' );
-        ontario_obituaries_log( 'AI Rewriter: Repeating schedule was missing — re-registered.', 'warning' );
-    }
+        // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally (clean completion).
+        // Record "progress" only when actual work was done.
+        if ( function_exists( 'oo_health_record_ran' ) ) {
+            oo_health_record_ran( 'REWRITE' );
+        }
+        if ( $total_ok > 0 && function_exists( 'oo_health_record_success' ) ) {
+            oo_health_record_success( 'REWRITE' );
+        }
 
-    // Purge cache and submit newly published records to IndexNow.
-    // BUG-H4 FIX (v5.0.5): Use $total_ok (accumulator) instead of $result['succeeded']
-    // (last iteration only). Also avoids undefined $result if loop never ran.
-    if ( $total_ok > 0 ) {
-        ontario_obituaries_purge_litespeed( 'ontario_obits' );
-
-        // v4.6.0: Submit newly published obituaries to IndexNow.
-        if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
-            global $wpdb;
-            $table = $wpdb->prefix . 'ontario_obituaries';
-            // Get IDs of obituaries published in the last 10 minutes (this batch).
-            $recent_ids = $wpdb->get_col( $wpdb->prepare(
-                "SELECT id FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND ai_description != '' AND created_at >= %s AND suppressed_at IS NULL ORDER BY id DESC LIMIT 100",
-                gmdate( 'Y-m-d H:i:s', strtotime( '-10 minutes' ) )
+    } catch ( \Throwable $e ) {
+        // v5.3.0 Phase 2a: Structured error logging for cron crash.
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'error', 'REWRITE', 'CRON_REWRITE_CRASH', $e->getMessage(), array(
+                'exception' => $e,
+                'hook'      => 'ontario_obituaries_ai_rewrite_batch',
+                'iteration' => $iteration,
+                'total_ok'  => $total_ok,
             ) );
-            if ( ! empty( $recent_ids ) ) {
-                $indexnow = new Ontario_Obituaries_IndexNow();
-                $indexnow->submit_urls( $recent_ids );
-                ontario_obituaries_log( sprintf( 'v4.6.0: Submitted %d newly published obituaries to IndexNow.', count( $recent_ids ) ), 'info' );
-            }
+        } else {
+            ontario_obituaries_log( 'AI Rewriter cron crash: ' . $e->getMessage(), 'error' );
         }
+    } finally {
+        // v5.3.0 Phase 2a QC-Adj-2: GUARANTEE lock release on every exit path.
+        delete_transient( 'ontario_obituaries_rewriter_running' );
     }
 }
 add_action( 'ontario_obituaries_ai_rewrite_batch', 'ontario_obituaries_ai_rewrite_batch' );
@@ -1826,8 +1941,13 @@ function ontario_obituaries_shutdown_rewriter() {
             set_transient( 'ontario_obituaries_rewriter_throttle', 1, 60 );
         }
     } catch ( \Throwable $e ) {
-        // Catch both \Exception and \Error (PHP 7+).
-        if ( function_exists( 'ontario_obituaries_log' ) ) {
+        // v5.3.0 Phase 2a: Structured error logging (minimal — shutdown context).
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'error', 'REWRITE', 'SHUTDOWN_REWRITER_CRASH', $e->getMessage(), array(
+                'exception' => $e,
+                'hook'      => 'shutdown_rewriter',
+            ) );
+        } elseif ( function_exists( 'ontario_obituaries_log' ) ) {
             ontario_obituaries_log( 'Shutdown rewriter fatal: ' . $e->getMessage(), 'error' );
         }
     } finally {
@@ -2060,7 +2180,19 @@ function ontario_obituaries_gofundme_batch() {
 
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-gofundme-linker.php';
     $linker = new Ontario_Obituaries_GoFundMe_Linker();
-    $result = $linker->process_batch();
+
+    // v5.3.0 Phase 2a: Wrap in oo_safe_call for crash protection.
+    // QC-Adj-4: null === crash; WP_Error preserved for existing is_wp_error() logic.
+    $result = function_exists( 'oo_safe_call' )
+        ? oo_safe_call( 'GOFUNDME', 'CRON_GOFUNDME_CRASH', function() use ( $linker ) {
+            return $linker->process_batch();
+        }, null, array( 'hook' => 'ontario_obituaries_gofundme_batch' ) )
+        : $linker->process_batch();
+
+    // oo_safe_call caught a Throwable → bail (already logged).
+    if ( null === $result ) {
+        return;
+    }
 
     ontario_obituaries_log(
         sprintf(
@@ -2069,6 +2201,14 @@ function ontario_obituaries_gofundme_batch() {
         ),
         'info'
     );
+
+    // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally, "progress" on match.
+    if ( function_exists( 'oo_health_record_ran' ) ) {
+        oo_health_record_ran( 'GOFUNDME' );
+    }
+    if ( $result['matched'] > 0 && function_exists( 'oo_health_record_success' ) ) {
+        oo_health_record_success( 'GOFUNDME' );
+    }
 
     // Schedule next batch if there are pending obituaries.
     // QC-R10 FIX (v5.0.10): Jitter with floor to prevent negative/zero intervals.
@@ -2105,7 +2245,18 @@ function ontario_obituaries_authenticity_audit() {
         return;
     }
 
-    $result = $checker->run_audit_batch();
+    // v5.3.0 Phase 2a: Wrap in oo_safe_call for crash protection.
+    // QC-Adj-4: null === crash; non-null result (including WP_Error) passed through.
+    $result = function_exists( 'oo_safe_call' )
+        ? oo_safe_call( 'AUDIT', 'CRON_AUTHENTICITY_CRASH', function() use ( $checker ) {
+            return $checker->run_audit_batch();
+        }, null, array( 'hook' => 'ontario_obituaries_authenticity_audit' ) )
+        : $checker->run_audit_batch();
+
+    // oo_safe_call caught a Throwable → bail (already logged).
+    if ( null === $result ) {
+        return;
+    }
 
     ontario_obituaries_log(
         sprintf(
@@ -2114,6 +2265,14 @@ function ontario_obituaries_authenticity_audit() {
         ),
         'info'
     );
+
+    // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally, "progress" on audit > 0.
+    if ( function_exists( 'oo_health_record_ran' ) ) {
+        oo_health_record_ran( 'AUDIT' );
+    }
+    if ( $result['audited'] > 0 && function_exists( 'oo_health_record_success' ) ) {
+        oo_health_record_success( 'AUDIT' );
+    }
 
     if ( $result['flagged'] > 0 ) {
         ontario_obituaries_purge_litespeed( 'ontario_obits' );
@@ -2159,13 +2318,35 @@ function ontario_obituaries_google_ads_daily_analysis() {
         return;
     }
 
-    $result = $optimizer->run_optimization_analysis();
+    // v5.3.0 Phase 2a: Wrap in oo_safe_call for crash protection.
+    // QC-Adj-4: null === crash; WP_Error preserved for existing is_wp_error() check below.
+    $result = function_exists( 'oo_safe_call' )
+        ? oo_safe_call( 'ADS', 'CRON_ADS_ANALYSIS_CRASH', function() use ( $optimizer ) {
+            return $optimizer->run_optimization_analysis();
+        }, null, array( 'hook' => 'ontario_obituaries_google_ads_analysis' ) )
+        : $optimizer->run_optimization_analysis();
 
+    // oo_safe_call caught a Throwable → bail (already logged).
+    if ( null === $result ) {
+        return;
+    }
+
+    // EXISTING is_wp_error() handling — UNCHANGED (QC-Adj-4).
     if ( is_wp_error( $result ) ) {
         ontario_obituaries_log( 'Google Ads Optimizer: Analysis failed — ' . $result->get_error_message(), 'error' );
     } else {
         $score = isset( $result['analysis']['overall_score'] ) ? $result['analysis']['overall_score'] : 'N/A';
         ontario_obituaries_log( sprintf( 'Google Ads Optimizer: Daily analysis complete. Score: %s.', $score ), 'info' );
+
+        // v5.3.0 Phase 2a QC-Adj-3: Record "progress" only on non-error completion.
+        if ( function_exists( 'oo_health_record_success' ) ) {
+            oo_health_record_success( 'ADS' );
+        }
+    }
+
+    // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally (handler completed).
+    if ( function_exists( 'oo_health_record_ran' ) ) {
+        oo_health_record_ran( 'ADS' );
     }
 }
 add_action( 'ontario_obituaries_google_ads_analysis', 'ontario_obituaries_google_ads_daily_analysis' );

@@ -145,6 +145,7 @@ function ontario_obituaries_uninstall_site() {
         // ── Error Handler (v6.0.0) ───────────────────────────────────
         'oo_last_critical',                            // Last critical error for dashboard
         'oo_last_success',                             // Last success timestamps per subsystem
+        'oo_last_ran',                                 // Last ran timestamps per subsystem (Phase 2a)
     );
 
     foreach ( $option_keys as $key ) {
