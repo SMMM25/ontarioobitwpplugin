@@ -1,12 +1,12 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-20 (v5.3.2 — Phase 2b HTTP Wrappers + QC fixes deployed live)
-> **Plugin version:** `5.3.2` (live + main + sandbox)
-> **Live site version:** `5.3.2` (monacomonuments.ca — deployed 2026-02-20 via SSH `git clone` + `rsync`)
+> **Last updated:** 2026-02-20 (v5.3.5 — Phase 3 Health Dashboard deployed live)
+> **Plugin version:** `5.3.5` (live + main + sandbox)
+> **Live site version:** `5.3.5` (monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload)
 > **Live plugin slug:** `ontario-obituaries` (folder: `~/public_html/wp-content/plugins/ontario-obituaries/`)
-> **Main branch HEAD:** PR #100 merged (v5.3.2 Phase 2b + QC fixes)
-> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **40% complete** (Phase 1 + 2a + 2b deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
-> **Next priority:** Phase 2c (DB hotspots).
+> **Main branch HEAD:** PR #106 merged (v5.3.5 Phase 3 Health Dashboard + docs)
+> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **65% complete** (Phase 1 + 2a + 2b + 2c + 2d + 3 deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
+> **Next priority:** Phase 4 (Advanced Logging — template try/catch, raw error_log replacement).
 
 ---
 
@@ -410,6 +410,34 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
   - `pipeline_healthy = 1`, `REWRITE` last_success updated
   - Site HTTP/2 200 confirmed
 - **Future deploys**: `git clone --depth 1 ... && rsync -av --delete ... ~/public_html/wp-content/plugins/ontario-obituaries/ && rm -rf ~/oo-deploy-tmp` then deactivate/activate
+
+**Phase 2c — DB Hotspots (PR #102, v5.3.3)**:
+- 35 new `oo_db_check()` calls across 8 files (all unchecked `$wpdb` writes wrapped)
+- Strict `false === $result` prevents treating return 0 as error
+- `verification_token` NULL fix: replaced `$wpdb->update()` with `$wpdb->query($wpdb->prepare(...))` for true SQL NULL
+- New error codes: `DB_SCHEMA_FAIL`, `DB_DELETE_FAIL`
+- 0 remaining unchecked DB writes
+
+**Phase 2d — AJAX + Remaining DB Checks (PR #104, v5.3.4)**:
+- AJAX delete: `oo_db_check()` on `$wpdb->delete()`; `OBIT_DELETED` audit only when `$result > 0`
+- Reset/rescan purge: `oo_db_check()` on batch DELETE with `session_id` context
+- Groq rate limiter: `oo_db_check()` on START TRANSACTION + COMMIT; legacy `log_message` guarded behind `!function_exists('oo_db_check')` to prevent duplicate logging
+- Display: `oo_log` warning on `get_obituary()` when `$wpdb->last_error` is non-empty
+- 4 files changed, +49/−8 lines
+- All 21 AJAX handlers audited — every one has nonce + capability checks
+
+**Phase 3 — Health Dashboard (PR #106, v5.3.5)**:
+- New `includes/class-health-monitor.php` (~350 lines)
+  - Admin submenu page: Ontario Obituaries → System Health
+  - Pipeline summary banner (healthy/needs attention)
+  - Cron job status table (scheduled/overdue/missing + last success)
+  - Subsystem checks (DB table, Groq key, uploads, WP-Cron, PHP memory, error handler)
+  - Error code breakdown table (24h, sorted by count)
+  - Last success/ran timestamps per subsystem
+- Admin bar badge: yellow (warnings) or red (errors/critical) dot with issue count
+- REST endpoint: `GET /wp-json/ontario-obituaries/v1/health` (admin-only)
+- No new DB table — reads from existing wp_options and transients
+- Registered via `Ontario_Obituaries::register_admin_menu()` + `Ontario_Obituaries_Health_Monitor::init()`
 
 ### Previous State (as of 2026-02-18)
 

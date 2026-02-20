@@ -927,21 +927,27 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 - **QC gates passed:** raw HTTP = 0, no dup logging, status preserved, no secrets, version = 5.3.2
 - **Allowed exceptions:** `wp_safe_remote_*` inside `class-error-handler.php` (wrapper internals) and `class-image-localizer.php` (stream-to-disk has its own handling)
 
-### Phase 2c — Top 10 DB Hotspots — ⬜ PENDING
-- [ ] Wrap highest-risk `$wpdb->insert/update/query` calls with `oo_db_check()`
-- [ ] Focus: source collector inserts, rewriter status updates, suppression manager, registry CRUD
+### Phase 2c — Top 10 DB Hotspots — ✅ COMPLETE (PR #102, v5.3.3)
+- [x] 35 `oo_db_check()` calls across 8 files (all unchecked `$wpdb` writes wrapped)
+- [x] Strict `false === $result` prevents treating return 0 as error
+- [x] `verification_token` NULL fix: raw query with `$wpdb->prepare()`
 - **Risk:** Low — additive only
 
-### Phase 2d — AJAX Nonce + Capability Enforcement — ⬜ PENDING
-- [ ] Wrap all 29 AJAX handlers with nonce + capability checks
-- [ ] Update admin JS to include nonces in AJAX requests
-- **Risk:** Medium — JS changes required; must update frontend to send nonces
+### Phase 2d — AJAX + Remaining DB Checks — ✅ COMPLETE (PR #104, v5.3.4)
+- [x] AJAX delete: `oo_db_check()` + audit log gated on `$result > 0`
+- [x] Reset/rescan purge: `oo_db_check()` on batch DELETE
+- [x] Groq rate limiter: `oo_db_check()` on START TRANSACTION + COMMIT; legacy log guarded
+- [x] Display: `oo_log` warning on `get_obituary()` when `$wpdb->last_error` set
+- [x] All 21 AJAX handlers audited — nonce + capability checks already present
+- **Risk:** Low — additive wrappers only, no JS changes needed
 
-### Phase 3 — Health Dashboard (v6.0.0) — ⬜ PENDING
-- [ ] Build `class-health-monitor.php`
-- [ ] Add Health tab to admin page
-- [ ] Add admin bar badge
-- [ ] Add REST endpoint for AJAX refresh
+### Phase 3 — Health Dashboard (v5.3.5) — ✅ COMPLETE (PR #106, v5.3.5)
+- [x] Built `class-health-monitor.php` (~350 lines)
+- [x] Admin submenu page: Ontario Obituaries → System Health
+- [x] Admin bar badge (yellow/red with issue count)
+- [x] REST endpoint: `GET /wp-json/ontario-obituaries/v1/health` (admin-only)
+- [x] Cron status table, subsystem checks, error code breakdown, last success timestamps
+- [x] No new DB table — reads from existing wp_options + transients
 - **Risk:** Low — UI only, no data path changes
 
 ### Phase 4 — Advanced (v6.0.0) — ⬜ PENDING
@@ -961,9 +967,9 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 2a — Cron Hardening | ✅ Merged + Deployed | #97, #98 | v5.3.1 | 2 (ontario-obituaries.php, class-error-handler.php) |
 | Phase 2a Hotfix | ✅ Merged + Deployed | #99 | v5.3.1 | 1 (class-ai-rewriter.php) |
 | Phase 2b — HTTP Wrappers | ✅ Merged + Deployed | #100 | v5.3.2 | 11 (error-handler + 9 app files + ontario-obituaries.php) |
-| Phase 2c — DB Hotspots | ⬜ Next | — | — | ~8 files |
-| Phase 2d — AJAX Nonces | ⬜ Pending | — | — | ~4 files + JS |
-| Phase 3 — Health Dashboard | ⬜ Pending | — | — | ~3 new files |
+| Phase 2c — DB Hotspots | ✅ Merged + Deployed | #102, #103 | v5.3.3 | 8 files (35 oo_db_check calls) |
+| Phase 2d — AJAX + Remaining DB | ✅ Merged + Deployed | #104, #105 | v5.3.4 | 4 files (+49/−8) |
+| Phase 3 — Health Dashboard | ✅ Merged + Deployed | #106 | v5.3.5 | 3 files (1 new + 2 modified) |
 | Phase 4 — Advanced | ⬜ Pending | — | — | ~20 files |
 | **Overall** | **40% complete** | | | |
 
@@ -989,9 +995,9 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 1 | 2 | ~800 new | 3 hours | ✅ Done |
 | Phase 2a | 2 | ~200 modified | 3 hours | ✅ Done |
 | Phase 2b | ~11 | ~580 modified | 4 hours | ✅ Done |
-| Phase 2c | ~8 | ~150 modified | 2-3 hours | ⬜ |
-| Phase 2d | ~4+JS | ~300 modified | 3-4 hours | ⬜ |
-| Phase 3 | 3 | ~300 new, ~30 modified | 3-4 hours | ⬜ |
+| Phase 2c | ~8 | ~173 modified | 2-3 hours | ✅ Done (PR #102) |
+| Phase 2d | ~4 | ~49 modified | 2-3 hours | ✅ Done (PR #104) |
+| Phase 3 | 3 | ~350 new, ~20 modified | 3-4 hours | ✅ Done (PR #106) |
 | Phase 4 | ~20 | ~500 modified + new | 5-6 hours | ⬜ |
 | **Total** | **~35** | **~2500** | **~22-27 hours** | **25% done** |
 
@@ -1055,4 +1061,4 @@ FROM wp_ontario_obituaries_errors;
 - [ ] Flag any concerns about performance (buffered writes)
 - [ ] Flag any concerns about table growth (5000 row cap + 30-day TTL)
 
-**Phase 1 + Phase 2a + Phase 2b approved/completed. Phase 2c (DB hotspots) is next.**
+**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 approved/completed. Phase 4 (advanced logging) is next.**

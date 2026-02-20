@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.3.4
+ * Version: 5.3.5
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.3.4' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.3.5' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -279,6 +279,12 @@ function ontario_obituaries_includes() {
     // v5.2.0: Image Localizer — downloads external images to local server
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-image-localizer.php';
 
+    // v5.3.5: Phase 3 — Health Monitor (admin dashboard, admin-bar badge, REST endpoint).
+    // QC-R1: Only load on admin pages and REST requests — no frontend overhead.
+    if ( is_admin() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+        require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-health-monitor.php';
+    }
+
     // SEO — needed on frontend for rewrite rules
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-seo.php';
 
@@ -316,6 +322,12 @@ function ontario_obituaries_includes() {
     // v4.5.0: AI Chatbot
     $chatbot = new Ontario_Obituaries_AI_Chatbot();
     $chatbot->init();
+
+    // v5.3.5: Phase 3 — Health Monitor hooks (admin bar badge + REST).
+    // QC-R1: Only init when class was loaded (admin/REST contexts).
+    if ( class_exists( 'Ontario_Obituaries_Health_Monitor' ) ) {
+        Ontario_Obituaries_Health_Monitor::init();
+    }
 }
 
 /**

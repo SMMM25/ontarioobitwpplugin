@@ -35,18 +35,19 @@ to prevent further breakage.
 ### Current Versions (as of 2026-02-20)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 5.3.2 | monacomonuments.ca — deployed 2026-02-20 via SSH `git clone` + `rsync` |
-| **Main branch** | 5.3.2 | PR #100 merged (Phase 2b HTTP wrappers + QC fixes) |
-| **Sandbox** | 5.3.2 | Matches live + main |
+| **Live site** | 5.3.5 | monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload |
+| **Main branch** | 5.3.5 | PR #106 merged (Phase 3 Health Dashboard + docs) |
+| **Sandbox** | 5.3.5 | Matches live + main |
 
-### PROJECT STATUS: ERROR HANDLING 40% COMPLETE — v5.3.2 LIVE (2026-02-20)
+### PROJECT STATUS: ERROR HANDLING 65% COMPLETE — v5.3.5 LIVE (2026-02-20)
 > **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
 > AI rewriter running autonomously. ~300+ published, ~296 pending.
-> Error handling project: **Phase 1 + 2a + 2b complete (40%)** — Foundation, cron hardening,
-> and HTTP wrapper conversion done. v5.3.2 routes ALL 15 HTTP call sites through `oo_safe_http_*`
-> wrappers (SSRF protection, URL sanitization, structured logging, body truncation, header allowlisting).
-> **QC-approved**: 3 required fixes applied (header normalization, redirection 0–5 clamp, malformed-URL guard)
-> plus 1 optional improvement (array header key normalization).
+> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 complete (65%)** — Foundation, cron hardening,
+> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, and Health Dashboard all done.
+> v5.3.5 adds admin-visible System Health page, admin-bar badge, and REST health endpoint.
+> **Phase 2c** (PR #102): 35 `oo_db_check()` calls across 8 files, strict false checks, NULL token fix.
+> **Phase 2d** (PR #104): AJAX delete audit gating, rate limiter duplicate-log guard, 4 files.
+> **Phase 3** (PR #106): `class-health-monitor.php`, submenu page, admin-bar badge, REST endpoint.
 >
 > **URGENT ISSUE**: All obituary images are **hotlinked** from `cdn-otf-cas.prfct.cc`.
 > See **Section 28** for details.
@@ -102,6 +103,9 @@ to prevent further breakage.
 | Error handling Phase 1 (Foundation) | v5.3.0 | ✅ DEPLOYED — `oo_log`, `oo_safe_call`, `oo_db_check`, health counters |
 | Error handling Phase 2a (Cron Hardening) | v5.3.1 | ✅ DEPLOYED — All 8 cron handlers wrapped, health monitoring |
 | Error handling Phase 2b (HTTP Wrappers) | v5.3.2 | ✅ DEPLOYED — All 15 `wp_remote_*` → `oo_safe_http_*`, SSRF, URL sanitization, QC-approved |
+| Error handling Phase 2c (DB Hotspots) | v5.3.3 | ✅ DEPLOYED — 35 `oo_db_check()` calls, strict false checks, NULL token fix |
+| Error handling Phase 2d (AJAX + Remaining DB) | v5.3.4 | ✅ DEPLOYED — AJAX audit logging, rate limiter guard, display read logging |
+| Error handling Phase 3 (Health Dashboard) | v5.3.5 | ✅ DEPLOYED — Admin Health page, admin-bar badge, REST endpoint |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -173,6 +177,7 @@ to prevent further breakage.
 | `includes/class-ai-authenticity-checker.php` | AI data quality auditor |
 | `includes/class-groq-rate-limiter.php` | Shared Groq TPM rate limiter (v5.0.6) |
 | `includes/class-error-handler.php` | Error handling: `oo_log`, `oo_safe_call`, `oo_safe_http_*`, `oo_db_check`, health (v5.3.0+) |
+| `includes/class-health-monitor.php` | Health Dashboard: admin page, admin-bar badge, REST `/health` endpoint (v5.3.5+) |
 | `includes/class-image-localizer.php` | Image download/localization pipeline (v5.2.0) |
 | `assets/css/ontario-chatbot.css` | Chatbot frontend styles |
 | `assets/js/ontario-chatbot.js` | Chatbot frontend JavaScript |
@@ -221,7 +226,13 @@ to prevent further breakage.
 | #97 | Merged | v5.3.1 | Phase 2a Cron Handler Hardening — all 8 cron handlers wrapped |
 | #98 | Merged | v5.3.1 | Version bump to v5.3.1 |
 | #99 | Merged | v5.3.1 | Name validation hotfix — strip nicknames, demote to warning |
-| #100 | Open | v5.3.2 | Phase 2b — route all HTTP through oo_safe_http wrappers (15 call sites) |
+| #100 | Merged | v5.3.2 | Phase 2b — route all HTTP through oo_safe_http wrappers (15 call sites) |
+| #101 | Merged | v5.3.2 | Docs: v5.3.2 deployed live — update versions, plugin slug, deployment method |
+| #102 | Merged | v5.3.3 | Phase 2c — wrap all DB write hotspots with oo_db_check() (35 calls, 8 files) |
+| #103 | Merged | v5.3.3 | Version bump to v5.3.3 |
+| #104 | Merged | v5.3.4 | Phase 2d — remaining DB checks + AJAX audit logging (4 files, QC fixes) |
+| #105 | Merged | v5.3.4 | Version bump to v5.3.4 |
+| #106 | Merged | v5.3.5 | Phase 3 — Health Dashboard + admin-bar badge + REST endpoint + docs |
 
 ### Remaining Work (priority order — updated 2026-02-18)
 
@@ -257,7 +268,7 @@ to prevent further breakage.
 #### PREVIOUSLY KNOWN (carried forward)
 18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done
 19. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ → **RESOLVED** — v5.1.5 runs autonomously with 5-min repeating schedule
-20. **Error handling project** — Phase 2c-4 remaining (DB hotspots, AJAX nonces, health dashboard). **Phase 2b COMPLETE** (v5.3.2, PR #100).
+20. **Error handling project** — Phase 4 remaining (advanced logging: template try/catch, raw error_log replacement). **Phase 3 COMPLETE** (v5.3.5, PR #106). Progress: **65%**.
 21. **Enable Google Ads Optimizer** when busy season starts (spring)
 22. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
 23. **Schema redesign**: Handle records without death date (future PR)
