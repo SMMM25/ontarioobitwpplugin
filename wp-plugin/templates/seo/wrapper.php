@@ -292,7 +292,20 @@ if ( ! $header_rendered ) {
 
 <?php
 // --- Content partial ---------------------------------------------------------
-if ( file_exists( $content_template ) ) {
+// v5.3.8: Phase 4.3 — Wrap content partial with oo_safe_render_template().
+// All variables needed by hub-city, hub-ontario, individual are already in scope
+// ($city_stats, $recent, $city_slug, $city_name, $obituaries, $total,
+// $total_pages, $page, $per_page, $obituary, $should_index, $seo_mode, $seo_data).
+if ( file_exists( $content_template ) && function_exists( 'oo_safe_render_template' ) ) {
+    echo oo_safe_render_template( $seo_mode, function () use (
+        $content_template, $seo_mode, $seo_data,
+        $city_stats, $recent, $city_slug, $city_name,
+        $obituaries, $total, $total_pages, $page, $per_page,
+        $obituary, $should_index
+    ) {
+        include $content_template;
+    } );
+} elseif ( file_exists( $content_template ) ) {
     include $content_template;
 } else {
     echo '<div style="max-width:1200px;margin:0 auto;padding:40px 20px;">';

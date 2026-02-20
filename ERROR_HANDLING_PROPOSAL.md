@@ -976,9 +976,14 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 - **Total oo_db_check calls (all phases):** ~52 (35 from Phase 2c + 2 from Phase 2d + 15 from Phase 4.2)
 - **Risk:** Low — additive wrappers, no behavior changes
 
-### Phase 4.3 — Template Fallback Wrappers (v5.3.8) — ⬜ PENDING
-- [ ] Wrap 6 templates with `oo_safe_render_template()` helper
-- [ ] Easy to revert if theme/plugin interactions appear
+### Phase 4.3 — Template Fallback Wrappers (v5.3.8) — ✅ COMPLETE (PR #110)
+- [x] Wrap `obituaries.php` shortcode render with `oo_safe_render_template()` (display class)
+- [x] Wrap `obituary-detail.php` AJAX render with `oo_safe_render_template()` (AJAX class)
+- [x] Wrap SEO content partials (`hub-city.php`, `hub-ontario.php`, `individual.php`) via `wrapper.php`
+- [x] All wrappers include fallback to legacy rendering when helper unavailable
+- [x] Catches `\Throwable` (not just `Exception`), properly cleans nested buffers
+- **Files changed:** 3 (class-ontario-obituaries-display.php, class-ontario-obituaries-ajax.php, templates/seo/wrapper.php) + version bump + docs
+- **Templates protected:** 6 (obituaries, obituary-detail, hub-city, hub-ontario, individual via wrapper)
 - **Risk:** Low — additive, no layout changes on success path
 
 ### Phase 4 Future — Advanced (v6.0.0) — ⬜ PENDING
@@ -1001,9 +1006,9 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 3 — Health Dashboard | ✅ Merged + Deployed | #106 | v5.3.5 | 3 files (1 new + 2 modified) + QC fixes (R1 frontend guard, R2 table regex) |
 | Phase 4.1 — Logger Bridge + Cron + Helper | ✅ Merged | #108 | v5.3.6 | 2 files (ontario-obituaries.php, class-error-handler.php) |
 | Phase 4.2 — DB Write Wrapping | ✅ Merged | #109 | v5.3.7 | 2 files (ontario-obituaries.php, class-groq-rate-limiter.php) — 15 new oo_db_check calls |
-| Phase 4.3 — Template Fallback | ⬜ Pending | — | v5.3.8 | ~6 files |
+| Phase 4.3 — Template Fallback | ✅ Merged | #110 | v5.3.8 | 3 files (display, AJAX, wrapper) + version bump — 6 templates protected |
 | Phase 4 Future — Advanced | ⬜ Pending | — | v6.0.0 | ~10 files |
-| **Overall** | **75% complete** | | | |
+| **Overall** | **80% complete** | | | |
 
 ### Key Findings from Phase 2b Deployment
 
@@ -1093,4 +1098,4 @@ FROM wp_ontario_obituaries_errors;
 - [ ] Flag any concerns about performance (buffered writes)
 - [ ] Flag any concerns about table growth (5000 row cap + 30-day TTL)
 
-**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 + Phase 4.2 approved/completed. Phase 4.3 (template wrappers) is next.**
+**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 + Phase 4.2 + Phase 4.3 approved/completed. Phase 4 Future (DB error table, email alerts) is next.**
