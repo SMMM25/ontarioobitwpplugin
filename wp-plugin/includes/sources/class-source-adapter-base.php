@@ -74,21 +74,20 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
         while ( $attempt < $this->max_retries ) {
             $attempt++;
 
-            $response = wp_remote_get( $url, array(
+            // Phase 2b: Route through oo_safe_http_get for SSRF protection,
+            // URL sanitization, consistent logging, and error classification.
+            $response = oo_safe_http_get( 'SCRAPE', $url, array(
                 'timeout'    => $this->timeout,
                 'headers'    => $headers,
                 'user-agent' => $this->user_agent,
-                'sslverify'  => true,
-            ) );
+            ), array( 'source' => get_class( $this ), 'attempt' => $attempt, 'max_retries' => $this->max_retries ) );
 
             if ( is_wp_error( $response ) ) {
+                // Wrapper already logged the HTTP failure — no duplicate logging.
                 $last_error  = $response;
-                $diag_status = 'error';
+                $http_status = oo_http_error_status( $response );
+                $diag_status = $http_status ? $http_status : 'error';
                 $diag_error  = $response->get_error_message();
-                ontario_obituaries_log(
-                    sprintf( 'HTTP GET failed (attempt %d/%d) %s: %s', $attempt, $this->max_retries, $url, $response->get_error_message() ),
-                    'warning'
-                );
                 if ( $attempt < $this->max_retries ) {
                     usleep( pow( 2, $attempt ) * 500000 ); // Exponential back-off
                 }
@@ -104,18 +103,7 @@ abstract class Ontario_Obituaries_Source_Adapter_Base implements Ontario_Obituar
                 $diag_url = $effective_url;
             }
 
-            if ( 200 !== $code ) {
-                $last_error  = new WP_Error( 'http_error', sprintf( 'HTTP %d for %s', $code, $url ) );
-                $diag_status = $code;
-                $diag_error  = sprintf( 'HTTP %d', $code );
-                ontario_obituaries_log( sprintf( 'HTTP %d (attempt %d/%d) %s', $code, $attempt, $this->max_retries, $url ), 'warning' );
-                if ( $attempt < $this->max_retries ) {
-                    usleep( pow( 2, $attempt ) * 500000 );
-                }
-                continue;
-            }
-
-            // Success
+            // Success (wrapper only returns response array for 2xx).
             $diag_status = $code;
             $diag_error  = '';
 

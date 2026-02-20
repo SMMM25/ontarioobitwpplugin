@@ -117,21 +117,23 @@ class Ontario_Obituaries_IndexNow {
             'urlList' => array_slice( $urls, 0, 10000 ), // API limit
         ) );
 
-        $response = wp_remote_post( $this->api_url, array(
+        $response = oo_safe_http_post( 'SEO', $this->api_url, array(
             'timeout' => 15,
             'headers' => array( 'Content-Type' => 'application/json; charset=utf-8' ),
             'body'    => $body,
-        ) );
+        ), array( 'source' => 'class-indexnow', 'url_count' => count( $urls ) ) );
 
-        $code = is_wp_error( $response ) ? 0 : wp_remote_retrieve_response_code( $response );
-
-        $status = 'error';
-        if ( 200 === $code || 202 === $code ) {
-            $status = 'accepted';
-        } elseif ( 429 === $code ) {
-            $status = 'rate_limited';
+        // Wrapper returns WP_Error for transport failures AND HTTP ≥ 400.
+        // IndexNow: 200/202 = accepted (pass through), 429 = rate limited, else error.
+        if ( is_wp_error( $response ) ) {
+            $code   = oo_http_error_status( $response );
+            $status = ( 429 === $code ) ? 'rate_limited' : 'error';
+        } else {
+            $code   = wp_remote_retrieve_response_code( $response );
+            $status = ( 200 === $code || 202 === $code ) ? 'accepted' : 'error';
         }
 
+        // Business-event log only (no HTTP failure details — wrapper handled that).
         ontario_obituaries_log(
             sprintf(
                 'IndexNow: Submitted %d URLs — HTTP %d (%s).',
@@ -139,7 +141,7 @@ class Ontario_Obituaries_IndexNow {
                 $code,
                 $status
             ),
-            $status === 'error' ? 'warning' : 'info'
+            $status === 'accepted' ? 'info' : 'warning'
         );
 
         return array(

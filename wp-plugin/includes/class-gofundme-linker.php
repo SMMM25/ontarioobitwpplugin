@@ -236,7 +236,7 @@ class Ontario_Obituaries_GoFundMe_Linker {
             $body['filters'] = 'country:' . $country;
         }
 
-        $response = wp_remote_post( $url, array(
+        $response = oo_safe_http_post( 'GOFUNDME', $url, array(
             'timeout' => $this->api_timeout,
             'headers' => array(
                 'X-Algolia-Application-Id' => $this->algolia_app_id,
@@ -244,15 +244,11 @@ class Ontario_Obituaries_GoFundMe_Linker {
                 'Content-Type'             => 'application/json',
             ),
             'body' => wp_json_encode( $body ),
-        ) );
+        ), array( 'source' => 'class-gofundme-linker' ) );
 
         if ( is_wp_error( $response ) ) {
+            // Wrapper already logged. Re-code to caller's expected error code.
             return new WP_Error( 'gfm_api_error', 'GoFundMe search failed: ' . $response->get_error_message() );
-        }
-
-        $code = wp_remote_retrieve_response_code( $response );
-        if ( $code < 200 || $code >= 300 ) {
-            return new WP_Error( 'gfm_api_error', sprintf( 'GoFundMe search returned HTTP %d.', $code ) );
         }
 
         $data = json_decode( wp_remote_retrieve_body( $response ), true );

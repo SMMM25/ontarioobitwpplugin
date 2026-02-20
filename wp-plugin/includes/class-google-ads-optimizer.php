@@ -113,7 +113,7 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
         }
 
         // Refresh the token.
-        $response = wp_remote_post( 'https://oauth2.googleapis.com/token', array(
+        $response = oo_safe_http_post( 'GOOGLE_ADS', 'https://oauth2.googleapis.com/token', array(
             'timeout' => 15,
             'body'    => array(
                 'client_id'     => $creds['client_id'],
@@ -121,10 +121,18 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
                 'refresh_token' => $creds['refresh_token'],
                 'grant_type'    => 'refresh_token',
             ),
-        ) );
+        ), array( 'source' => 'class-google-ads-optimizer', 'purpose' => 'oauth2_refresh' ) );
 
         if ( is_wp_error( $response ) ) {
-            $this->log( 'OAuth2 refresh failed: ' . $response->get_error_message(), 'error' );
+            // Wrapper already logged. Business-event only.
+            $this->log( 'OAuth2 refresh failed.', 'error' );
+            // For HTTP errors, try to decode the body for a better error message.
+            $resp_body = oo_http_error_body( $response );
+            if ( $resp_body ) {
+                $decoded   = json_decode( $resp_body, true );
+                $error_msg = isset( $decoded['error_description'] ) ? $decoded['error_description'] : $response->get_error_message();
+                return new WP_Error( 'oauth2_error', $error_msg );
+            }
             return $response;
         }
 
@@ -176,25 +184,26 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
             $headers['login-customer-id'] = preg_replace( '/[^0-9]/', '', $creds['manager_id'] );
         }
 
-        $response = wp_remote_post( $url, array(
+        $response = oo_safe_http_post( 'GOOGLE_ADS', $url, array(
             'timeout' => 30,
             'headers' => $headers,
             'body'    => wp_json_encode( array( 'query' => $query ) ),
-        ) );
+        ), array( 'source' => 'class-google-ads-optimizer', 'purpose' => 'gaql_query' ) );
 
         if ( is_wp_error( $response ) ) {
-            $this->log( 'GAQL query failed: ' . $response->get_error_message(), 'error' );
+            // Wrapper already logged HTTP failure. Try to extract API-specific error.
+            $resp_body = oo_http_error_body( $response );
+            if ( $resp_body ) {
+                $decoded   = json_decode( $resp_body, true );
+                $error_msg = isset( $decoded[0]['error']['message'] ) ? $decoded[0]['error']['message'] : $response->get_error_message();
+                $this->log( 'GAQL error: ' . $error_msg, 'error' );
+                return new WP_Error( 'gaql_error', $error_msg, array( 'status' => oo_http_error_status( $response ) ) );
+            }
+            $this->log( 'GAQL query failed.', 'error' );
             return $response;
         }
 
-        $code = wp_remote_retrieve_response_code( $response );
         $body = json_decode( wp_remote_retrieve_body( $response ), true );
-
-        if ( $code !== 200 ) {
-            $error_msg = isset( $body[0]['error']['message'] ) ? $body[0]['error']['message'] : 'HTTP ' . $code;
-            $this->log( 'GAQL error: ' . $error_msg, 'error' );
-            return new WP_Error( 'gaql_error', $error_msg, array( 'status' => $code ) );
-        }
 
         // Flatten the streaming response.
         $results = array();
@@ -241,16 +250,17 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
             $headers['login-customer-id'] = preg_replace( '/[^0-9]/', '', $creds['manager_id'] );
         }
 
-        $response = wp_remote_post( $url, array(
+        $response = oo_safe_http_post( 'GOOGLE_ADS', $url, array(
             'timeout' => 30,
             'headers' => $headers,
             'body'    => wp_json_encode( array(
                 'mutateOperations' => $operations,
                 'partialFailure'   => true,
             ) ),
-        ) );
+        ), array( 'source' => 'class-google-ads-optimizer', 'purpose' => 'gaql_mutate' ) );
 
         if ( is_wp_error( $response ) ) {
+            // Wrapper already logged.
             return $response;
         }
 
@@ -722,7 +732,7 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
      * @return array|WP_Error Parsed JSON response or error.
      */
     private function call_groq( $api_key, $prompt ) {
-        $response = wp_remote_post( 'https://api.groq.com/openai/v1/chat/completions', array(
+        $response = oo_safe_http_post( 'GOOGLE_ADS', 'https://api.groq.com/openai/v1/chat/completions', array(
             'timeout' => 60,
             'headers' => array(
                 'Authorization' => 'Bearer ' . $api_key,
@@ -737,10 +747,11 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
                 'temperature' => 0.3,
                 'max_tokens'  => 4000,
             ) ),
-        ) );
+        ), array( 'source' => 'class-google-ads-optimizer', 'purpose' => 'call_groq' ) );
 
         if ( is_wp_error( $response ) ) {
-            $this->log( 'Groq API call failed: ' . $response->get_error_message(), 'error' );
+            // Wrapper already logged. Business-event only.
+            $this->log( 'Groq API call failed.', 'error' );
             return $response;
         }
 
@@ -965,7 +976,7 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
         $creds        = $this->get_credentials();
         $redirect_uri = admin_url( 'admin.php?page=ontario-obituaries-settings' );
 
-        $response = wp_remote_post( 'https://oauth2.googleapis.com/token', array(
+        $response = oo_safe_http_post( 'GOOGLE_ADS', 'https://oauth2.googleapis.com/token', array(
             'timeout' => 15,
             'body'    => array(
                 'client_id'     => $creds['client_id'],
@@ -974,9 +985,16 @@ class Ontario_Obituaries_Google_Ads_Optimizer {
                 'grant_type'    => 'authorization_code',
                 'redirect_uri'  => $redirect_uri,
             ),
-        ) );
+        ), array( 'source' => 'class-google-ads-optimizer', 'purpose' => 'oauth2_exchange' ) );
 
         if ( is_wp_error( $response ) ) {
+            // Wrapper already logged. For HTTP errors, try to get error_description.
+            $resp_body = oo_http_error_body( $response );
+            if ( $resp_body ) {
+                $decoded = json_decode( $resp_body, true );
+                $error   = isset( $decoded['error_description'] ) ? $decoded['error_description'] : $response->get_error_message();
+                return new WP_Error( 'oauth2_exchange_error', $error );
+            }
             return $response;
         }
 

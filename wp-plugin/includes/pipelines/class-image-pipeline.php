@@ -107,12 +107,12 @@ class Ontario_Obituaries_Image_Pipeline {
         }
 
         // HEAD request to check content type and size
-        $head = wp_remote_head( $url, array(
-            'timeout'    => 10,
-            'user-agent' => 'Mozilla/5.0 (compatible; OntarioObituariesBot/3.0; +https://monacomonuments.ca)',
-        ) );
+        $head = oo_safe_http_head( 'IMAGE', $url, array(
+            'timeout' => 10,
+        ), array( 'source' => 'class-image-pipeline', 'purpose' => 'pre-download-check' ) );
 
         if ( is_wp_error( $head ) ) {
+            // Wrapper already logged the failure.
             return $head;
         }
 
