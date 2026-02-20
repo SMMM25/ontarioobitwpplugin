@@ -576,6 +576,10 @@ class Ontario_Obituaries_Reset_Rescan {
                     $ids
                 )
             );
+            // v5.3.4: Phase 2d — structured DB check for batch purge.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'RESET', $deleted_this_batch, 'DB_DELETE_FAIL', 'Reset purge batch DELETE failed', array( 'batch_size' => count( $ids ), 'user_id' => get_current_user_id() ) );
+            }
             if ( false === $deleted_this_batch ) {
                 $deleted_this_batch = 0;
             }
@@ -595,6 +599,11 @@ class Ontario_Obituaries_Reset_Rescan {
         if ( 0 === $remaining ) {
             delete_transient( 'ontario_obituaries_locations_cache' );
             delete_transient( 'ontario_obituaries_funeral_homes_cache' );
+
+            // v5.3.4: Phase 2d — audit log for completed purge.
+            if ( function_exists( 'oo_log' ) ) {
+                oo_log( 'info', 'RESET', 'PURGE_COMPLETE', 'Reset purge completed', array( 'total_deleted' => $progress['deleted_rows_count'], 'user_id' => get_current_user_id() ) );
+            }
         }
 
         wp_send_json_success( array(

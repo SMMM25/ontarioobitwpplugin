@@ -217,6 +217,11 @@ class Ontario_Obituaries_Display {
 
         $results = $wpdb->get_results( $query );
 
+        // v5.3.4: Phase 2d — log only on actual DB errors, NOT on empty results.
+        if ( false === $results && function_exists( 'oo_log' ) && ! empty( $wpdb->last_error ) ) {
+            oo_log( 'warning', 'DISPLAY', 'DB_QUERY_FAIL', 'Obituary listing query failed', array( 'wpdb_last_error' => $wpdb->last_error ) );
+        }
+
         // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix from display names.
         // Existing DB records may still carry the suffix until the dedup sweep
         // updates them, so we clean at display time as a safety net.
@@ -254,6 +259,11 @@ class Ontario_Obituaries_Display {
             "SELECT * FROM `{$this->table_name()}` WHERE id = %d AND suppressed_at IS NULL",
             $id
         ) );
+
+        // v5.3.4: Phase 2d — log only on actual DB errors, NOT on legitimate "not found".
+        if ( null === $row && function_exists( 'oo_log' ) && ! empty( $wpdb->last_error ) ) {
+            oo_log( 'warning', 'DISPLAY', 'DB_QUERY_FAIL', 'Single obituary query failed', array( 'obit_id' => $id, 'wpdb_last_error' => $wpdb->last_error ) );
+        }
 
         // v3.17.0: Strip trailing 'Obituary' / 'Obit' suffix at display time
         if ( $row ) {
