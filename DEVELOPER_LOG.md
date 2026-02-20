@@ -1,12 +1,12 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-20 (v5.3.7 — Phase 4.2 DB write wrappers for top 5 hotspot files)
-> **Plugin version:** `5.3.7` (sandbox — awaiting deploy)
-> **Live site version:** `5.3.6` (monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload)
+> **Last updated:** 2026-02-20 (v5.3.8 — Phase 4.3 template safety wrappers)
+> **Plugin version:** `5.3.8` (sandbox — awaiting deploy)
+> **Live site version:** `5.3.7` (monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload)
 > **Live plugin slug:** `ontario-obituaries` (folder: `~/public_html/wp-content/plugins/ontario-obituaries/`)
-> **Main branch HEAD:** PR #108 merged (v5.3.6 Phase 4.1)
-> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **75% complete** (Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 + 4.2 deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
-> **Next priority:** Phase 4.3 (wrap 6 templates with oo_safe_render_template).
+> **Main branch HEAD:** PR #109 merged (v5.3.7 Phase 4.2 DB write wrappers)
+> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **80% complete** (Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 + 4.2 + 4.3 deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
+> **Next priority:** Phase 4 Future (DB error table, email alerts).
 
 ---
 

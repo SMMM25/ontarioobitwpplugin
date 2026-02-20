@@ -107,9 +107,17 @@ class Ontario_Obituaries_Ajax {
             wp_send_json_error( array( 'message' => __( 'Obituary not found.', 'ontario-obituaries' ) ) );
         }
 
-        ob_start();
-        include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituary-detail.php';
-        $html = ob_get_clean();
+        // v5.3.8: Phase 4.3 — Wrap template with oo_safe_render_template().
+        if ( function_exists( 'oo_safe_render_template' ) ) {
+            $html = oo_safe_render_template( 'obituary-detail', function () use ( $obituary ) {
+                include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituary-detail.php';
+            } );
+        } else {
+            // Fallback: legacy buffering (pre-Phase 4.3 installs).
+            ob_start();
+            include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituary-detail.php';
+            $html = ob_get_clean();
+        }
 
         wp_send_json_success( array(
             'html'     => $html,

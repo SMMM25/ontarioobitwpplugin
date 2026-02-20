@@ -79,49 +79,56 @@ class Ontario_Obituaries_Display {
             'days'         => 0,
         ), $atts, 'ontario_obituaries' );
 
-        ob_start();
-
-        try {
-            if ( ! file_exists( ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php' ) ) {
-                echo '<p>' . esc_html__( 'Error: Obituary template not found.', 'ontario-obituaries' ) . '</p>';
-                return ob_get_clean();
-            }
-
-            // Gather request parameters
-            $search = isset( $_GET['ontario_obituaries_search'] )   ? sanitize_text_field( wp_unslash( $_GET['ontario_obituaries_search'] ) )   : '';
-            $location_filter = isset( $_GET['ontario_obituaries_location'] ) ? sanitize_text_field( wp_unslash( $_GET['ontario_obituaries_location'] ) ) : $atts['location'];
-            $page   = isset( $_GET['ontario_obituaries_page'] )    ? max( 1, intval( $_GET['ontario_obituaries_page'] ) ) : 1;
-            $limit  = max( 1, intval( $atts['limit'] ) );
-
-            $args = array(
-                'limit'        => $limit,
-                'offset'       => $limit * ( $page - 1 ),
-                'location'     => $location_filter,
-                'funeral_home' => $atts['funeral_home'],
-                'days'         => intval( $atts['days'] ),
-                'search'       => $search,
-            );
-
-            // Pre-fetch all data so the template doesn't duplicate queries
-            $obituaries    = $this->get_obituaries( $args );
-            $total         = $this->count_obituaries( array(
-                'location'     => $location_filter,
-                'funeral_home' => $atts['funeral_home'],
-                'days'         => intval( $atts['days'] ),
-                'search'       => $search,
-            ) );
-            $total_pages   = ceil( $total / $limit );
-            $locations     = $this->get_locations();
-            $funeral_homes = $this->get_funeral_homes();
-
-            // Make variables available to the template
-            $location = $location_filter; // alias used in template
-            include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php';
-
-        } catch ( Exception $e ) {
-            echo '<p>' . esc_html__( 'Error rendering obituaries:', 'ontario-obituaries' ) . ' ' . esc_html( $e->getMessage() ) . '</p>';
+        if ( ! file_exists( ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php' ) ) {
+            return '<p>' . esc_html__( 'Error: Obituary template not found.', 'ontario-obituaries' ) . '</p>';
         }
 
+        // Gather request parameters
+        $search = isset( $_GET['ontario_obituaries_search'] )   ? sanitize_text_field( wp_unslash( $_GET['ontario_obituaries_search'] ) )   : '';
+        $location_filter = isset( $_GET['ontario_obituaries_location'] ) ? sanitize_text_field( wp_unslash( $_GET['ontario_obituaries_location'] ) ) : $atts['location'];
+        $page   = isset( $_GET['ontario_obituaries_page'] )    ? max( 1, intval( $_GET['ontario_obituaries_page'] ) ) : 1;
+        $limit  = max( 1, intval( $atts['limit'] ) );
+
+        $args = array(
+            'limit'        => $limit,
+            'offset'       => $limit * ( $page - 1 ),
+            'location'     => $location_filter,
+            'funeral_home' => $atts['funeral_home'],
+            'days'         => intval( $atts['days'] ),
+            'search'       => $search,
+        );
+
+        // Pre-fetch all data so the template doesn't duplicate queries
+        $obituaries    = $this->get_obituaries( $args );
+        $total         = $this->count_obituaries( array(
+            'location'     => $location_filter,
+            'funeral_home' => $atts['funeral_home'],
+            'days'         => intval( $atts['days'] ),
+            'search'       => $search,
+        ) );
+        $total_pages   = ceil( $total / $limit );
+        $locations     = $this->get_locations();
+        $funeral_homes = $this->get_funeral_homes();
+        $location      = $location_filter; // alias used in template
+
+        // v5.3.8: Phase 4.3 — Wrap template with oo_safe_render_template() for
+        // Throwable-safe rendering with proper buffer cleanup on crash.
+        if ( function_exists( 'oo_safe_render_template' ) ) {
+            return oo_safe_render_template( 'obituaries', function () use (
+                $obituaries, $total, $total_pages, $locations, $funeral_homes,
+                $location, $search, $page, $limit, $atts
+            ) {
+                include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php';
+            } );
+        }
+
+        // Fallback: legacy try/catch (pre-Phase 4.3 installs).
+        ob_start();
+        try {
+            include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php';
+        } catch ( \Exception $e ) {
+            echo '<p>' . esc_html__( 'Error rendering obituaries:', 'ontario-obituaries' ) . ' ' . esc_html( $e->getMessage() ) . '</p>';
+        }
         return ob_get_clean();
     }
 
