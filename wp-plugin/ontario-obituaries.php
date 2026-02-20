@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.2.0
+ * Version: 5.3.0
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.2.0' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.3.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -231,6 +231,11 @@ function ontario_obituaries_ensure_collector_loaded() {
  * Include required files
  */
 function ontario_obituaries_includes() {
+    // v6.0.0: Error Handling Foundation — loaded first so all classes can use wrappers.
+    // Provides: oo_log(), oo_safe_call(), oo_safe_http_get/head/post(), oo_db_check(),
+    //           oo_run_id(), oo_health_get_summary(). No DB table — uses transients + wp_options.
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-error-handler.php';
+
     // Core classes (v2.x)
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries.php';
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ontario-obituaries-display.php';
@@ -1410,7 +1415,21 @@ function ontario_obituaries_scheduled_collection() {
     // NOTE: Cooldown is NOT set here. It is set AFTER collect() returns
     // successfully (below). If collect() throws an exception or fatal,
     // the cooldown transient is never written, allowing immediate retry.
-    $results = $collector->collect();
+    //
+    // v6.0.0: Wrapped in oo_safe_call() for structured error logging.
+    // On Throwable: logs subsystem=SCRAPE, code=CRON_COLLECTION_CRASH,
+    // returns null (so cooldown is NOT set, and next tick retries).
+    $results = function_exists( 'oo_safe_call' )
+        ? oo_safe_call( 'SCRAPE', 'CRON_COLLECTION_CRASH', function() use ( $collector ) {
+            return $collector->collect();
+        }, null, array( 'hook' => 'ontario_obituaries_collection_event' ) )
+        : $collector->collect();
+
+    // v6.0.0: If oo_safe_call caught a Throwable, $results is null.
+    // Bail out without setting cooldown — next tick retries immediately.
+    if ( null === $results ) {
+        return;
+    }
 
     // QC-R10 FIX (v5.0.10): Cooldown set ONLY after collect() completed.
     // If $collector->collect() threw an uncaught exception or triggered a
@@ -1423,6 +1442,11 @@ function ontario_obituaries_scheduled_collection() {
         'completed' => current_time( 'mysql' ),
         'results'   => $results,
     ) );
+
+    // v6.0.0: Record successful collection for health monitoring (QC Tweak 5).
+    if ( function_exists( 'oo_health_record_success' ) ) {
+        oo_health_record_success( 'SCRAPE' );
+    }
 
     delete_transient( 'ontario_obituaries_locations_cache' );
     delete_transient( 'ontario_obituaries_funeral_homes_cache' );
@@ -1651,17 +1675,22 @@ function ontario_obituaries_image_migration_handler() {
     if ( ! class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
         require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-image-localizer.php';
     }
-    // GAP-FIX #6: Wrap in try/catch so an uncaught exception in the batch
-    // doesn't silently kill the cron handler. The recurring schedule stays
-    // intact and the next tick retries. Without this, WP logs a cron error
-    // but gives no actionable detail.
-    try {
-        Ontario_Obituaries_Image_Localizer::handle_migration_cron();
-    } catch ( \Throwable $e ) {
-        ontario_obituaries_log(
-            sprintf( 'Image migration cron error: %s in %s:%d', $e->getMessage(), $e->getFile(), $e->getLine() ),
-            'error'
-        );
+    // v6.0.0: Replaced manual try/catch with oo_safe_call() for structured logging.
+    // On crash: logs subsystem=IMAGE, code=CRON_IMAGE_MIGRATION_CRASH, with run_id.
+    // The recurring schedule stays intact and the next tick retries.
+    if ( function_exists( 'oo_safe_call' ) ) {
+        oo_safe_call( 'IMAGE', 'CRON_IMAGE_MIGRATION_CRASH', function() {
+            Ontario_Obituaries_Image_Localizer::handle_migration_cron();
+        }, null, array( 'hook' => 'ontario_obituaries_image_migration' ) );
+    } else {
+        try {
+            Ontario_Obituaries_Image_Localizer::handle_migration_cron();
+        } catch ( \Throwable $e ) {
+            ontario_obituaries_log(
+                sprintf( 'Image migration cron error: %s in %s:%d', $e->getMessage(), $e->getFile(), $e->getLine() ),
+                'error'
+            );
+        }
     }
 }
 add_action( 'ontario_obituaries_image_migration', 'ontario_obituaries_image_migration_handler' );

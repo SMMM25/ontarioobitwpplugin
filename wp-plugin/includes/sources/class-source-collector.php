@@ -525,7 +525,17 @@ class Ontario_Obituaries_Source_Collector {
             isset( $record['provenance_hash'] ) ? $record['provenance_hash'] : ''
         );
 
-        $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+        $result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+
+        // v6.0.0: Structured DB error check via oo_db_check().
+        // INSERT IGNORE returns 0 rows for duplicates (not an error), so we only
+        // flag strict false (actual DB failure, e.g., table missing, connection lost).
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCRAPE', $result, 'DB_INSERT_FAIL', 'Failed to insert obituary record', array(
+                'name'   => isset( $record['name'] ) ? $record['name'] : '',
+                'source' => isset( $record['source_domain'] ) ? $record['source_domain'] : '',
+            ) );
+        }
 
         $was_inserted = $wpdb->rows_affected > 0;
 

@@ -141,6 +141,10 @@ function ontario_obituaries_uninstall_site() {
 
         // ── Image Localizer (v5.2.0) ─────────────────────────────────
         'ontario_obituaries_image_migration_progress', // Migration batch progress tracker
+
+        // ── Error Handler (v6.0.0) ───────────────────────────────────
+        'oo_last_critical',                            // Last critical error for dashboard
+        'oo_last_success',                             // Last success timestamps per subsystem
     );
 
     foreach ( $option_keys as $key ) {
@@ -177,6 +181,9 @@ function ontario_obituaries_uninstall_site() {
 
         // ── Image Localizer (v5.2.0) ─────────────────────────────────
         'ontario_obituaries_image_localizer_lock', // Image download batch lock
+
+        // ── Error Handler (v6.0.0) ───────────────────────────────────
+        'oo_error_counts_24h',                     // Rolling 24h error code counters
     );
 
     foreach ( $transient_keys as $key ) {
