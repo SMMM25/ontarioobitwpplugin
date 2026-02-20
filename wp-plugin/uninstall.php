@@ -77,6 +77,7 @@ function ontario_obituaries_uninstall_site() {
         // $wpdb->prefix . 'ontario_obituaries',  // PRESERVED — contains obituary data
         $wpdb->prefix . 'ontario_obituaries_sources',
         $wpdb->prefix . 'ontario_obituaries_suppressions',
+        $wpdb->prefix . 'ontario_obituaries_errors',  // v6.0.0 Phase 5: error log table
     );
 
     foreach ( $tables as $table ) {
@@ -185,6 +186,8 @@ function ontario_obituaries_uninstall_site() {
 
         // ── Error Handler (v6.0.0) ───────────────────────────────────
         'oo_error_counts_24h',                     // Rolling 24h error code counters
+        'oo_error_table_exists',                   // v6.0.0 Phase 5: error table existence cache
+        'oo_critical_alert_cooldown',              // v6.0.0 Phase 5: email alert rate limiter
     );
 
     foreach ( $transient_keys as $key ) {

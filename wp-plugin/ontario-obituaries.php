@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.3.9
+ * Version: 6.0.0
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.3.9' );
+define( 'ONTARIO_OBITUARIES_VERSION', '6.0.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -720,6 +720,11 @@ function ontario_obituaries_activate() {
     wp_clear_scheduled_hook( 'ontario_obituaries_health_cleanup_daily' );
     if ( function_exists( 'oo_health_cleanup' ) && ! wp_next_scheduled( 'ontario_obituaries_health_cleanup_daily' ) ) {
         wp_schedule_event( time() + 7200, 'daily', 'ontario_obituaries_health_cleanup_daily' );
+    }
+
+    // v6.0.0 Phase 5: Create the error log table on activation.
+    if ( function_exists( 'oo_error_log_ensure_table' ) ) {
+        oo_error_log_ensure_table();
     }
 
     // v3.0.0: Auto-create the Obituaries page with shortcode if it doesn't exist.
