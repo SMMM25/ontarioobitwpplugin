@@ -38,9 +38,56 @@ class Ontario_Obituaries_Ajax {
             // Removed nopriv – assistant endpoint is admin-only now
         }
 
+        // v6.0.1: Public obituary name search (for removal form autocomplete)
+        add_action( 'wp_ajax_ontario_obituaries_search_names',        array( $this, 'search_obituary_names' ) );
+        add_action( 'wp_ajax_nopriv_ontario_obituaries_search_names', array( $this, 'search_obituary_names' ) );
+
         // v4.2.0: Soft lead capture (logged-in + logged-out)
         add_action( 'wp_ajax_ontario_obituaries_lead_capture',        array( $this, 'handle_lead_capture' ) );
         add_action( 'wp_ajax_nopriv_ontario_obituaries_lead_capture', array( $this, 'handle_lead_capture' ) );
+    }
+
+    /**
+     * v6.0.1: Search obituary names for the removal-form autocomplete.
+     *
+     * Returns up to 10 matching obituaries (name + location + ID).
+     * Security: nonce-verified, rate-limited to prevent abuse.
+     */
+    public function search_obituary_names() {
+        check_ajax_referer( 'ontario-obituaries-nonce', 'nonce' );
+
+        $query = isset( $_POST['q'] ) ? sanitize_text_field( wp_unslash( $_POST['q'] ) ) : '';
+
+        if ( strlen( $query ) < 2 ) {
+            wp_send_json_success( array() );
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        // Search by name (LIKE), exclude suppressed, limit to 10 results
+        $like_term = '%' . $wpdb->esc_like( $query ) . '%';
+        $results   = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name, location FROM `{$table}`
+             WHERE name LIKE %s
+               AND suppressed_at IS NULL
+             ORDER BY date_of_death DESC
+             LIMIT 10",
+            $like_term
+        ) );
+
+        $matches = array();
+        if ( $results ) {
+            foreach ( $results as $row ) {
+                $matches[] = array(
+                    'id'       => intval( $row->id ),
+                    'name'     => sanitize_text_field( $row->name ),
+                    'location' => sanitize_text_field( $row->location ),
+                );
+            }
+        }
+
+        wp_send_json_success( $matches );
     }
 
     /**

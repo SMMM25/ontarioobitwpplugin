@@ -211,6 +211,7 @@ $site_url = get_site_url();
     <?php endif; ?>
 
     <!-- Removal Request Form (v3.0.0 — P0-SUP FIX: suppress-after-verify) -->
+    <!-- v6.0.1: Added obituary search field for general removal requests -->
     <div id="ontario-obituaries-removal-form" class="ontario-obituaries-removal-form" style="display:none;">
         <h3><?php esc_html_e( 'Request Obituary Removal', 'ontario-obituaries' ); ?></h3>
         <p><?php esc_html_e( 'If you are a family member or funeral home representative and wish to have a listing removed, please fill out the form below. A verification email will be sent to you; once confirmed, the listing will be removed from public view.', 'ontario-obituaries' ); ?></p>
@@ -220,6 +221,15 @@ $site_url = get_site_url();
             <div style="position:absolute;left:-9999px;" aria-hidden="true">
                 <label for="removal-website">Website</label>
                 <input type="text" id="removal-website" name="website" tabindex="-1" autocomplete="off" value="">
+            </div>
+            <?php // v6.0.1: Obituary search field — shown when no per-card link was used ?>
+            <div id="removal-obituary-search-wrap" style="display:none;">
+                <p>
+                    <label for="removal-obituary-search"><?php esc_html_e( 'Search for the Obituary', 'ontario-obituaries' ); ?> <span class="required">*</span></label>
+                    <input type="text" id="removal-obituary-search" placeholder="<?php esc_attr_e( 'Start typing a name...', 'ontario-obituaries' ); ?>" autocomplete="off">
+                    <ul id="removal-obituary-results" class="ontario-obituaries-search-results" style="display:none;"></ul>
+                    <span id="removal-obituary-selected" class="ontario-obituaries-selected-obituary" style="display:none;"></span>
+                </p>
             </div>
             <p>
                 <label for="removal-name"><?php esc_html_e( 'Your Name', 'ontario-obituaries' ); ?> <span class="required">*</span></label>

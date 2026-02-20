@@ -1388,10 +1388,14 @@ class Ontario_Obituaries {
         );
 
         wp_localize_script( 'ontario-obituaries-js', 'ontario_obituaries_ajax', array(
-            'ajax_url'        => admin_url( 'admin-ajax.php' ),
-            'nonce'           => wp_create_nonce( 'ontario-obituaries-nonce' ),
-            'i18n_submit'     => __( 'Submit Removal Request', 'ontario-obituaries' ),
-            'i18n_submitting' => __( 'Submitting...', 'ontario-obituaries' ),
+            'ajax_url'             => admin_url( 'admin-ajax.php' ),
+            'nonce'                => wp_create_nonce( 'ontario-obituaries-nonce' ),
+            'i18n_submit'          => __( 'Submit Removal Request', 'ontario-obituaries' ),
+            'i18n_submitting'      => __( 'Submitting...', 'ontario-obituaries' ),
+            'i18n_removal_title'   => __( 'Request Obituary Removal', 'ontario-obituaries' ),
+            'i18n_removal_prefix'  => __( 'Request Removal: ', 'ontario-obituaries' ),
+            'i18n_change'          => __( 'Change', 'ontario-obituaries' ),
+            'i18n_no_results'      => __( 'No obituaries found. Try a different search.', 'ontario-obituaries' ),
         ) );
 
         // FIX-B/C: Always enqueue the sharer-only Facebook script (no SDK dependency)

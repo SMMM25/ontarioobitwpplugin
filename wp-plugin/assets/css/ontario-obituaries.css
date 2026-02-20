@@ -562,6 +562,83 @@
     color: #721c24;
 }
 
+/* v6.0.1: Obituary search autocomplete for removal form */
+#removal-obituary-search-wrap {
+    position: relative;
+    margin-bottom: 8px;
+}
+
+#removal-obituary-search-wrap input[type="text"] {
+    width: 100%;
+}
+
+.ontario-obituaries-search-results {
+    position: absolute;
+    z-index: 1000;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--oo-color-border);
+    border-top: none;
+    border-radius: 0 0 var(--oo-radius-md) var(--oo-radius-md);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.ontario-obituaries-search-results li {
+    padding: 10px 14px;
+    font-size: 14px;
+    color: var(--oo-color-text);
+    cursor: pointer;
+    border-bottom: 1px solid var(--oo-color-border);
+    transition: background 0.15s;
+}
+
+.ontario-obituaries-search-results li:last-child {
+    border-bottom: none;
+}
+
+.ontario-obituaries-search-results li:hover {
+    background: var(--oo-color-surface);
+}
+
+.ontario-obituaries-search-results li.no-results {
+    color: var(--oo-color-text-muted);
+    font-style: italic;
+    cursor: default;
+}
+
+.ontario-obituaries-search-results li.no-results:hover {
+    background: transparent;
+}
+
+.ontario-obituaries-selected-obituary {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 8px 14px;
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: var(--oo-radius-md);
+    font-size: 14px;
+    color: #155724;
+}
+
+.ontario-obituaries-selected-obituary a {
+    margin-left: 10px;
+    color: var(--oo-color-accent);
+    text-decoration: underline;
+    font-size: 13px;
+}
+
+.ontario-obituaries-selected-obituary a:hover {
+    color: var(--oo-color-accent-hover);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    SEO PAGES — Individual Obituary Detail (v3.14.1)
    ═══════════════════════════════════════════════════════════════════ */
