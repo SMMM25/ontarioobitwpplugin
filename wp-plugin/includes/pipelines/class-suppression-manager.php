@@ -714,6 +714,8 @@ class Ontario_Obituaries_Suppression_Manager {
     /**
      * Notify the site admin of a new removal request.
      *
+     * v6.0.1: Sends to info@monacomonuments.ca (filterable via hook).
+     *
      * @param object $obituary     The obituary row object.
      * @param string $name         Requester name.
      * @param string $email        Requester email.
@@ -721,7 +723,16 @@ class Ontario_Obituaries_Suppression_Manager {
      * @param string $notes        Additional notes.
      */
     private static function notify_admin_of_request( $obituary, $name, $email, $relationship, $notes ) {
-        $admin_email = get_option( 'admin_email' );
+        /**
+         * Filter the email address that receives removal request notifications.
+         *
+         * @since 6.0.1
+         * @param string $recipient Default: info@monacomonuments.ca
+         */
+        $admin_email = apply_filters(
+            'ontario_obituaries_removal_notify_email',
+            'info@monacomonuments.ca'
+        );
 
         $subject = sprintf(
             /* translators: %s: deceased name */
