@@ -285,13 +285,72 @@ function oo_safe_call( $subsystem, $code, $callable, $fallback = null, $context 
  *  WRAPPER 2: oo_safe_http()
  *
  *  Wraps wp_safe_remote_get/head/post with:
+ *    - URL validation (scheme + wp_http_validate_url)
  *    - is_wp_error check
  *    - HTTP status check (>= 400)
- *    - Structured logging on failure
+ *    - Structured logging on failure (URL redacted to host+path)
  *    - Returns WP_Error on failure, response array on success
  *
  *  Does NOT change behavior on success (zero impact on happy path).
+ *
+ *  Safety guarantees:
+ *    - sslverify forced true (only filter can disable)
+ *    - redirections capped at 5
+ *    - timeout clamped 1–60 s
+ *    - URL query strings NEVER logged (may contain tokens/codes)
+ *    - response bodies truncated to 4 KB in error data
+ *    - only allowlisted response headers stored in error data
  * ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Redact a URL for safe logging: keep scheme + host + path, strip query + fragment.
+ *
+ * @since 6.0.0 (Phase 2b)
+ * @param string $url Raw URL.
+ * @return string Redacted URL safe for logs.
+ */
+function oo_redact_url( $url ) {
+    $parts = wp_parse_url( $url );
+    // Fix 3: wp_parse_url() returns false on malformed URLs.
+    if ( false === $parts || ! is_array( $parts ) ) {
+        return '(malformed-url)';
+    }
+    $scheme = isset( $parts['scheme'] ) ? $parts['scheme'] . '://' : '';
+    $host   = isset( $parts['host'] ) ? $parts['host'] : '';
+    $path   = isset( $parts['path'] ) ? $parts['path'] : '/';
+    return $scheme . $host . $path;
+}
+
+/**
+ * Extract only safe/useful headers from an HTTP response for error data.
+ *
+ * Never stores Authorization, Set-Cookie, or other sensitive headers.
+ *
+ * @since 6.0.0 (Phase 2b)
+ * @param array|object $raw_headers Headers from wp_remote_retrieve_headers().
+ * @return array Associative array of safe header values.
+ */
+function oo_safe_error_headers( $raw_headers ) {
+    $allowlist = array( 'retry-after', 'content-type', 'x-request-id', 'cf-ray', 'x-ratelimit-remaining', 'x-ratelimit-reset' );
+    $safe = array();
+    foreach ( $allowlist as $name ) {
+        $val = '';
+        if ( is_object( $raw_headers ) && method_exists( $raw_headers, 'offsetGet' ) ) {
+            $val = $raw_headers[ $name ];
+        } elseif ( is_array( $raw_headers ) ) {
+            // Optional improvement: normalize array keys to lower-case
+            // so headers stored with mixed case are still matched.
+            $lc_headers = array_change_key_case( $raw_headers, CASE_LOWER );
+            if ( isset( $lc_headers[ $name ] ) ) {
+                $val = $lc_headers[ $name ];
+            }
+        }
+        if ( '' !== $val && null !== $val ) {
+            $safe[ $name ] = (string) $val;
+        }
+    }
+    return $safe;
+}
 
 /**
  * Safe HTTP GET request with automatic error logging.
@@ -310,35 +369,55 @@ function oo_safe_call( $subsystem, $code, $callable, $fallback = null, $context 
  * @return array|WP_Error    Response array on success, WP_Error on failure.
  */
 function oo_safe_http_get( $subsystem, $url, $args = array(), $context = array() ) {
-    // Enforce safe defaults.
+    // ── 1. Defaults (wp_parse_args fills missing keys before clamps touch them) ──
     $args = wp_parse_args( $args, array(
         'timeout'     => 15,
         'redirection' => 3,
-        'sslverify'   => apply_filters( 'ontario_obituaries_sslverify', true ),
+        'sslverify'   => true,
         'user-agent'  => 'Ontario-Obituaries/' . ONTARIO_OBITUARIES_VERSION . ' (WordPress/' . get_bloginfo( 'version' ) . ')',
     ) );
 
-    $context['url'] = $url;
+    // ── 2. Safety clamps (cannot be overridden by callers) ──────────────
+    $args['sslverify']   = apply_filters( 'ontario_obituaries_sslverify', true ); // Only filter can disable.
+    $args['redirection'] = max( 0, min( (int) $args['redirection'], 5 ) );        // Fix 2: Clamp 0–5 (no negatives).
+    $args['timeout']     = min( max( (int) $args['timeout'], 1 ), 60 );           // Clamp 1–60 s.
 
-    $response = wp_safe_remote_get( esc_url_raw( $url, array( 'http', 'https' ) ), $args );
+    // ── 3. URL validation (sanitize + validate) ─────────────────────────
+    $sanitized = esc_url_raw( $url, array( 'http', 'https' ) );
+    if ( empty( $sanitized ) || ! wp_http_validate_url( $sanitized ) ) {
+        $safe_url = oo_redact_url( $url );
+        oo_log( 'error', $subsystem, $subsystem . '_INVALID_URL', 'GET rejected: invalid or unsafe URL', array( 'url' => $safe_url ) );
+        return new WP_Error( 'invalid_url', 'URL failed validation: ' . $safe_url );
+    }
 
-    // ── QC Tweak 4: Classify WP_Error failures consistently ─────────
+    // ── 4. Log context uses redacted URL (no query string / tokens) ─────
+    $context['url'] = oo_redact_url( $url );
+
+    $response = wp_safe_remote_get( $sanitized, $args );
+
+    // ── 5. Handle transport-level failure (DNS, timeout, SSL, etc.) ──────
     if ( is_wp_error( $response ) ) {
         $context['wp_error'] = $response;
         $wp_code = $response->get_error_code();
         $error_code = oo_classify_http_error( $subsystem, $wp_code, 'GET' );
-        $context['wp_error_type'] = $wp_code; // e.g., 'http_request_failed', 'http_request_not_executed'
+        $context['wp_error_type'] = $wp_code;
         oo_log( 'error', $subsystem, $error_code, 'GET failed: ' . $response->get_error_message(), $context );
         return $response;
     }
 
+    // ── 6. Handle HTTP error status (>= 400) ────────────────────────────
     $status = wp_remote_retrieve_response_code( $response );
     if ( $status >= 400 ) {
         $context['http_status'] = $status;
         $bucket   = ( $status >= 500 ) ? '5XX' : '4XX';
         $severity = ( $status >= 500 ) ? 'error' : 'warning';
         oo_log( $severity, $subsystem, $subsystem . '_HTTP_' . $bucket, "GET returned HTTP $status", $context );
-        return new WP_Error( 'http_' . $status, "HTTP $status from $url", array( 'status' => $status ) );
+        $err_body = wp_remote_retrieve_body( $response );
+        return new WP_Error( 'http_' . $status, "HTTP $status", array(
+            'status'  => $status,
+            'body'    => ( strlen( $err_body ) > 4096 ) ? substr( $err_body, 0, 4096 ) : $err_body,
+            'headers' => oo_safe_error_headers( wp_remote_retrieve_headers( $response ) ),
+        ) );
     }
 
     return $response;
@@ -361,15 +440,25 @@ function oo_safe_http_head( $subsystem, $url, $args = array(), $context = array(
     $args = wp_parse_args( $args, array(
         'timeout'     => 10,
         'redirection' => 3,
-        'sslverify'   => apply_filters( 'ontario_obituaries_sslverify', true ),
+        'sslverify'   => true,
         'user-agent'  => 'Ontario-Obituaries/' . ONTARIO_OBITUARIES_VERSION . ' (WordPress/' . get_bloginfo( 'version' ) . ')',
     ) );
 
-    $context['url'] = $url;
+    $args['sslverify']   = apply_filters( 'ontario_obituaries_sslverify', true );
+    $args['redirection'] = max( 0, min( (int) $args['redirection'], 5 ) );  // Fix 2: Clamp 0–5.
+    $args['timeout']     = min( max( (int) $args['timeout'], 1 ), 60 );
 
-    $response = wp_safe_remote_head( esc_url_raw( $url, array( 'http', 'https' ) ), $args );
+    $sanitized = esc_url_raw( $url, array( 'http', 'https' ) );
+    if ( empty( $sanitized ) || ! wp_http_validate_url( $sanitized ) ) {
+        $safe_url = oo_redact_url( $url );
+        oo_log( 'error', $subsystem, $subsystem . '_INVALID_URL', 'HEAD rejected: invalid or unsafe URL', array( 'url' => $safe_url ) );
+        return new WP_Error( 'invalid_url', 'URL failed validation: ' . $safe_url );
+    }
 
-    // ── QC Tweak 4: Classify WP_Error failures consistently ─────────
+    $context['url'] = oo_redact_url( $url );
+
+    $response = wp_safe_remote_head( $sanitized, $args );
+
     if ( is_wp_error( $response ) ) {
         $context['wp_error'] = $response;
         $wp_code = $response->get_error_code();
@@ -384,7 +473,12 @@ function oo_safe_http_head( $subsystem, $url, $args = array(), $context = array(
         $context['http_status'] = $status;
         $bucket = ( $status >= 500 ) ? '5XX' : '4XX';
         oo_log( 'warning', $subsystem, $subsystem . '_HTTP_' . $bucket, "HEAD returned HTTP $status", $context );
-        return new WP_Error( 'http_' . $status, "HTTP $status from $url", array( 'status' => $status ) );
+        $err_body = wp_remote_retrieve_body( $response );
+        return new WP_Error( 'http_' . $status, "HTTP $status", array(
+            'status'  => $status,
+            'body'    => ( strlen( $err_body ) > 4096 ) ? substr( $err_body, 0, 4096 ) : $err_body,
+            'headers' => oo_safe_error_headers( wp_remote_retrieve_headers( $response ) ),
+        ) );
     }
 
     return $response;
@@ -405,15 +499,25 @@ function oo_safe_http_post( $subsystem, $url, $args = array(), $context = array(
     $args = wp_parse_args( $args, array(
         'timeout'     => 30,
         'redirection' => 3,
-        'sslverify'   => apply_filters( 'ontario_obituaries_sslverify', true ),
+        'sslverify'   => true,
         'user-agent'  => 'Ontario-Obituaries/' . ONTARIO_OBITUARIES_VERSION . ' (WordPress/' . get_bloginfo( 'version' ) . ')',
     ) );
 
-    $context['url'] = $url;
+    $args['sslverify']   = apply_filters( 'ontario_obituaries_sslverify', true );
+    $args['redirection'] = max( 0, min( (int) $args['redirection'], 5 ) );  // Fix 2: Clamp 0–5.
+    $args['timeout']     = min( max( (int) $args['timeout'], 1 ), 60 );
 
-    $response = wp_safe_remote_post( esc_url_raw( $url, array( 'http', 'https' ) ), $args );
+    $sanitized = esc_url_raw( $url, array( 'http', 'https' ) );
+    if ( empty( $sanitized ) || ! wp_http_validate_url( $sanitized ) ) {
+        $safe_url = oo_redact_url( $url );
+        oo_log( 'error', $subsystem, $subsystem . '_INVALID_URL', 'POST rejected: invalid or unsafe URL', array( 'url' => $safe_url ) );
+        return new WP_Error( 'invalid_url', 'URL failed validation: ' . $safe_url );
+    }
 
-    // ── QC Tweak 4: Classify WP_Error failures consistently ─────────
+    $context['url'] = oo_redact_url( $url );
+
+    $response = wp_safe_remote_post( $sanitized, $args );
+
     if ( is_wp_error( $response ) ) {
         $context['wp_error'] = $response;
         $wp_code = $response->get_error_code();
@@ -429,7 +533,12 @@ function oo_safe_http_post( $subsystem, $url, $args = array(), $context = array(
         $bucket   = ( $status >= 500 ) ? '5XX' : '4XX';
         $severity = ( $status >= 500 ) ? 'error' : 'warning';
         oo_log( $severity, $subsystem, $subsystem . '_HTTP_' . $bucket, "POST returned HTTP $status", $context );
-        return new WP_Error( 'http_' . $status, "HTTP $status from $url", array( 'status' => $status ) );
+        $err_body = wp_remote_retrieve_body( $response );
+        return new WP_Error( 'http_' . $status, "HTTP $status", array(
+            'status'  => $status,
+            'body'    => ( strlen( $err_body ) > 4096 ) ? substr( $err_body, 0, 4096 ) : $err_body,
+            'headers' => oo_safe_error_headers( wp_remote_retrieve_headers( $response ) ),
+        ) );
     }
 
     return $response;
@@ -477,6 +586,85 @@ function oo_classify_http_error( $subsystem, $wp_code, $method = 'GET' ) {
     // The caller's log message will contain the specific cURL error string,
     // and wp_error_type in context provides the raw code for filtering.
     return $subsystem . '_HTTP_WP_ERROR';
+}
+
+/**
+ * Extract HTTP status code from a WP_Error returned by oo_safe_http_*.
+ *
+ * Callers that need to branch on specific HTTP status codes (401, 429, etc.)
+ * should use this instead of parsing the error code string.
+ *
+ * @since 6.0.0 (Phase 2b)
+ *
+ * @param WP_Error $error The WP_Error returned by an oo_safe_http_* wrapper.
+ * @return int HTTP status code, or 0 if not an HTTP error.
+ */
+function oo_http_error_status( $error ) {
+    if ( ! is_wp_error( $error ) ) {
+        return 0;
+    }
+    $data = $error->get_error_data();
+    return ( is_array( $data ) && isset( $data['status'] ) ) ? (int) $data['status'] : 0;
+}
+
+/**
+ * Extract the response body from a WP_Error returned by oo_safe_http_*.
+ *
+ * Some callers need the response body to decode API-specific error messages
+ * (e.g., Groq 401/403 include an error detail in JSON body).
+ *
+ * @since 6.0.0 (Phase 2b)
+ *
+ * @param WP_Error $error The WP_Error returned by an oo_safe_http_* wrapper.
+ * @return string Response body, or empty string if not available.
+ */
+function oo_http_error_body( $error ) {
+    if ( ! is_wp_error( $error ) ) {
+        return '';
+    }
+    $data = $error->get_error_data();
+    if ( ! is_array( $data ) || ! isset( $data['body'] ) ) {
+        return '';
+    }
+    $body = $data['body'];
+    // Cap at 2 KB to prevent memory bloat from large HTML error pages.
+    if ( strlen( $body ) > 2048 ) {
+        $body = substr( $body, 0, 2048 ) . '... [truncated]';
+    }
+    return $body;
+}
+
+/**
+ * Extract a specific header from a WP_Error returned by oo_safe_http_*.
+ *
+ * @since 6.0.0 (Phase 2b)
+ *
+ * @param WP_Error $error  The WP_Error.
+ * @param string   $header Header name (lowercase).
+ * @return string Header value, or empty string.
+ */
+function oo_http_error_header( $error, $header ) {
+    if ( ! is_wp_error( $error ) ) {
+        return '';
+    }
+    // Fix 1: Normalize lookup key to lower-case so callers can pass any case.
+    $header = strtolower( $header );
+    $data   = $error->get_error_data();
+    if ( is_array( $data ) && isset( $data['headers'] ) ) {
+        $headers = $data['headers'];
+        // WP_Http returns headers as Requests_Utility_CaseInsensitiveDictionary or array.
+        if ( is_object( $headers ) && method_exists( $headers, 'offsetGet' ) ) {
+            return (string) $headers[ $header ];
+        }
+        if ( is_array( $headers ) ) {
+            // Lower-case array keys to match the normalized lookup key.
+            $lc = array_change_key_case( $headers, CASE_LOWER );
+            if ( isset( $lc[ $header ] ) ) {
+                return (string) $lc[ $header ];
+            }
+        }
+    }
+    return '';
 }
 
 /* ═══════════════════════════════════════════════════════════════════

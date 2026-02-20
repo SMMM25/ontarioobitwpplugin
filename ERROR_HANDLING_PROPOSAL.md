@@ -886,55 +886,118 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 
 ## 5. Rollout Strategy
 
-### Phase 1 — Foundation (v6.0.0-alpha)
-- [ ] Create `class-error-handler.php` with full API
-- [ ] Create error log DB table schema
-- [ ] Replace `ontario_obituaries_log()` wrapper to route through handler
-- [ ] Add `require_once` and activation/deactivation hooks
-- [ ] Update `uninstall.php`
-- **Risk:** Low — additive only, backward-compatible wrapper preserves all existing 169 log calls
-- **Testing:** Activate plugin, verify table created, verify existing logs still work
+### Phase 1 — Foundation (v5.3.0) — ✅ COMPLETED (PR #96, 2026-02-20)
+- [x] Create `class-error-handler.php` with full API (779 lines)
+- [x] Create health counters via wp_options (no DB table — simpler approach)
+- [x] Add `oo_log()` structured logging with subsystem + code + run_id + context
+- [x] Add `oo_safe_call()`, `oo_safe_http()`, `oo_db_check()` wrappers
+- [x] Add `require_once` in ontario-obituaries.php
+- [x] Add log deduplication (5-min window, discriminator-based)
+- [x] Add SQL redaction by default (opt-in via OO_DEBUG_LOG_SQL)
+- **Actual approach:** No DB table — health counters use transients + single wp_option. Lighter weight than proposed.
+- **Result:** Foundation merged and deployed. All existing `ontario_obituaries_log()` calls still work.
 
-### Phase 2 — Critical Path Hardening (v6.0.0-beta)
+### Phase 2a — Cron Handler Hardening (v5.3.1) — ✅ COMPLETED (PR #97, 2026-02-20)
+- [x] Wrap `ai_rewrite_batch()` with try/catch/finally, bootstrap crash coverage, settings gate
+- [x] Wrap `gofundme_batch()`, `authenticity_audit()`, `google_ads_daily_analysis()` with `oo_safe_call()`
+- [x] Upgrade `cleanup_duplicates`, `shutdown_rewriter`, `dedup_once` catch blocks to `oo_log()`
+- [x] Add 13 new error codes
+- [x] Add `oo_health_record_ran()` / `oo_health_record_success()` for subsystem tracking
+- **QC review:** 3 required fixes + 2 recommended fixes all implemented. QC approved for merge.
+- **Result:** All 8 cron handlers now have structured error handling. Pipeline health monitoring active.
+
+### Phase 2a Hotfix — Name Validation (v5.3.1) — ✅ COMPLETED (PR #99, 2026-02-20)
+- [x] Strip parenthesized nicknames from names before validation
+- [x] Demote name_missing from hard-fail to warning
+- **Root cause:** Phase 2a health monitoring revealed queue-blocking bug (101 consecutive failures on ID 1083)
+- **Result:** Queue unblocked, pending count dropping.
+
+### Phase 2b — HTTP Wrappers (15 call sites) — ✅ COMPLETED (PR #100, v5.3.2)
+- [x] Route all `wp_remote_get/post/head` through `oo_safe_http_get/post/head` wrappers
+- [x] Add URL validation (`esc_url_raw` + `wp_http_validate_url`) before every request
+- [x] Add URL redaction for safe logging (`oo_redact_url` strips query strings)
+- [x] Add header allowlist for error data (`oo_safe_error_headers` — 6 safe headers only)
+- [x] Add safety clamps: `sslverify` filter-only, `redirection` ≤ 5, `timeout` 1–60 s
+- [x] Enrich WP_Error with `status`, `body` (≤4 KB), allowlisted `headers`
+- [x] Add helpers: `oo_http_error_status()`, `oo_http_error_body()` (re-caps to 2 KB), `oo_http_error_header()`
+- [x] Remove all duplicate `oo_log()` calls from callers (wrapper handles logging)
+- [x] Preserve status-code branching (401/403/429) via helper functions
+- **Files:** class-error-handler.php (enhanced), class-source-adapter-base.php, class-adapter-remembering-ca.php, class-ai-rewriter.php, class-ai-chatbot.php, class-ai-authenticity-checker.php, class-gofundme-linker.php, class-indexnow.php, class-google-ads-optimizer.php, class-image-pipeline.php, ontario-obituaries.php
+- **Risk:** Low-Medium — each conversion was mechanical; callers branch on WP_Error via helpers
+- **QC gates passed:** raw HTTP = 0, no dup logging, status preserved, no secrets, version = 5.3.2
+- **Allowed exceptions:** `wp_safe_remote_*` inside `class-error-handler.php` (wrapper internals) and `class-image-localizer.php` (stream-to-disk has its own handling)
+
+### Phase 2c — Top 10 DB Hotspots — ⬜ PENDING
+- [ ] Wrap highest-risk `$wpdb->insert/update/query` calls with `oo_db_check()`
+- [ ] Focus: source collector inserts, rewriter status updates, suppression manager, registry CRUD
+- **Risk:** Low — additive only
+
+### Phase 2d — AJAX Nonce + Capability Enforcement — ⬜ PENDING
 - [ ] Wrap all 29 AJAX handlers with nonce + capability checks
-- [ ] Wrap all HTTP calls with `check_http()`
-- [ ] Wrap all cron handlers with `safe_call()`
-- [ ] Add try/catch to all 6 templates
-- **Risk:** Medium — AJAX nonce enforcement will break any existing AJAX calls that don't send nonces (admin JS must be updated to include nonces)
-- **Testing:** Full manual test of admin panel, scrape trigger, reset/rescan, chatbot, all cron jobs
+- [ ] Update admin JS to include nonces in AJAX requests
+- **Risk:** Medium — JS changes required; must update frontend to send nonces
 
-### Phase 3 — Comprehensive DB Checks (v6.0.0-rc)
-- [ ] Wrap all 177 DB operations with `check_db()`
-- [ ] Add schema verification to activation
-- [ ] Add error context to all source adapters
-- **Risk:** Medium — high volume of changes, but each is mechanical (add 3 lines around existing call)
-- **Testing:** Trigger each subsystem, verify error log captures failures
-
-### Phase 4 — Health Dashboard (v6.0.0)
+### Phase 3 — Health Dashboard (v6.0.0) — ⬜ PENDING
 - [ ] Build `class-health-monitor.php`
 - [ ] Add Health tab to admin page
 - [ ] Add admin bar badge
 - [ ] Add REST endpoint for AJAX refresh
-- [ ] Add email alert on critical errors
-- [ ] Schedule daily error cleanup cron
 - **Risk:** Low — UI only, no data path changes
-- **Testing:** Visual review, simulate errors, verify dashboard updates
+
+### Phase 4 — Advanced (v6.0.0) — ⬜ PENDING
+- [ ] Create DB error table for persistent structured logging
+- [ ] Add email alert on critical errors
+- [ ] Wrap all remaining 177 DB operations with `check_db()`
+- [ ] Schedule daily error cleanup cron
+- **Risk:** Medium — high volume of changes, but each is mechanical
 
 ---
 
-## 6. Estimated Effort
+## 6. Progress Summary (updated 2026-02-20)
 
-| Phase | Files touched | Estimated lines changed | Time |
-|-------|--------------|------------------------|------|
-| Phase 1 | 4 | ~400 new, ~20 modified | 2-3 hours |
-| Phase 2 | 12 | ~350 modified | 4-5 hours |
-| Phase 3 | 20 | ~500 modified | 5-6 hours |
-| Phase 4 | 3 | ~300 new, ~30 modified | 3-4 hours |
-| **Total** | **~35** | **~1600** | **14-18 hours** |
+| Phase | Status | PR(s) | Version | Files Changed |
+|-------|--------|-------|---------|---------------|
+| Phase 1 — Foundation | ✅ Merged + Deployed | #96 | v5.3.0 | 2 (new class-error-handler.php + ontario-obituaries.php) |
+| Phase 2a — Cron Hardening | ✅ Merged + Deployed | #97, #98 | v5.3.1 | 2 (ontario-obituaries.php, class-error-handler.php) |
+| Phase 2a Hotfix | ✅ Merged + Deployed | #99 | v5.3.1 | 1 (class-ai-rewriter.php) |
+| Phase 2b — HTTP Wrappers | ✅ Code Complete | #100 | v5.3.2 | 11 (error-handler + 9 app files + ontario-obituaries.php) |
+| Phase 2c — DB Hotspots | ⬜ Next | — | — | ~8 files |
+| Phase 2d — AJAX Nonces | ⬜ Pending | — | — | ~4 files + JS |
+| Phase 3 — Health Dashboard | ⬜ Pending | — | — | ~3 new files |
+| Phase 4 — Advanced | ⬜ Pending | — | — | ~20 files |
+| **Overall** | **40% complete** | | | |
+
+### Key Findings from Phase 2b Deployment
+
+1. **Wrapper design simplifies callers**: Callers no longer need individual `is_wp_error()` + status code checks — the wrapper handles transport failures AND HTTP errors uniformly.
+2. **Status-code branching via helpers**: Complex callers (rewriter validate_api_key, Google Ads OAuth) use `oo_http_error_status()` to branch on 401/403/429 while the wrapper handles logging.
+3. **Body access for API error parsing**: `oo_http_error_body()` provides the response body (capped at 2 KB) so callers can decode API-specific error messages from 401/403 responses.
+4. **No secrets leakage**: URL query strings are stripped via `oo_redact_url()` before logging. Only 6 safe headers stored in error data. Response body and request headers never appear in `oo_log()`.
+5. **SSRF protection now universal**: All HTTP requests go through `wp_safe_remote_*` which blocks private/reserved IPs, plus `esc_url_raw()` rejects non-HTTP schemes.
+6. **QC-mandated hardening (3 required + 1 optional):**
+   - `oo_http_error_header()` now normalizes the lookup key to lower-case and normalizes array keys — callers can pass any casing.
+   - Redirection argument clamped to 0–5 (not just ≤ 5) — prevents negative values from reaching WP HTTP API.
+   - `oo_redact_url()` handles `wp_parse_url()` returning false on malformed input — returns `'(malformed-url)'` sentinel.
+   - `oo_safe_error_headers()` normalizes array header keys via `array_change_key_case()` — consistent matching regardless of server header casing.
 
 ---
 
-## 7. What Does NOT Change
+## 7. Estimated Remaining Effort
+
+| Phase | Files touched | Estimated lines changed | Time | Status |
+|-------|--------------|------------------------|------|--------|
+| Phase 1 | 2 | ~800 new | 3 hours | ✅ Done |
+| Phase 2a | 2 | ~200 modified | 3 hours | ✅ Done |
+| Phase 2b | ~11 | ~580 modified | 4 hours | ✅ Done |
+| Phase 2c | ~8 | ~150 modified | 2-3 hours | ⬜ |
+| Phase 2d | ~4+JS | ~300 modified | 3-4 hours | ⬜ |
+| Phase 3 | 3 | ~300 new, ~30 modified | 3-4 hours | ⬜ |
+| Phase 4 | ~20 | ~500 modified + new | 5-6 hours | ⬜ |
+| **Total** | **~35** | **~2500** | **~22-27 hours** | **25% done** |
+
+---
+
+## 8. What Does NOT Change
 
 - **Database schema** for obituaries table — no columns added/removed
 - **Frontend URLs/routes** — all permalinks unchanged
@@ -945,7 +1008,7 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 
 ---
 
-## 8. Success Criteria
+## 9. Success Criteria
 
 After full rollout, these conditions must hold:
 
@@ -962,7 +1025,7 @@ After full rollout, these conditions must hold:
 
 ---
 
-## 9. Verification Query
+## 10. Verification Query
 
 After deployment, run this to confirm error handling is active:
 
@@ -981,7 +1044,7 @@ FROM wp_ontario_obituaries_errors;
 
 ---
 
-## 10. QC Review Checklist
+## 11. QC Review Checklist
 
 - [ ] Approve overall architecture (singleton handler + health monitor)
 - [ ] Approve error code taxonomy (Section 2.4)
@@ -992,4 +1055,4 @@ FROM wp_ontario_obituaries_errors;
 - [ ] Flag any concerns about performance (buffered writes)
 - [ ] Flag any concerns about table growth (5000 row cap + 30-day TTL)
 
-**Awaiting QC approval to begin Phase 1 implementation.**
+**Phase 1 + Phase 2a + Phase 2b approved/completed. Phase 2c (DB hotspots) is next.**

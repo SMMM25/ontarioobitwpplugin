@@ -1,11 +1,11 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-18 (v5.1.5 — autonomous AI rewrite schedule live)
-> **Plugin version:** `5.1.5` (live + sandbox + main branch)
-> **Live site version:** `5.1.5` (monacomonuments.ca — deployed 2026-02-18 via WP Admin Upload)
-> **Main branch HEAD:** PR #93 merged (v5.1.5)
-> **Project status:** AI rewriter running autonomously. 178 published, 403 pending. All bugs from 2026-02-16 audit fixed. **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
-> **Next priority:** Fix image hotlinking — download images to local uploads, stop serving external CDN URLs.
+> **Last updated:** 2026-02-20 (v5.3.2 — Phase 2b HTTP Wrapper Conversion, PR #100)
+> **Plugin version:** `5.3.2` (sandbox) / `5.3.1` (live + main branch)
+> **Live site version:** `5.3.1` (monacomonuments.ca — deployed 2026-02-20 via SSH terminal)
+> **Main branch HEAD:** PR #99 merged (v5.3.1 hotfix)
+> **Project status:** AI rewriter running autonomously. ~300+ published, ~296 pending. Error handling **40% complete** (Phase 1 + 2a deployed, Phase 2b code-complete in PR #100). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
+> **Next priority:** Merge PR #100 (v5.3.2), deploy, then Phase 2c (DB hotspots).
 
 ---
 
@@ -290,20 +290,35 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #88-#91 | Merged | various | AI rewriter fixes: validator demotions, queue deadlock prevention (v5.1.0-v5.1.2) |
 | #92 | Merged | `63bf2e6` | fix(cron+admin): repeating 5-min rewrite schedule, admin cache fix, ai_rewrite_enabled gate (v5.1.4) |
 | #93 | Merged | `8318b8c` | fix(activation): handle delete-upgrade settings wipe (v5.1.5) |
+| #95 | Merged | `d21b132` | feat(images): Image Localizer v5.2.0 — stream-to-disk, full error handling |
+| #96 | Merged | `078a943` | feat(errors): Phase 1 Error Handling Foundation — `oo_log`, `oo_safe_call`, `oo_db_check`, health counters (v5.3.0) |
+| #97 | Merged | `de1a80f` | feat(errors): Phase 2a Cron Handler Hardening — all 8 cron handlers wrapped, QC-approved (v5.3.1) |
+| #98 | Merged | `81587cf` | chore: bump version to v5.3.1 for Phase 2a release |
+| #99 | Merged | `2029a77` | fix(rewriter): unblock queue — demote name validation + strip nicknames (v5.3.1) |
+| #100 | Open | `4b73230` | feat(errors): Phase 2b — route all HTTP through oo_safe_http wrappers + QC fixes (v5.3.2) |
 
 ---
 
-## CURRENT STATE (as of 2026-02-18)
+## CURRENT STATE (as of 2026-02-20)
 
-### Plugin Version: **5.1.5** (all environments in sync)
-### Main Branch Version: **5.1.5** (PR #93 merged 2026-02-18)
-### Live Site Version: **5.1.5** (monacomonuments.ca — deployed 2026-02-18 via WP Admin Upload)
-### Project Status: **AI REWRITER AUTONOMOUS** — running 24/7
+### Plugin Version: **5.3.2** (sandbox) / **5.3.1** (live + main)
+### Main Branch Version: **5.3.1** (PR #99 merged 2026-02-20)
+### Live Site Version: **5.3.1** (monacomonuments.ca — deployed 2026-02-20 via SSH terminal)
+### Project Status: **ERROR HANDLING 40% COMPLETE** — Phase 2b code-complete
 
-### What's Working (Live — v5.1.5)
-- **AI Rewriter** — ✅ Autonomous. Repeating 5-minute WP-Cron schedule. 178 published (all AI-rewritten), 403 pending.
+### What's Working (Live — v5.3.1)
+- **AI Rewriter** — ✅ Autonomous. ~300 published (all AI-rewritten), ~296 pending.
+- **Error Handling Phase 1** — ✅ `oo_log()`, `oo_safe_call()`, `oo_db_check()`, health counters, log deduplication
+- **Error Handling Phase 2a** — ✅ All 8 cron handlers wrapped with structured error handling
+- **Error Handling Phase 2b** — ✅ Code complete + QC-approved (PR #100, v5.3.2): All 15 `wp_remote_*` → `oo_safe_http_*`
+  - SSRF protection via `wp_safe_remote_*`, URL sanitization via `esc_url_raw()`, body truncation ≤ 4 KB
+  - Helper functions: `oo_http_error_status()`, `oo_http_error_body()`, `oo_http_error_header()`
+  - QC gates passed: raw HTTP = 0, no duplicate logging, status-code preserved, no secrets logged
+  - QC fixes applied: header normalization, redirection 0–5 clamp, malformed-URL guard, array header key normalization
+- **Health monitoring** — ✅ `oo_health_get_summary()` reports pipeline status, last_ran, last_success per subsystem
+- **Name validation hotfix** — ✅ Parenthesized nicknames stripped, name_missing demoted to warning
 - Source collector pipeline with remembering_ca adapter (7 active Postmedia sources)
-- **581 obituaries** in database (178 published + 403 pending)
+- **602 obituaries** in database (~300 published + ~296 pending)
 - All 7 sources collecting successfully every 12h via WP-Cron
 - Memorial pages with QR code, lead capture form, Schema.org markup
 - IndexNow, domain lock, logo filter, LiteSpeed cache — all active
@@ -311,14 +326,75 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - **GoFundMe Auto-Linker** — active
 - **AI Authenticity Checker** — active
 - **cPanel cron** — `*/5 * * * * /usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1`
+- **cPanel cron-rewriter.php** — Primary rewrite processor (standalone PHP script with file lock)
 - **WP-CLI access** — Available at `/usr/local/sbin/wp` (SSH confirmed working)
+
+### v5.3.2 Phase 2b Session (2026-02-20)
+
+**Phase 2b — HTTP Wrapper Conversion (PR #100, v5.3.2)**:
+- Reverted PR #100's original logging-only changes, then implemented proper wrapper conversion
+- Enhanced `class-error-handler.php` wrappers:
+  - WP_Error now contains `status` (int), `body` (≤4 KB), `headers` (allowlisted)
+  - New helpers: `oo_http_error_status()`, `oo_http_error_body()`, `oo_http_error_header()`
+  - New utilities: `oo_redact_url()` (strips query strings), `oo_safe_error_headers()` (allowlist filter)
+  - Safety clamps: `sslverify` filter-only, `redirection` ≤ 5, `timeout` 1–60 s
+  - URL validation: `esc_url_raw()` + `wp_http_validate_url()` before every request
+- Converted 15 call sites across 9 files:
+  - `class-source-adapter-base.php` → `oo_safe_http_get('SCRAPE', ...)`
+  - `class-adapter-remembering-ca.php` → `oo_safe_http_head('SCRAPE', ...)`
+  - `class-ai-rewriter.php` (3 sites) → `oo_safe_http_post('REWRITE', ...)`
+  - `class-ai-chatbot.php` → `oo_safe_http_post('CHATBOT', ...)`
+  - `class-ai-authenticity-checker.php` → `oo_safe_http_post('AUDIT', ...)`
+  - `class-gofundme-linker.php` → `oo_safe_http_post('GOFUNDME', ...)`
+  - `class-indexnow.php` → `oo_safe_http_post('SEO', ...)`
+  - `class-google-ads-optimizer.php` (5 sites) → `oo_safe_http_post('GOOGLE_ADS', ...)`
+  - `class-image-pipeline.php` → `oo_safe_http_head('IMAGE', ...)`
+- QC gates all passed: raw HTTP = 0, oo_log outside wrapper = 0, helper uses = 13, secrets logged = 0
+- **QC Review — 3 required fixes + 1 optional improvement applied:**
+  1. **Fix 1**: `oo_http_error_header()` now lower-cases the `$header` lookup key + lower-cases array keys via `array_change_key_case()` — callers can pass any case.
+  2. **Fix 2**: `redirection` arg clamped to `max(0, min(val, 5))` in all three wrappers — prevents negative values.
+  3. **Fix 3**: `oo_redact_url()` now checks for `false === wp_parse_url()` and returns `'(malformed-url)'` instead of crashing.
+  4. **Optional**: `oo_safe_error_headers()` normalizes array keys via `array_change_key_case()` before lookup — mixed-case header keys now matched consistently.
+- Version bumped to 5.3.2 (runtime behavior change: SSRF protection + URL sanitization)
+- 11 files changed, 583 insertions, 297 deletions
+- ZIP built: `ontario-obituaries-v5.3.2.zip` (307 KB)
 
 ### What's NOT Working / Needs Attention
 - **🔴 URGENT: Image hotlink** — All published obituary images hotlinked from `cdn-otf-cas.prfct.cc` (Tribute Archive CDN). Not stored locally. See PLATFORM_OVERSIGHT_HUB.md Section 28.
+- **Error handling progressing** — Phase 2b (HTTP wrappers) COMPLETE: 15 call sites converted. Phase 2c (DB hotspots) NEXT.
 - **Google Ads Optimizer** — Disabled by owner choice (off-season). Toggle on in spring.
 - **PR #87** — Still pending merge (v5.0.12 QC-R12 hardening: atomic CAS rate limiter). Not blocking live operations.
 
-### v5.1.x Deployment Session (2026-02-18)
+### v5.3.x Error Handling Session (2026-02-20)
+
+**Phase 1 — Foundation (PR #96, v5.3.0)**:
+- New `includes/class-error-handler.php` (779 lines)
+- Wrappers: `oo_safe_call()`, `oo_safe_http()`, `oo_db_check()`
+- Structured logging: `oo_log()` with subsystem + code + run_id + context
+- Health counters: `oo_health_increment()`, `oo_health_get_summary()`, `oo_health_record_ran()`, `oo_health_record_success()`
+- Log deduplication (5-min window, discriminator-based: source/source_domain/hook/url host)
+- SQL redaction by default (opt-in via `OO_DEBUG_LOG_SQL`)
+- Run IDs: `oo_run_id()` for correlating log entries
+
+**Phase 2a — Cron Hardening (PR #97, v5.3.1)**:
+- All 8 cron handlers wrapped with error handling
+- `ai_rewrite_batch()`: try/catch before lock, settings gate, reschedule check, try/catch/finally for main processing, guaranteed lock release
+- Other batches: `oo_safe_call()` + `oo_health_record_ran()` + `oo_health_record_success()`
+- 13 new error codes (CRON_REWRITE_BOOTSTRAP_CRASH, CRON_REWRITE_DISABLED, CRON_REWRITE_RESCHEDULE_FAIL, etc.)
+
+**Hotfix — Name Validation (PR #99, v5.3.1)**:
+- Root cause: Obituary ID 1083 ("Patricia Gillian Ansaldo (Gillian)") had parenthesized nickname
+- Validator split name into ["Patricia", "Gillian", "Ansaldo", "(Gillian)"], couldn't match in rewrite
+- Queue blocked for 8+ hours (101 consecutive failures)
+- Fix: Strip parenthesized nicknames, demote name_missing to warning
+- Result: Queue unblocked, pending count dropping
+
+**Deployment**:
+- Method: SSH terminal (unzip directly into plugin directory)
+- Post-deploy: `pipeline_healthy = true`, all subsystems reporting success
+- cPanel `cron-rewriter.php` confirmed as primary processor; WP-Cron correctly skips when lock set
+
+### Previous State (as of 2026-02-18)
 
 **v5.1.2** (PRs #88-91): Demoted age/death-date validators to warnings (non-blocking). Prevents queue deadlock on edge cases like "age not mentioned" (ID 1311).
 
@@ -675,6 +751,21 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 | P8-5 | Verify logo filter still rejects < 15 KB images | **PENDING** |
 | P8-6 | Test with published obituaries on live site | **PENDING** |
 
+### Phase 9: Error Handling Overhaul (v5.3.x — in progress, 25% complete)
+> Systematic error handling across all 38 PHP files. See ERROR_HANDLING_PROPOSAL.md.
+
+| ID | Task | Status |
+|----|------|--------|
+| P9-1 | Phase 1: Error handling foundation (`oo_log`, `oo_safe_call`, `oo_db_check`) | ✅ **DONE (PR #96, v5.3.0)** |
+| P9-2 | Phase 2a: Cron handler hardening (all 8 cron handlers) | ✅ **DONE (PR #97, v5.3.1)** |
+| P9-3 | Phase 2a QC fixes (bootstrap crash, settings gate, reschedule check) | ✅ **DONE (PR #97)** |
+| P9-4 | Hotfix: name validation queue-blocking bug | ✅ **DONE (PR #99, v5.3.1)** |
+| P9-5 | Phase 2b: HTTP wrappers (15 call sites) | ✅ **DONE (PR #100, v5.3.2)** — All `wp_remote_*` → `oo_safe_http_*`. QC gates: raw HTTP = 0, no dup logging, status preserved, no secrets. |
+| P9-6 | Phase 2c: Top 10 DB hotspots | **PENDING** |
+| P9-7 | Phase 2d: AJAX nonce/capability checks (29 handlers) | **PENDING** |
+| P9-8 | Phase 3: Health dashboard (admin tab, admin bar badge, REST) | **PENDING** |
+| P9-9 | Phase 4: Advanced (DB error table, email alerts, full coverage) | **PENDING** |
+
 ### QC-R7: Rate Limiter Hardening (v5.0.7 — addresses PR #87 review round 1)
 > Initial hardening pass. All 10 reviewer concerns addressed.
 
@@ -765,42 +856,36 @@ The AI Rewriter underwent extensive rework across 10 PRs (#71-#80) to solve rate
 
 ---
 
-## PENDING WORK (consolidated — updated 2026-02-16 after code audit)
+## PENDING WORK (consolidated — updated 2026-02-20)
 
-### URGENT (new — discovered 2026-02-18)
+### URGENT (discovered 2026-02-18)
 0. **🔴 IMAGE HOTLINK** — All published obituary images hotlinked from `cdn-otf-cas.prfct.cc`. Not stored locally. See Oversight Hub Section 28.
 
-### CRITICAL (all fixed)
-1. ~~**BUG-C1: Activation cascade**~~ — ✅ FIXED (PR #83)
-2. ~~**BUG-C2: Display deadlock**~~ — ✅ FIXED (PR #84)
-3. ~~**BUG-C3: Non-idempotent migrations**~~ — ✅ FIXED (PR #83)
-4. ~~**BUG-C4: Dedup on every page load**~~ — ✅ FIXED (PR #85)
+### ERROR HANDLING PROJECT (40% complete — in progress)
+1. ~~**Phase 1: Foundation**~~ — ✅ DONE (PR #96, v5.3.0) — `oo_log`, `oo_safe_call`, `oo_db_check`, health counters
+2. ~~**Phase 2a: Cron Hardening**~~ — ✅ DONE (PR #97, v5.3.1) — All 8 cron handlers wrapped
+3. ~~**Hotfix: Name validation**~~ — ✅ DONE (PR #99, v5.3.1) — Strip nicknames, demote to warning
+4. ~~**Phase 2b: HTTP wrappers**~~ — ✅ DONE (PR #100, v5.3.2) — 15 call sites converted to `oo_safe_http_*`
+5. **Phase 2c: Top 10 DB hotspots** — NEXT
+6. **Phase 2d: AJAX nonce/capability** — PENDING (29 handlers)
+7. **Phase 3: Health dashboard** — PENDING (admin tab, admin bar badge, REST)
+8. **Phase 4: Advanced** — PENDING (DB error table, email alerts, full coverage)
 
-### HIGH (all fixed)
-5. ~~**BUG-H2 + H7: Incomplete uninstall**~~ — ✅ FIXED (PR #85)
-6. ~~**BUG-H6: Domain lock bypass**~~ — ✅ FIXED (PR #86)
-7. ~~**BUG-H1: Nonsense rate calculation**~~ — ✅ FIXED (PR #86)
-8. ~~**BUG-H3: Duplicate index creation**~~ — ✅ FIXED (PR #83)
-9. ~~**BUG-H4: Undefined $result**~~ — ✅ FIXED (PR #86)
-10. ~~**BUG-H5: Premature shutdown throttle**~~ — ✅ FIXED (PR #86)
-
-### MEDIUM (all fixed)
-11. ~~**BUG-M1: Shared Groq rate limiter**~~ — ✅ FIXED (PR #87, v5.0.8)
-12. ~~**BUG-M3: Monolithic migrations**~~ — ✅ FIXED (PR #83)
-13. ~~**BUG-M4: Risky name-only dedup**~~ — ✅ FIXED (PR #86)
-14. ~~**BUG-M5: Activation race conditions**~~ — ✅ FIXED (PR #87, v5.0.8)
-15. ~~**BUG-M6: Unrealistic throughput comments**~~ — ✅ FIXED (PR #87, v5.0.8)
+### PREVIOUS BUGS (all fixed)
+9. ~~**BUG-C1-C4**~~ — ✅ FIXED (PRs #83-#85)
+10. ~~**BUG-H1-H7**~~ — ✅ FIXED (PRs #83-#86)
+11. ~~**BUG-M1-M6**~~ — ✅ FIXED (PRs #83-#87)
+12. ~~**AI Rewriter queue blocked**~~ — ✅ FIXED (v5.1.2-v5.1.5 + v5.3.1 hotfix)
 
 ### PREVIOUSLY KNOWN (carried forward)
-16. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ — ✅ RESOLVED (v5.1.5: autonomous 5-min schedule)
-17. **Data repair** — Clean existing fabricated `YYYY-01-01` rows in DB
-18. **Schema/dedupe redesign** — Add `birth_year`/`death_year` columns, new unique key
-19. **Max-age audit** — Prevent pagination drift into old archive pages
-20. **Google Ads Optimizer** — Enable in spring (owner action)
-21. **Out-of-province filtering** — Low priority
+13. **Data repair** — Clean existing fabricated `YYYY-01-01` rows in DB
+14. **Schema/dedupe redesign** — Add `birth_year`/`death_year` columns, new unique key
+15. **Max-age audit** — Prevent pagination drift into old archive pages
+16. **Google Ads Optimizer** — Enable in spring (owner action)
+17. **Out-of-province filtering** — Low priority
 
-> See PLATFORM_OVERSIGHT_HUB.md Section 27 for the full systematic fix plan with
-> sprint organization, PR mapping, and estimated effort.
+> See PLATFORM_OVERSIGHT_HUB.md Section 27 for the full bug fix plan (all complete).
+> See ERROR_HANDLING_PROPOSAL.md for the v6.0 error handling plan.
 
 ---
 

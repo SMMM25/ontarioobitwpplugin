@@ -136,78 +136,79 @@ class Ontario_Obituaries_AI_Rewriter {
             'max_tokens' => 1,
         ) );
 
-        $response = wp_remote_post( $this->api_url, array(
+        $response = oo_safe_http_post( 'REWRITE', $this->api_url, array(
             'timeout' => 15,
             'headers' => array(
                 'Content-Type'  => 'application/json',
                 'Authorization' => 'Bearer ' . $this->api_key,
             ),
             'body' => $body,
-        ) );
+        ), array( 'source' => 'class-ai-rewriter', 'purpose' => 'validate_api_key' ) );
 
+        // Wrapper returns WP_Error for transport failures AND HTTP ≥ 400.
+        // Extract status code to preserve existing 401/403/429 business logic.
         if ( is_wp_error( $response ) ) {
-            return new WP_Error( 'connection_error', 'Cannot reach Groq API: ' . $response->get_error_message() );
-        }
+            $code      = oo_http_error_status( $response );
+            $resp_body = oo_http_error_body( $response );
+            $decoded   = json_decode( $resp_body, true );
+            $error_msg = ! empty( $decoded['error']['message'] ) ? $decoded['error']['message'] : '';
 
-        $code = wp_remote_retrieve_response_code( $response );
-        $resp_body = wp_remote_retrieve_body( $response );
-        $decoded = json_decode( $resp_body, true );
-        $error_msg = ! empty( $decoded['error']['message'] ) ? $decoded['error']['message'] : '';
+            if ( 0 === $code ) {
+                // Transport-level failure (DNS, timeout, SSL).
+                return new WP_Error( 'connection_error', 'Cannot reach Groq API: ' . $response->get_error_message() );
+            }
 
-        if ( 401 === $code ) {
-            return new WP_Error( 'api_key_invalid', 'API key is invalid, expired, or revoked. ' . $error_msg );
-        }
+            if ( 401 === $code ) {
+                return new WP_Error( 'api_key_invalid', 'API key is invalid, expired, or revoked. ' . $error_msg );
+            }
 
-        if ( 403 === $code ) {
-            // Model may be blocked — try fallback models.
-            $working_model = null;
-            foreach ( $this->fallback_models as $fallback ) {
-                $fb_body = wp_json_encode( array(
-                    'model'      => $fallback,
-                    'messages'   => $test_messages,
-                    'max_tokens' => 1,
-                ) );
-                $fb_resp = wp_remote_post( $this->api_url, array(
-                    'timeout' => 15,
-                    'headers' => array(
-                        'Content-Type'  => 'application/json',
-                        'Authorization' => 'Bearer ' . $this->api_key,
-                    ),
-                    'body' => $fb_body,
-                ) );
-                if ( ! is_wp_error( $fb_resp ) ) {
-                    $fb_code = wp_remote_retrieve_response_code( $fb_resp );
-                    if ( $fb_code >= 200 && $fb_code < 300 ) {
+            if ( 403 === $code ) {
+                // Model may be blocked — try fallback models.
+                $working_model = null;
+                foreach ( $this->fallback_models as $fallback ) {
+                    $fb_body = wp_json_encode( array(
+                        'model'      => $fallback,
+                        'messages'   => $test_messages,
+                        'max_tokens' => 1,
+                    ) );
+                    $fb_resp = oo_safe_http_post( 'REWRITE', $this->api_url, array(
+                        'timeout' => 15,
+                        'headers' => array(
+                            'Content-Type'  => 'application/json',
+                            'Authorization' => 'Bearer ' . $this->api_key,
+                        ),
+                        'body' => $fb_body,
+                    ), array( 'source' => 'class-ai-rewriter', 'purpose' => 'validate_fallback', 'fallback_model' => $fallback ) );
+                    if ( ! is_wp_error( $fb_resp ) ) {
                         $working_model = $fallback;
                         break;
                     }
                 }
+
+                if ( $working_model ) {
+                    return new WP_Error(
+                        'model_blocked_but_fallback_ok',
+                        sprintf(
+                            'Primary model "%s" is blocked (403), but fallback model "%s" works. The rewriter will automatically use the fallback. %s',
+                            $this->model,
+                            $working_model,
+                            $error_msg
+                        )
+                    );
+                }
+
+                return new WP_Error( 'model_permission_blocked', 'All models returned 403. Check permissions at https://console.groq.com/settings/limits. ' . $error_msg );
             }
 
-            if ( $working_model ) {
-                return new WP_Error(
-                    'model_blocked_but_fallback_ok',
-                    sprintf(
-                        'Primary model "%s" is blocked (403), but fallback model "%s" works. The rewriter will automatically use the fallback. %s',
-                        $this->model,
-                        $working_model,
-                        $error_msg
-                    )
-                );
+            if ( 429 === $code ) {
+                return new WP_Error( 'rate_limited', 'API key is valid but rate-limited. Try again in a few minutes.' );
             }
 
-            return new WP_Error( 'model_permission_blocked', 'All models returned 403. Check permissions at https://console.groq.com/settings/limits. ' . $error_msg );
+            return new WP_Error( 'unknown_error', sprintf( 'Groq API returned HTTP %d. %s', $code, $error_msg ) );
         }
 
-        if ( 429 === $code ) {
-            return new WP_Error( 'rate_limited', 'API key is valid but rate-limited. Try again in a few minutes.' );
-        }
-
-        if ( $code >= 200 && $code < 300 ) {
-            return true;
-        }
-
-        return new WP_Error( 'unknown_error', sprintf( 'Groq API returned HTTP %d. %s', $code, $error_msg ) );
+        // 2xx — key is valid.
+        return true;
     }
 
     /**
@@ -789,82 +790,79 @@ SYSTEM;
             'response_format' => array( 'type' => 'json_object' ),
         ) );
 
-        $response = wp_remote_post( $this->api_url, array(
+        $response = oo_safe_http_post( 'REWRITE', $this->api_url, array(
             'timeout' => $this->api_timeout,
             'headers' => array(
                 'Content-Type'  => 'application/json',
                 'Authorization' => 'Bearer ' . $this->api_key,
             ),
             'body' => $body,
-        ) );
+        ), array( 'source' => 'class-ai-rewriter', 'purpose' => 'call_api', 'model' => $model ) );
 
+        // Wrapper returns WP_Error for transport failures AND HTTP ≥ 400.
         if ( is_wp_error( $response ) ) {
+            $http_status = oo_http_error_status( $response );
+
+            // Handle rate limiting — extract retry-after header for smarter backoff.
+            if ( 429 === $http_status ) {
+                $retry_after = oo_http_error_header( $response, 'retry-after' );
+                $retry_secs  = is_numeric( $retry_after ) ? intval( $retry_after ) : 0;
+                return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded (likely TPM).', $retry_secs );
+            }
+
+            // v4.6.7: Handle 401 Unauthorized — API key is invalid, expired, or revoked.
+            if ( 401 === $http_status ) {
+                $error_detail = '';
+                $decoded = json_decode( oo_http_error_body( $response ), true );
+                if ( ! empty( $decoded['error']['message'] ) ) {
+                    $error_detail = $decoded['error']['message'];
+                }
+                // Business-event log (wrapper already logged HTTP 401).
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Groq API key is INVALID (HTTP 401). Go to Settings → Ontario Obituaries → AI Rewrite Engine and enter a valid key from https://console.groq.com/keys' ),
+                    'error'
+                );
+                return new WP_Error(
+                    'api_key_invalid',
+                    sprintf(
+                        'Groq API key is invalid or expired (HTTP 401). %s. Please generate a new key at https://console.groq.com/keys and update it in Settings → Ontario Obituaries.',
+                        $error_detail
+                    )
+                );
+            }
+
+            // v4.6.7: Handle 403 Forbidden — model permission blocked or firewall issue.
+            if ( 403 === $http_status ) {
+                $error_detail = '';
+                $error_code   = '';
+                $decoded = json_decode( oo_http_error_body( $response ), true );
+                if ( ! empty( $decoded['error']['message'] ) ) {
+                    $error_detail = $decoded['error']['message'];
+                }
+                if ( ! empty( $decoded['error']['code'] ) ) {
+                    $error_code = $decoded['error']['code'];
+                }
+                // Business-event log (wrapper already logged HTTP 403).
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Groq API returned HTTP 403 for model "%s". Code: %s. Detail: %s', $model, $error_code, $error_detail ),
+                    'error'
+                );
+                return new WP_Error(
+                    'model_permission_blocked',
+                    sprintf(
+                        'Groq API returned 403 (Permission Denied) for model "%s". %s. Check your model permissions at https://console.groq.com/settings/limits or try a different model.',
+                        $model,
+                        $error_detail
+                    )
+                );
+            }
+
+            // Generic failure (transport or other HTTP error).
             return new WP_Error( 'api_error', 'HTTP request failed: ' . $response->get_error_message() );
         }
 
         $code = wp_remote_retrieve_response_code( $response );
         $body = wp_remote_retrieve_body( $response );
-
-        // Handle rate limiting — extract retry-after header for smarter backoff.
-        if ( 429 === $code ) {
-            $retry_after = wp_remote_retrieve_header( $response, 'retry-after' );
-            $retry_secs  = is_numeric( $retry_after ) ? intval( $retry_after ) : 0;
-            return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded (likely TPM).', $retry_secs );
-        }
-
-        // v4.6.7: Handle 401 Unauthorized — API key is invalid, expired, or revoked.
-        if ( 401 === $code ) {
-            $error_detail = '';
-            $decoded = json_decode( $body, true );
-            if ( ! empty( $decoded['error']['message'] ) ) {
-                $error_detail = $decoded['error']['message'];
-            }
-            ontario_obituaries_log(
-                sprintf( 'AI Rewriter: Groq API key is INVALID (HTTP 401). Detail: %s. Go to Settings → Ontario Obituaries → AI Rewrite Engine and enter a valid key from https://console.groq.com/keys', $error_detail ),
-                'error'
-            );
-            return new WP_Error(
-                'api_key_invalid',
-                sprintf(
-                    'Groq API key is invalid or expired (HTTP 401). %s. Please generate a new key at https://console.groq.com/keys and update it in Settings → Ontario Obituaries.',
-                    $error_detail
-                )
-            );
-        }
-
-        // v4.6.7: Handle 403 Forbidden — model permission blocked or firewall issue.
-        // Groq returns 403 with type "permissions_error" when a model is blocked at
-        // the organization or project level.
-        if ( 403 === $code ) {
-            $error_detail = '';
-            $error_code   = '';
-            $decoded = json_decode( $body, true );
-            if ( ! empty( $decoded['error']['message'] ) ) {
-                $error_detail = $decoded['error']['message'];
-            }
-            if ( ! empty( $decoded['error']['code'] ) ) {
-                $error_code = $decoded['error']['code'];
-            }
-            ontario_obituaries_log(
-                sprintf( 'AI Rewriter: Groq API returned HTTP 403 for model "%s". Code: %s. Detail: %s', $model, $error_code, $error_detail ),
-                'error'
-            );
-            return new WP_Error(
-                'model_permission_blocked',
-                sprintf(
-                    'Groq API returned 403 (Permission Denied) for model "%s". %s. Check your model permissions at https://console.groq.com/settings/limits or try a different model.',
-                    $model,
-                    $error_detail
-                )
-            );
-        }
-
-        if ( $code < 200 || $code >= 300 ) {
-            return new WP_Error(
-                'api_error',
-                sprintf( 'Groq API returned HTTP %d: %s', $code, wp_trim_words( $body, 30, '...' ) )
-            );
-        }
 
         $data = json_decode( $body, true );
 

@@ -432,29 +432,26 @@ SYSTEM;
             'top_p'       => 0.9,
         ) );
 
-        $response = wp_remote_post( $this->api_url, array(
+        $response = oo_safe_http_post( 'AUDIT', $this->api_url, array(
             'timeout' => $this->api_timeout,
             'headers' => array(
                 'Content-Type'  => 'application/json',
                 'Authorization' => 'Bearer ' . $this->api_key,
             ),
             'body' => $body,
-        ) );
+        ), array( 'source' => 'class-ai-authenticity-checker', 'model' => $model ) );
 
         if ( is_wp_error( $response ) ) {
+            // Wrapper already logged. Distinguish 429 for caller.
+            $http_status = oo_http_error_status( $response );
+            if ( 429 === $http_status ) {
+                return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded.' );
+            }
             return new WP_Error( 'api_error', 'HTTP request failed: ' . $response->get_error_message() );
         }
 
         $code = wp_remote_retrieve_response_code( $response );
         $body = wp_remote_retrieve_body( $response );
-
-        if ( 429 === $code ) {
-            return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded.' );
-        }
-
-        if ( $code < 200 || $code >= 300 ) {
-            return new WP_Error( 'api_error', sprintf( 'Groq API returned HTTP %d.', $code ) );
-        }
 
         $data = json_decode( $body, true );
 

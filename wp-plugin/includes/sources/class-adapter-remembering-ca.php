@@ -1020,17 +1020,13 @@ class Ontario_Obituaries_Adapter_Remembering_Ca extends Ontario_Obituaries_Sourc
         // Observed: logos 5-12 KB, portraits 20 KB - 500+ KB.
         $min_portrait_bytes = 15360; // 15 KB
 
-        $response = wp_remote_head( $url, array(
-            'timeout'    => 5,
-            'user-agent' => 'Mozilla/5.0 (compatible; OntarioObituaries/4.0)',
-        ) );
+        $response = oo_safe_http_head( 'SCRAPE', $url, array(
+            'timeout' => 5,
+        ), array( 'source' => 'class-adapter-remembering-ca', 'purpose' => 'portrait-check' ) );
 
         if ( is_wp_error( $response ) ) {
-            // Network error — skip image to be safe.
-            ontario_obituaries_log(
-                sprintf( 'v4.0.1: HEAD request failed for image %s — skipping (may be logo).', $url ),
-                'debug'
-            );
+            // Network error or HTTP ≥ 400 — skip image to be safe.
+            // Wrapper already logged the failure.
             return false;
         }
 

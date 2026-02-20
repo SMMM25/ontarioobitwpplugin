@@ -31,22 +31,24 @@ to prevent further breakage.
 - **Hosting**: Shared hosting with cPanel, SSH access available, WP-CLI at `/usr/local/sbin/wp`
 - **Deployment**: Manual upload via WP Admin → Plugins → Upload (WP Pusher can't do private repos). **WARNING**: Delete→Upload path runs `uninstall.php`, wiping settings. Back up Groq key + settings first.
 
-### Current Versions (as of 2026-02-18)
+### Current Versions (as of 2026-02-20)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 5.1.5 | monacomonuments.ca — deployed 2026-02-18 via WP Admin Upload |
-| **Main branch** | 5.1.5 | PR #93 merged |
-| **Sandbox** | 5.1.5 | Delete-upgrade activation fix |
+| **Live site** | 5.3.1 | monacomonuments.ca — deployed 2026-02-20 via SSH terminal |
+| **Main branch** | 5.3.1 | PR #99 merged |
+| **Sandbox** | 5.3.2 | PR #100 — Phase 2b HTTP wrapper conversion (pending merge) |
 
-### PROJECT STATUS: AI REWRITER AUTONOMOUS — v5.1.5 LIVE (2026-02-18)
+### PROJECT STATUS: ERROR HANDLING 40% COMPLETE — v5.3.2 SANDBOX (2026-02-20)
 > **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
-> The AI rewriter is now running autonomously on a repeating 5-minute WP-Cron schedule,
-> triggered by a cPanel cron job. Published count: 178 (and rising). Pending: ~403.
-> All published obituaries have AI rewrites — zero copyright risk on published content.
+> AI rewriter running autonomously. ~300+ published, ~296 pending.
+> Error handling project: **Phase 1 + 2a + 2b complete (40%)** — Foundation, cron hardening,
+> and HTTP wrapper conversion done. v5.3.2 routes ALL 15 HTTP call sites through `oo_safe_http_*`
+> wrappers (SSRF protection, URL sanitization, structured logging, body truncation, header allowlisting).
+> **QC-approved**: 3 required fixes applied (header normalization, redirection 0–5 clamp, malformed-URL guard)
+> plus 1 optional improvement (array header key normalization).
 >
-> **NEW URGENT ISSUE**: All obituary images on published pages are **hotlinked** from
-> `cdn-otf-cas.prfct.cc` (Tribute Archive CDN). This poses bandwidth theft, copyright,
-> and reliability risks. See **Section 28** for details.
+> **URGENT ISSUE**: All obituary images are **hotlinked** from `cdn-otf-cas.prfct.cc`.
+> See **Section 28** for details.
 >
 > Previous audit findings (Section 26) and fix plan (Section 27) remain as historical reference.
 
@@ -96,6 +98,9 @@ to prevent further breakage.
 | AI Rewriter immediate batch on save | v4.2.4 | ✅ LIVE |
 | Future death date rejection | v4.2.4 | ✅ LIVE |
 | q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
+| Error handling Phase 1 (Foundation) | v5.3.0 | ✅ DEPLOYED — `oo_log`, `oo_safe_call`, `oo_db_check`, health counters |
+| Error handling Phase 2a (Cron Hardening) | v5.3.1 | ✅ DEPLOYED — All 8 cron handlers wrapped, health monitoring |
+| Error handling Phase 2b (HTTP Wrappers) | v5.3.2 | ✅ CODE COMPLETE (PR #100) — All 15 `wp_remote_*` → `oo_safe_http_*`, SSRF, URL sanitization |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -165,6 +170,8 @@ to prevent further breakage.
 | `includes/class-gofundme-linker.php` | GoFundMe campaign auto-linker |
 | `includes/class-ai-authenticity-checker.php` | AI data quality auditor |
 | `includes/class-groq-rate-limiter.php` | Shared Groq TPM rate limiter (v5.0.6) |
+| `includes/class-error-handler.php` | Error handling: `oo_log`, `oo_safe_call`, `oo_safe_http_*`, `oo_db_check`, health (v5.3.0+) |
+| `includes/class-image-localizer.php` | Image download/localization pipeline (v5.2.0) |
 | `assets/css/ontario-chatbot.css` | Chatbot frontend styles |
 | `assets/js/ontario-chatbot.js` | Chatbot frontend JavaScript |
 | `PLATFORM_OVERSIGHT_HUB.md` | THIS FILE — rules + project state |
@@ -207,6 +214,12 @@ to prevent further breakage.
 | #88-#91 | Merged | v5.1.0-v5.1.2 | AI rewriter fixes: validator demotions, queue deadlock prevention |
 | #92 | Merged | v5.1.4 | Repeating 5-min rewrite schedule + admin cache fix + ai_rewrite_enabled gate |
 | #93 | Merged | v5.1.5 | Delete-upgrade activation fix: infer ai_rewrite_enabled when settings wiped |
+| #95 | Merged | v5.2.0 | Image Localizer — stream-to-disk, full error handling |
+| #96 | Merged | v5.3.0 | Phase 1 Error Handling Foundation |
+| #97 | Merged | v5.3.1 | Phase 2a Cron Handler Hardening — all 8 cron handlers wrapped |
+| #98 | Merged | v5.3.1 | Version bump to v5.3.1 |
+| #99 | Merged | v5.3.1 | Name validation hotfix — strip nicknames, demote to warning |
+| #100 | Open | v5.3.2 | Phase 2b — route all HTTP through oo_safe_http wrappers (15 call sites) |
 
 ### Remaining Work (priority order — updated 2026-02-18)
 
@@ -242,11 +255,12 @@ to prevent further breakage.
 #### PREVIOUSLY KNOWN (carried forward)
 18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done
 19. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ → **RESOLVED** — v5.1.5 runs autonomously with 5-min repeating schedule
-20. **Enable Google Ads Optimizer** when busy season starts (spring)
-21. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
-22. **Schema redesign**: Handle records without death date (future PR)
-23. **Out-of-province filtering** (low priority)
-24. **Automated deployment** via GitHub Actions or WP Pusher paid (low priority)
+20. **Error handling project** — Phase 2c-4 remaining (DB hotspots, AJAX nonces, health dashboard). **Phase 2b COMPLETE** (v5.3.2, PR #100).
+21. **Enable Google Ads Optimizer** when busy season starts (spring)
+22. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
+23. **Schema redesign**: Handle records without death date (future PR)
+24. **Out-of-province filtering** (low priority)
+25. **Automated deployment** via GitHub Actions or WP Pusher paid (low priority)
 
 ---
 
@@ -1601,3 +1615,135 @@ All obituary images displayed on monacomonuments.ca are **hotlinked** from the s
 3. **cPanel vs crontab**: Never use `crontab -l | ... | crontab -` on cPanel — it can wipe cPanel-managed cron entries. Always edit via cPanel interface.
 4. **Bare `wp` fails in cron**: Use `/usr/local/bin/php /usr/local/sbin/wp` for WP-CLI in cron jobs. The `$argv` variable is not set in cron's restricted shell environment.
 5. **Default values matter**: If `ai_rewrite_enabled` defaults to `false`, any settings wipe disables the entire rewrite pipeline silently. v5.1.5 adds inference logic as a safety net.
+
+---
+
+## Section 30 — Error Handling Project & v5.3.x Session Log (2026-02-20)
+
+> This section documents the error handling project implementation, Phase 2a QC review,
+> v5.3.1 hotfix for name validation, and production deployment.
+
+### Error Handling Project Overview
+
+**Proposal**: See `ERROR_HANDLING_PROPOSAL.md` for the full v6.0 error handling plan.
+**Scope**: 38 PHP files, 22,893 lines. Target: wrap all DB/HTTP/AJAX/cron/template operations.
+**Status**: 40% complete (Phase 1 + Phase 2a deployed; Phase 2b code-complete in PR #100).
+
+### What Was Accomplished (2026-02-20)
+
+1. **Phase 1 — Error Handling Foundation (PR #96, v5.3.0)**:
+   - New `includes/class-error-handler.php` (779 lines) with three core wrappers:
+     - `oo_safe_call()` — catches Throwable, logs structured errors, returns fallback
+     - `oo_safe_http()` — wraps `wp_safe_remote_get()` with WP_Error/status checks
+     - `oo_db_check()` — validates `$wpdb` return values, logs failures with redacted SQL
+   - Structured logging via `oo_log()` with subsystem + error code + run ID + context
+   - Health counters via `wp_options` (no DB table): `oo_health_increment()`, `oo_health_get_summary()`
+   - Log deduplication: suppresses repeated subsystem+code pairs for 5 minutes (counters still increment)
+   - Run IDs: `oo_run_id()` ties all log entries from one cron tick together
+   - SQL redaction by default (`oo_redact_query()`), opt-in full SQL via `OO_DEBUG_LOG_SQL`
+
+2. **Phase 2a — Cron Handler Hardening (PR #97, v5.3.1)**:
+   - All 8 cron handlers wrapped with Phase 1 error handling:
+     - `ai_rewrite_batch()` — full try/catch/finally with bootstrap crash coverage, settings gate, reschedule check
+     - `gofundme_batch()`, `authenticity_audit()`, `google_ads_daily_analysis()` — wrapped with `oo_safe_call()` + health records
+     - `cleanup_duplicates`, `shutdown_rewriter`, `dedup_once` — catch blocks upgraded to use `oo_log()`
+   - **QC-required fixes** (all 3 implemented):
+     - Bootstrap crash coverage: try/catch before lock acquisition (CRON_REWRITE_BOOTSTRAP_CRASH)
+     - Settings gate: check `ai_rewrite_enabled` before lock (CRON_REWRITE_DISABLED)
+     - Reschedule failure: check `wp_schedule_event()` return, log warning (CRON_REWRITE_RESCHEDULE_FAIL)
+   - **QC-recommended fixes** (both implemented):
+     - Accurate remaining count: `$rewriter->get_pending_count()` after processing
+     - Structured lifecycle logging: `oo_log()` for all key events with fallback to `ontario_obituaries_log()`
+   - 13 new error codes added
+   - Health tracking: `oo_health_record_ran()` distinguishes completed vs in-progress
+
+3. **Version bump (PR #98, v5.3.1)**: Plugin header and constant bumped to 5.3.1.
+
+4. **Name validation hotfix (PR #99, v5.3.1)**:
+   - **Root cause**: Obituary ID 1083 ("Patricia Gillian Ansaldo (Gillian)") had a parenthesized nickname that the name validator could not match in the AI rewrite output.
+   - **Impact**: The validator hard-failed, and since the query was `ORDER BY created_at DESC LIMIT 1`, the same obituary was retried every cron tick — blocking the entire queue for 8+ hours (101 consecutive failures).
+   - **Detection**: Phase 2a's health monitoring flagged `CRON_REWRITE_CONSECUTIVE_FAIL = 101` with no `last_success[REWRITE]` — confirming the error handling was working as designed.
+   - **Fix**: (a) Strip parenthesized nicknames from names before validation using regex. (b) Demote `name_missing` from hard-fail to warning, matching existing pattern for date/age/location validators.
+   - **Result**: ID 1083 published successfully. Queue unblocked. Pending count dropping.
+
+### Production Deployment (2026-02-20)
+
+- **Method**: Terminal deployment via SSH (unzip hotfix directly into plugin directory)
+- **Plugin directory**: `~/public_html/wp-content/plugins/ontario-obituaries/` (not `wp-plugin`)
+- **Deployment issue encountered**: Initial attempt created a duplicate plugin directory; resolved by removing incorrect folder and deploying to correct path.
+- **Duplicate function conflict**: `ontario_obituaries_valid_statuses()` redeclared — caused by having files from both old and new versions. Resolved by clean deployment.
+
+### Post-Deploy Verification (2026-02-20)
+
+| Test | Result |
+|------|--------|
+| `wp cron event run --due-now` | ✅ Completed in ~22s |
+| Transient lock cleared | ✅ No stale lock |
+| `oo_health_get_summary()` | ✅ `pipeline_healthy = true` |
+| `last_success[REWRITE]` populated | ✅ 2026-02-20 11:05:58 |
+| `last_success[SCRAPE]` populated | ✅ 2026-02-20 11:03:11 |
+| `last_success[DEDUP]` populated | ✅ 2026-02-20 11:05:06 |
+| `process_batch()` succeeded=1 failed=0 | ✅ ID 1083 published |
+| Pending count decreasing | ✅ 302 → 296 (and falling) |
+| No PHP fatal errors | ✅ Clean operation |
+
+### Key Finding: cPanel cron-rewriter.php is Primary Processor
+
+The cPanel standalone `cron-rewriter.php` (which runs independently via cPanel cron) is the primary processor of the rewrite queue. WordPress's `ontario_obituaries_ai_rewrite_batch` hook detects the `ontario_obituaries_rewriter_running` transient set by the standalone script and correctly skips (returns in ~0.005s). This lock-based coordination works as designed:
+
+1. cPanel cron fires every 5 minutes → `cron-rewriter.php` → sets transient lock → processes batch → releases lock
+2. WP-Cron's `ai_rewrite_batch` fires → sees transient → skips immediately
+3. No double-processing, no stale locks
+
+### Technical Lessons (v5.3.x)
+
+1. **Error handling reveals hidden bugs**: Phase 2a's health monitoring (`CRON_REWRITE_CONSECUTIVE_FAIL = 101`) immediately surfaced the name validation queue-blocking bug that had been invisible before.
+2. **Name validation edge cases**: Parenthesized nicknames (e.g., "(Gillian)") in obituary names can break name-matching logic. Strip before comparing.
+3. **Demote validators to warnings**: Hard-fail validators on individual fields can block entire queues. Use warnings for non-critical fields (name mentions, dates, ages), matching the pattern established in v5.1.2.
+4. **Terminal deployment for hotfixes**: WP-Admin upload can cause duplicate function conflicts. Direct SSH/terminal deployment is safer for hotfixes.
+5. **`groq_api_key` stored separately**: The Groq API key is in its own option (`ontario_obituaries_groq_api_key`), NOT in the main settings JSON. Settings checks must look in both places.
+
+### Phase 2b — HTTP Wrapper Conversion (PR #100, v5.3.2)
+
+**What was done**:
+- Converted all 15 `wp_remote_*` call sites across 9 files to use `oo_safe_http_get()`, `oo_safe_http_head()`, or `oo_safe_http_post()`.
+- Enhanced wrappers in `class-error-handler.php` to return enriched `WP_Error` objects containing `status`, `body` (capped at 4 KB), and allowlisted `headers`.
+- Added 3 helper functions: `oo_http_error_status()`, `oo_http_error_body()`, `oo_http_error_header()`.
+- Added 2 utility functions: `oo_redact_url()` (strips query strings for safe logging), `oo_safe_error_headers()` (allowlist: `retry-after`, `content-type`, `x-request-id`, `cf-ray`, `x-ratelimit-*`).
+- URL validation: `esc_url_raw()` + `wp_http_validate_url()` reject non-HTTP, private-IP, and malformed URLs before any request is made.
+
+**Safety guarantees (QC sanity checks A–F)**:
+| Check | Status |
+|-------|--------|
+| A — No secrets in logs | ✅ Only redacted URL + context logged; headers/body never in `oo_log()` |
+| B — Memory capped | ✅ Body ≤ 4 KB at storage; `oo_http_error_body()` re-caps to 2 KB on retrieval |
+| C — Status-code branching | ✅ `oo_http_error_status()` returns HTTP code (or 0 for transport failures) |
+| D — Defaults enforced | ✅ `sslverify` filter-only; `redirection` capped ≤ 5; `timeout` clamped 1–60 s |
+| E — SSRF/URL validation | ✅ `esc_url_raw()` + `wp_safe_remote_*` blocks private/reserved IPs |
+| F — Success shape unchanged | ✅ On 2xx, returns the normal `wp_remote_*` response array |
+
+**QC gate results**:
+| Gate | Metric | Result |
+|------|--------|--------|
+| 1 — Raw HTTP eliminated | `wp_remote_*` in app code | **0** (was 15) |
+| 2 — No duplicate logging | `oo_log()` outside wrapper | **0** |
+| 3 — Status-code preserved | `oo_http_error_*` helper uses | **13** |
+| 4 — No secrets in logs | Auth/key/token logged | **0** |
+| 5 — Version bump | Plugin version | **5.3.2** |
+
+**Files changed**: 11 files, 583 insertions, 297 deletions.
+
+**Conversion map (15 call sites)**:
+| # | File | Old Call | New Call |
+|---|------|----------|----------|
+| 1 | `class-source-adapter-base.php` | `wp_remote_get` | `oo_safe_http_get('SCRAPE', ...)` |
+| 2 | `class-adapter-remembering-ca.php` | `wp_remote_head` | `oo_safe_http_head('SCRAPE', ...)` |
+| 3-5 | `class-ai-rewriter.php` (3 sites) | `wp_remote_post` | `oo_safe_http_post('REWRITE', ...)` |
+| 6 | `class-ai-chatbot.php` | `wp_remote_post` | `oo_safe_http_post('CHATBOT', ...)` |
+| 7 | `class-ai-authenticity-checker.php` | `wp_remote_post` | `oo_safe_http_post('AUDIT', ...)` |
+| 8 | `class-gofundme-linker.php` | `wp_remote_post` | `oo_safe_http_post('GOFUNDME', ...)` |
+| 9 | `class-indexnow.php` | `wp_remote_post` | `oo_safe_http_post('SEO', ...)` |
+| 10-14 | `class-google-ads-optimizer.php` (5 sites) | `wp_remote_post` | `oo_safe_http_post('GOOGLE_ADS', ...)` |
+| 15 | `class-image-pipeline.php` | `wp_remote_head` | `oo_safe_http_head('IMAGE', ...)` |
+
+**Allowed exceptions**: `wp_safe_remote_*` inside `class-error-handler.php` (the wrappers themselves) and `class-image-localizer.php` (stream-to-disk has its own handling).

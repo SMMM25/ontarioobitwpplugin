@@ -224,7 +224,7 @@ class Ontario_Obituaries_AI_Chatbot {
         // Add current message.
         $messages[] = array( 'role' => 'user', 'content' => $message );
 
-        $response = wp_remote_post( 'https://api.groq.com/openai/v1/chat/completions', array(
+        $response = oo_safe_http_post( 'CHATBOT', 'https://api.groq.com/openai/v1/chat/completions', array(
             'timeout' => 30,
             'headers' => array(
                 'Authorization' => 'Bearer ' . $groq_key,
@@ -236,10 +236,11 @@ class Ontario_Obituaries_AI_Chatbot {
                 'temperature' => 0.7,
                 'max_tokens'  => 300,
             ) ),
-        ) );
+        ), array( 'source' => 'class-ai-chatbot' ) );
 
         if ( is_wp_error( $response ) ) {
-            $this->log( 'Groq API error: ' . $response->get_error_message(), 'error' );
+            // Wrapper already logged. Log only business-event (no HTTP details).
+            $this->log( 'Groq API unavailable — falling back to rules.', 'warning' );
             // QC-R11-1: Release reservation on failure — no tokens consumed.
             if ( $has_reservation && $chatbot_limiter ) {
                 $chatbot_limiter->release_reservation( $chatbot_estimate, 'chatbot' );
@@ -251,7 +252,7 @@ class Ontario_Obituaries_AI_Chatbot {
 
         if ( empty( $body['choices'][0]['message']['content'] ) ) {
             $error = isset( $body['error']['message'] ) ? $body['error']['message'] : 'Empty response';
-            $this->log( 'Groq chatbot error: ' . $error, 'error' );
+            $this->log( 'Groq chatbot: empty/invalid content — ' . $error, 'error' );
             // QC-R11-1: Release reservation on failure — no tokens consumed.
             if ( $has_reservation && $chatbot_limiter ) {
                 $chatbot_limiter->release_reservation( $chatbot_estimate, 'chatbot' );
