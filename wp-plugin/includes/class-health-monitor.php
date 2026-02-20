@@ -445,6 +445,33 @@ class Ontario_Obituaries_Health_Monitor {
             'detail' => $handler_ok ? __( 'All functions loaded', 'ontario-obituaries' ) : __( 'Missing', 'ontario-obituaries' ),
         );
 
+        // 7. v6.0.0: Error log table exists.
+        if ( function_exists( 'oo_error_log_table' ) ) {
+            $err_table = oo_error_log_table();
+
+            // QC-R3: Validate derived table name against allowlist regex before raw SQL.
+            if ( ! preg_match( '/^[A-Za-z0-9_]+$/', $err_table ) ) {
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'warning', 'HEALTH', 'ERROR_TABLE_NAME_INVALID', 'Error log table name failed allowlist regex', array( 'table' => $err_table ) );
+                }
+                $checks[] = array(
+                    'label'  => __( 'Error log table', 'ontario-obituaries' ),
+                    'ok'     => false,
+                    'detail' => __( 'Invalid table prefix', 'ontario-obituaries' ),
+                );
+            } else {
+                $err_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $err_table ) );
+                $err_count  = $err_exists ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$err_table}`" ) : 0;
+                $checks[] = array(
+                    'label'  => __( 'Error log table', 'ontario-obituaries' ),
+                    'ok'     => ! empty( $err_exists ),
+                    'detail' => $err_exists
+                        ? sprintf( __( '%d entries', 'ontario-obituaries' ), $err_count )
+                        : __( 'Table missing — will be created on next log write', 'ontario-obituaries' ),
+                );
+            }
+        }
+
         return $checks;
     }
 
@@ -476,5 +503,189 @@ class Ontario_Obituaries_Health_Monitor {
             }
         }
         return 'warning';
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  PHASE 5: ERROR LOG VIEWER PAGE
+     *
+     *  Admin page showing persistent error log from DB table.
+     *  Filterable by level, subsystem, code. Paginated.
+     *  Registered as submenu: Ontario Obituaries > Error Log
+     * ═══════════════════════════════════════════════════════════════════ */
+
+    /**
+     * Render the Error Log admin page.
+     *
+     * Reads from wp_ontario_obituaries_errors via oo_error_log_query().
+     * Provides filter dropdowns for level and subsystem, a search box,
+     * and pagination.
+     *
+     * @since 6.0.0
+     */
+    public static function render_error_log_page() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( esc_html__( 'You do not have permission to access this page.', 'ontario-obituaries' ) );
+        }
+
+        // Prevent cache.
+        if ( ! headers_sent() ) {
+            header( 'X-LiteSpeed-Cache-Control: no-cache' );
+            nocache_headers();
+        }
+
+        // Check if query function exists.
+        if ( ! function_exists( 'oo_error_log_query' ) ) {
+            echo '<div class="wrap"><h1>' . esc_html__( 'Error Log', 'ontario-obituaries' ) . '</h1>';
+            echo '<p>' . esc_html__( 'Error log functions not available. Update to v6.0.0+.', 'ontario-obituaries' ) . '</p></div>';
+            return;
+        }
+
+        // Read filters from GET params.
+        $filter_level     = isset( $_GET['oo_level'] ) ? sanitize_text_field( wp_unslash( $_GET['oo_level'] ) ) : '';
+        $filter_subsystem = isset( $_GET['oo_subsystem'] ) ? sanitize_text_field( wp_unslash( $_GET['oo_subsystem'] ) ) : '';
+        $filter_code      = isset( $_GET['oo_code'] ) ? sanitize_text_field( wp_unslash( $_GET['oo_code'] ) ) : '';
+        $filter_search    = isset( $_GET['oo_search'] ) ? sanitize_text_field( wp_unslash( $_GET['oo_search'] ) ) : '';
+        $page_num         = isset( $_GET['oo_page'] ) ? max( 1, (int) $_GET['oo_page'] ) : 1;
+        $per_page         = 50;
+
+        $result = oo_error_log_query( array(
+            'level'     => $filter_level,
+            'subsystem' => $filter_subsystem,
+            'code'      => $filter_code,
+            'search'    => $filter_search,
+            'limit'     => $per_page,
+            'offset'    => ( $page_num - 1 ) * $per_page,
+            'order'     => 'DESC',
+        ) );
+
+        $rows        = $result['rows'];
+        $total       = $result['total'];
+        $total_pages = max( 1, (int) ceil( $total / $per_page ) );
+        $version     = defined( 'ONTARIO_OBITUARIES_VERSION' ) ? ONTARIO_OBITUARIES_VERSION : '?';
+        $base_url    = admin_url( 'admin.php?page=ontario-obituaries-error-log' );
+
+        ?>
+        <div class="wrap">
+            <h1><?php esc_html_e( 'Ontario Obituaries — Error Log', 'ontario-obituaries' ); ?>
+                <span style="font-size:13px;color:#666;margin-left:12px;">v<?php echo esc_html( $version ); ?></span>
+            </h1>
+
+            <p><?php printf(
+                esc_html__( 'Showing %1$d of %2$d entries (page %3$d of %4$d). Stored in database, pruned daily (5000-row cap, 30-day TTL).', 'ontario-obituaries' ),
+                count( $rows ), $total, $page_num, $total_pages
+            ); ?></p>
+
+            <?php // ── Filters ── ?>
+            <form method="get" style="margin-bottom:16px;padding:12px 16px;background:#f9f9f9;border:1px solid #ddd;border-radius:4px;">
+                <input type="hidden" name="page" value="ontario-obituaries-error-log">
+                <label style="margin-right:12px;">
+                    <?php esc_html_e( 'Level:', 'ontario-obituaries' ); ?>
+                    <select name="oo_level">
+                        <option value=""><?php esc_html_e( 'All', 'ontario-obituaries' ); ?></option>
+                        <?php foreach ( array( 'debug', 'info', 'warning', 'error', 'critical' ) as $lvl ) : ?>
+                            <option value="<?php echo esc_attr( $lvl ); ?>" <?php selected( $filter_level, $lvl ); ?>><?php echo esc_html( ucfirst( $lvl ) ); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label style="margin-right:12px;">
+                    <?php esc_html_e( 'Subsystem:', 'ontario-obituaries' ); ?>
+                    <input type="text" name="oo_subsystem" value="<?php echo esc_attr( $filter_subsystem ); ?>" placeholder="SCRAPE, REWRITE..." size="15">
+                </label>
+                <label style="margin-right:12px;">
+                    <?php esc_html_e( 'Code:', 'ontario-obituaries' ); ?>
+                    <input type="text" name="oo_code" value="<?php echo esc_attr( $filter_code ); ?>" placeholder="DB_INSERT_FAIL..." size="20">
+                </label>
+                <label style="margin-right:12px;">
+                    <?php esc_html_e( 'Search:', 'ontario-obituaries' ); ?>
+                    <input type="text" name="oo_search" value="<?php echo esc_attr( $filter_search ); ?>" placeholder="keyword..." size="20">
+                </label>
+                <button type="submit" class="button"><?php esc_html_e( 'Filter', 'ontario-obituaries' ); ?></button>
+                <a href="<?php echo esc_url( $base_url ); ?>" class="button" style="margin-left:4px;"><?php esc_html_e( 'Reset', 'ontario-obituaries' ); ?></a>
+            </form>
+
+            <?php if ( empty( $rows ) ) : ?>
+                <p style="color:#46b450;"><?php esc_html_e( 'No log entries found matching your filters.', 'ontario-obituaries' ); ?></p>
+            <?php else : ?>
+                <table class="widefat fixed striped" style="table-layout:auto;">
+                    <thead>
+                        <tr>
+                            <th style="width:140px;"><?php esc_html_e( 'Time (UTC)', 'ontario-obituaries' ); ?></th>
+                            <th style="width:70px;"><?php esc_html_e( 'Level', 'ontario-obituaries' ); ?></th>
+                            <th style="width:90px;"><?php esc_html_e( 'Subsystem', 'ontario-obituaries' ); ?></th>
+                            <th style="width:160px;"><?php esc_html_e( 'Code', 'ontario-obituaries' ); ?></th>
+                            <th><?php esc_html_e( 'Message', 'ontario-obituaries' ); ?></th>
+                            <th style="width:80px;"><?php esc_html_e( 'Run ID', 'ontario-obituaries' ); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ( $rows as $row ) :
+                            $level_colors = array(
+                                'critical' => '#dc3232',
+                                'error'    => '#d63638',
+                                'warning'  => '#dba617',
+                                'info'     => '#2271b1',
+                                'debug'    => '#999',
+                            );
+                            $color = isset( $level_colors[ $row->level ] ) ? $level_colors[ $row->level ] : '#666';
+                        ?>
+                            <tr>
+                                <td><code style="font-size:11px;"><?php echo esc_html( $row->created_at ); ?></code></td>
+                                <td><span style="color:<?php echo esc_attr( $color ); ?>;font-weight:600;text-transform:uppercase;font-size:11px;"><?php echo esc_html( $row->level ); ?></span></td>
+                                <td><code style="font-size:11px;"><?php echo esc_html( $row->subsystem ); ?></code></td>
+                                <td><code style="font-size:11px;"><?php echo esc_html( $row->code ); ?></code></td>
+                                <td style="word-break:break-word;">
+                                    <?php echo esc_html( wp_trim_words( $row->message, 30 ) ); ?>
+                                    <?php if ( ! empty( $row->context ) && '{}' !== $row->context && '' !== $row->context ) : ?>
+                                        <details style="margin-top:4px;">
+                                            <summary style="cursor:pointer;color:#2271b1;font-size:11px;"><?php esc_html_e( 'Context', 'ontario-obituaries' ); ?></summary>
+                                            <pre style="font-size:10px;background:#f6f7f7;padding:6px;margin:4px 0 0;overflow:auto;max-height:200px;"><?php echo esc_html( wp_json_encode( json_decode( $row->context ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ); ?></pre>
+                                        </details>
+                                    <?php endif; ?>
+                                </td>
+                                <td><code style="font-size:10px;"><?php echo esc_html( $row->run_id ); ?></code></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+                <?php // ── Pagination ── ?>
+                <?php if ( $total_pages > 1 ) : ?>
+                    <div style="margin-top:12px;">
+                        <?php
+                        $query_args = array(
+                            'page'         => 'ontario-obituaries-error-log',
+                            'oo_level'     => $filter_level,
+                            'oo_subsystem' => $filter_subsystem,
+                            'oo_code'      => $filter_code,
+                            'oo_search'    => $filter_search,
+                        );
+                        if ( $page_num > 1 ) :
+                            $query_args['oo_page'] = $page_num - 1;
+                        ?>
+                            <a href="<?php echo esc_url( add_query_arg( $query_args, admin_url( 'admin.php' ) ) ); ?>" class="button">&laquo; <?php esc_html_e( 'Previous', 'ontario-obituaries' ); ?></a>
+                        <?php endif; ?>
+
+                        <span style="margin:0 8px;">
+                            <?php printf( esc_html__( 'Page %1$d of %2$d', 'ontario-obituaries' ), $page_num, $total_pages ); ?>
+                        </span>
+
+                        <?php if ( $page_num < $total_pages ) :
+                            $query_args['oo_page'] = $page_num + 1;
+                        ?>
+                            <a href="<?php echo esc_url( add_query_arg( $query_args, admin_url( 'admin.php' ) ) ); ?>" class="button"><?php esc_html_e( 'Next', 'ontario-obituaries' ); ?> &raquo;</a>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+            <?php endif; ?>
+
+            <p style="color:#999;margin-top:24px;font-size:12px;">
+                <?php printf(
+                    esc_html__( 'Generated at %s UTC. Data from %s table.', 'ontario-obituaries' ),
+                    esc_html( current_time( 'mysql', true ) ),
+                    esc_html( function_exists( 'oo_error_log_table' ) ? oo_error_log_table() : 'N/A' )
+                ); ?>
+            </p>
+        </div>
+        <?php
     }
 }

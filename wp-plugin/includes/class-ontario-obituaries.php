@@ -105,6 +105,16 @@ class Ontario_Obituaries {
                 'ontario-obituaries-health',
                 array( 'Ontario_Obituaries_Health_Monitor', 'render_page' )
             );
+
+            // v6.0.0: Phase 5 — Error Log viewer (DB-backed).
+            add_submenu_page(
+                'ontario-obituaries',
+                __( 'Error Log', 'ontario-obituaries' ),
+                __( 'Error Log', 'ontario-obituaries' ),
+                'manage_options',
+                'ontario-obituaries-error-log',
+                array( 'Ontario_Obituaries_Health_Monitor', 'render_error_log_page' )
+            );
         }
     }
 

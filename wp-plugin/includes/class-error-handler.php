@@ -1,12 +1,13 @@
 <?php
 /**
- * Error Handling Foundation — Phase 1
+ * Error Handling Foundation — Phase 1 + Phase 5 (DB Persistence)
  *
  * Provides three lightweight wrappers that standardize error detection and
- * logging across the plugin WITHOUT adding a database table.
+ * logging across the plugin.
  *
  * Every log entry includes: subsystem + error_code + context (obit_id, run_id)
- * so that any failure can be traced to its exact cause in the PHP error log.
+ * so that any failure can be traced to its exact cause in the PHP error log
+ * AND in the persistent DB error table.
  *
  * Wrappers:
  *   oo_safe_call( $subsystem, $callable, $fallback )  — catches Throwable
@@ -15,10 +16,18 @@
  *
  * Logging:
  *   oo_log( $level, $subsystem, $code, $message, $context )
- *     → writes directly to error_log (v5.3.6: no longer calls ontario_obituaries_log)
+ *     → writes directly to error_log (v5.3.6+)
+ *     → v6.0.0: also buffers to DB table (flushed on shutdown or immediately for error/critical)
  *     → always writes structured prefix for grep-ability
  *
- * Health counters (wp_options, no DB table):
+ * DB Persistence (v6.0.0 — Phase 5):
+ *   oo_error_log_ensure_table()  — creates wp_ontario_obituaries_errors if missing
+ *   oo_error_log_flush()         — writes buffered entries to DB (shutdown hook)
+ *   oo_error_log_prune()         — enforces 5000-row cap + 30-day TTL
+ *   oo_error_log_query()         — retrieves log entries with filters
+ *   oo_maybe_send_critical_alert() — emails admin on critical, max 1/hour
+ *
+ * Health counters (wp_options, transient-based):
  *   oo_health_increment( $code )           — bumps a counter in a transient
  *   oo_health_get_counts()                 — returns [ code => count ] for last 24h
  *   oo_health_record_critical( $code,$msg) — stores last critical in wp_options
@@ -40,7 +49,14 @@
  *   - Zero changes to existing data paths in the happy path.
  *   - v5.3.6: oo_log() now writes directly to error_log. ontario_obituaries_log()
  *     forwards TO oo_log() (one-way bridge). No circular dependency.
- *   - No new DB table. Counters use transients + a single wp_option.
+ *
+ * PHASE 5 ADDITIONS (v6.0.0):
+ *   - DB error table: wp_ontario_obituaries_errors (persistent, queryable).
+ *   - Buffered writes: up to 50 entries per request, flushed on shutdown.
+ *   - Row cap: 5000 rows max, 30-day TTL, pruned by daily cron.
+ *   - Email alerts: critical errors trigger admin email (max 1/hour cooldown).
+ *   - Admin log viewer: filterable error log page in WP admin.
+ *   - Clean uninstall: table dropped, options/transients removed.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -68,6 +84,412 @@ function oo_run_id() {
     }
     return $id;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  PHASE 5: DB ERROR TABLE — Persistent structured logging
+ *
+ *  Table: {prefix}ontario_obituaries_errors
+ *  Row cap: 5000 max, 30-day TTL
+ *  Buffer: up to 50 entries per request, flushed on shutdown
+ *  Email: critical errors trigger admin alert (1/hour cooldown)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/** @var array In-memory buffer for batch DB writes. */
+global $oo_error_log_buffer;
+$oo_error_log_buffer = array();
+
+/** @var bool Whether the shutdown flush hook has been registered. */
+global $oo_error_log_shutdown_registered;
+$oo_error_log_shutdown_registered = false;
+
+/**
+ * Get the error log table name.
+ *
+ * @since 6.0.0
+ * @return string Full table name with prefix.
+ */
+function oo_error_log_table() {
+    global $wpdb;
+    return $wpdb->prefix . 'ontario_obituaries_errors';
+}
+
+/**
+ * Create the error log table if it doesn't exist.
+ *
+ * Uses dbDelta() for safe, idempotent table creation.
+ * Called during plugin activation and lazily on first log write.
+ *
+ * @since 6.0.0
+ * @return bool True if table exists after call.
+ */
+function oo_error_log_ensure_table() {
+    global $wpdb;
+    $table   = oo_error_log_table();
+    $charset = $wpdb->get_charset_collate();
+
+    // Quick check: if table already exists, skip dbDelta overhead.
+    $exists = get_transient( 'oo_error_table_exists' );
+    if ( '1' === $exists ) {
+        return true;
+    }
+
+    // Verify table actually exists in DB.
+    $check = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+    if ( $check === $table ) {
+        set_transient( 'oo_error_table_exists', '1', HOUR_IN_SECONDS );
+        return true;
+    }
+
+    // Create table via dbDelta.
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    $sql = "CREATE TABLE `{$table}` (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        level varchar(10) NOT NULL DEFAULT 'info',
+        subsystem varchar(30) NOT NULL DEFAULT '',
+        code varchar(60) NOT NULL DEFAULT '',
+        message text NOT NULL,
+        context text,
+        run_id varchar(20) NOT NULL DEFAULT '',
+        created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_level (level),
+        KEY idx_code (code),
+        KEY idx_created_at (created_at),
+        KEY idx_subsystem_created (subsystem, created_at)
+    ) {$charset};";
+    dbDelta( $sql );
+
+    // Verify creation.
+    $verify = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+    if ( $verify === $table ) {
+        set_transient( 'oo_error_table_exists', '1', HOUR_IN_SECONDS );
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Buffer a log entry for batch DB insert.
+ *
+ * Entries are flushed to the DB table on shutdown, or immediately
+ * when an error/critical arrives or the buffer reaches 50 entries.
+ *
+ * @since 6.0.0
+ * @param array $entry Associative array: level, subsystem, code, message, context, run_id, created_at.
+ */
+function oo_error_log_buffer( $entry ) {
+    global $oo_error_log_buffer, $oo_error_log_shutdown_registered;
+
+    // Defensive init — guard against global being unset or corrupted.
+    if ( ! isset( $oo_error_log_buffer ) || ! is_array( $oo_error_log_buffer ) ) {
+        $oo_error_log_buffer = array();
+    }
+    if ( ! isset( $oo_error_log_shutdown_registered ) ) {
+        $oo_error_log_shutdown_registered = false;
+    }
+
+    $oo_error_log_buffer[] = $entry;
+
+    // Register shutdown hook once.
+    if ( ! $oo_error_log_shutdown_registered ) {
+        $oo_error_log_shutdown_registered = true;
+        add_action( 'shutdown', 'oo_error_log_flush', 99 );
+    }
+
+    // Flush immediately on error/critical or when buffer is full.
+    if ( in_array( $entry['level'], array( 'error', 'critical' ), true )
+         || count( $oo_error_log_buffer ) >= 50 ) {
+        oo_error_log_flush();
+    }
+}
+
+/**
+ * Flush the in-memory buffer to the DB error table.
+ *
+ * Uses a single multi-row INSERT for efficiency. Silently falls back
+ * to error_log if the table doesn't exist or the insert fails.
+ *
+ * @since 6.0.0
+ */
+function oo_error_log_flush() {
+    global $wpdb, $oo_error_log_buffer;
+
+    // Defensive init — guard against global being unset or corrupted.
+    if ( ! isset( $oo_error_log_buffer ) || ! is_array( $oo_error_log_buffer ) ) {
+        $oo_error_log_buffer = array();
+    }
+
+    if ( empty( $oo_error_log_buffer ) ) {
+        return;
+    }
+
+    // Drain buffer (prevent re-entry from recursive oo_log calls).
+    $entries = $oo_error_log_buffer;
+    $oo_error_log_buffer = array();
+
+    // Ensure table exists (lazy creation).
+    if ( ! oo_error_log_ensure_table() ) {
+        // Table creation failed — entries were already written to error_log by oo_log().
+        return;
+    }
+
+    $table = oo_error_log_table();
+
+    // Build multi-row INSERT for efficiency (max 50 rows per flush).
+    // Context is truncated to 16 KB to keep the table lean (column is TEXT = 64 KB max).
+    $values = array();
+    foreach ( $entries as $e ) {
+        $values[] = $wpdb->prepare(
+            '(%s, %s, %s, %s, %s, %s, %s)',
+            substr( $e['level'], 0, 10 ),
+            substr( $e['subsystem'], 0, 30 ),
+            substr( $e['code'], 0, 60 ),
+            substr( $e['message'], 0, 65535 ),
+            isset( $e['context'] ) ? substr( $e['context'], 0, 16384 ) : '',
+            substr( $e['run_id'], 0, 20 ),
+            $e['created_at']
+        );
+    }
+
+    if ( empty( $values ) ) {
+        return;
+    }
+
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+    $sql = "INSERT INTO `{$table}` (level, subsystem, code, message, context, run_id, created_at) VALUES "
+         . implode( ', ', $values );
+    $result = $wpdb->query( $sql );
+
+    // Silent failure — entries are already in error_log as fallback.
+    if ( false === $result && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+        error_log( '[Ontario Obituaries][SYSTEM][ERROR_LOG_DB_FAIL] Failed to flush ' . count( $entries ) . ' entries: ' . $wpdb->last_error );
+    }
+}
+
+/**
+ * Prune the error log table: enforce 5000-row cap and 30-day TTL.
+ *
+ * Called by the daily health_cleanup cron. Safe to call multiple times.
+ *
+ * @since 6.0.0
+ * @return array Counts of rows pruned: [ 'ttl' => int, 'cap' => int ].
+ */
+function oo_error_log_prune() {
+    global $wpdb;
+    $table  = oo_error_log_table();
+    $pruned = array( 'ttl' => 0, 'cap' => 0 );
+
+    // Check table exists.
+    $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+    if ( $exists !== $table ) {
+        return $pruned;
+    }
+
+    // 1. Delete rows older than 30 days.
+    $cutoff      = gmdate( 'Y-m-d H:i:s', time() - ( 30 * DAY_IN_SECONDS ) );
+    $ttl_deleted = $wpdb->query( $wpdb->prepare(
+        "DELETE FROM `{$table}` WHERE created_at < %s",
+        $cutoff
+    ) );
+    $pruned['ttl'] = is_numeric( $ttl_deleted ) ? (int) $ttl_deleted : 0;
+
+    // 2. Enforce 5000-row cap (keep newest).
+    $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
+    if ( $count > 5000 ) {
+        $excess      = (int) ( $count - 5000 );
+        $cap_deleted = $wpdb->query(
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $excess is cast to int above.
+            "DELETE FROM `{$table}` ORDER BY id ASC LIMIT {$excess}"
+        );
+        $pruned['cap'] = ( isset( $cap_deleted ) && is_numeric( $cap_deleted ) ) ? (int) $cap_deleted : 0;
+    }
+
+    return $pruned;
+}
+
+/**
+ * Query the error log table with filters.
+ *
+ * @since 6.0.0
+ *
+ * @param array $args {
+ *     Optional query arguments.
+ *     @type string $level     Filter by level (e.g., 'error').
+ *     @type string $subsystem Filter by subsystem (e.g., 'SCRAPE').
+ *     @type string $code      Filter by error code (partial match).
+ *     @type string $search    Search in message text.
+ *     @type int    $limit     Max rows (default 100, max 500).
+ *     @type int    $offset    Offset for pagination (default 0).
+ *     @type string $order     'ASC' or 'DESC' (default 'DESC').
+ * }
+ * @return array { 'rows' => object[], 'total' => int }
+ */
+function oo_error_log_query( $args = array() ) {
+    global $wpdb;
+    $table = oo_error_log_table();
+
+    $defaults = array(
+        'level'     => '',
+        'subsystem' => '',
+        'code'      => '',
+        'search'    => '',
+        'limit'     => 100,
+        'offset'    => 0,
+        'order'     => 'DESC',
+    );
+    $args = wp_parse_args( $args, $defaults );
+
+    // Sanitize.
+    $args['limit']  = max( 1, min( (int) $args['limit'], 500 ) );
+    $args['offset'] = max( 0, (int) $args['offset'] );
+    $args['order']  = ( 'ASC' === strtoupper( $args['order'] ) ) ? 'ASC' : 'DESC';
+
+    // Check table exists.
+    $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+    if ( $exists !== $table ) {
+        return array( 'rows' => array(), 'total' => 0 );
+    }
+
+    // Build WHERE clauses.
+    $where   = array( '1=1' );
+    $prepare = array();
+
+    if ( ! empty( $args['level'] ) ) {
+        $where[]   = 'level = %s';
+        $prepare[] = sanitize_text_field( $args['level'] );
+    }
+    if ( ! empty( $args['subsystem'] ) ) {
+        $where[]   = 'subsystem = %s';
+        $prepare[] = strtoupper( sanitize_text_field( $args['subsystem'] ) );
+    }
+    if ( ! empty( $args['code'] ) ) {
+        $where[]   = 'code LIKE %s';
+        $prepare[] = '%' . $wpdb->esc_like( sanitize_text_field( $args['code'] ) ) . '%';
+    }
+    if ( ! empty( $args['search'] ) ) {
+        $where[]   = 'message LIKE %s';
+        $prepare[] = '%' . $wpdb->esc_like( sanitize_text_field( $args['search'] ) ) . '%';
+    }
+
+    $where_sql = implode( ' AND ', $where );
+
+    // Count total.
+    $count_sql = "SELECT COUNT(*) FROM `{$table}` WHERE {$where_sql}";
+    if ( ! empty( $prepare ) ) {
+        $count_sql = $wpdb->prepare( $count_sql, ...$prepare );
+    }
+    $total = (int) $wpdb->get_var( $count_sql );
+
+    // Fetch rows.
+    $query_sql  = "SELECT * FROM `{$table}` WHERE {$where_sql} ORDER BY id {$args['order']} LIMIT %d OFFSET %d";
+    $all_params = array_merge( $prepare, array( $args['limit'], $args['offset'] ) );
+    $rows       = $wpdb->get_results( $wpdb->prepare( $query_sql, ...$all_params ) );
+
+    return array(
+        'rows'  => is_array( $rows ) ? $rows : array(),
+        'total' => $total,
+    );
+}
+
+/**
+ * Send a critical error alert email to the site admin.
+ *
+ * Rate-limited: max 1 email per hour to prevent inbox flooding.
+ *
+ * SECURITY: The email body contains ONLY safe, non-sensitive fields:
+ *   site name, site URL, plugin version, error code, subsystem,
+ *   run ID, UTC timestamp, and a link to the admin Error Log page.
+ * NO context data, URLs, API keys, PII, or raw error messages are
+ * included — those live only in the DB error log (admin-only page).
+ *
+ * @since 6.0.0
+ *
+ * @param string $code    Error code.
+ * @param string $message Error message (used only for the sanitized summary).
+ * @param array  $context Additional context (NOT included in email body).
+ */
+function oo_maybe_send_critical_alert( $code, $message, $context = array() ) {
+    // Check cooldown (1 hour).
+    $cooldown_key = 'oo_critical_alert_cooldown';
+    if ( false !== get_transient( $cooldown_key ) ) {
+        return; // Still in cooldown.
+    }
+
+    // Allow disabling via filter.
+    if ( ! apply_filters( 'ontario_obituaries_send_critical_alerts', true ) ) {
+        return;
+    }
+
+    // Set cooldown BEFORE sending (prevent race condition).
+    set_transient( $cooldown_key, '1', HOUR_IN_SECONDS );
+
+    // Allow overriding recipient(s) via filter (default: admin_email).
+    $admin_email = get_option( 'admin_email' );
+    if ( empty( $admin_email ) ) {
+        return;
+    }
+
+    /**
+     * Filter the email recipient(s) for critical error alerts.
+     *
+     * @since 6.0.0
+     * @param string|array $recipients Email address(es). Default: admin_email.
+     * @param string       $code       Error code that triggered the alert.
+     */
+    $recipients = apply_filters( 'ontario_obituaries_critical_alert_recipients', $admin_email, $code );
+    if ( empty( $recipients ) ) {
+        return;
+    }
+
+    $site_name = get_bloginfo( 'name' );
+    $site_url  = home_url();
+    $version   = defined( 'ONTARIO_OBITUARIES_VERSION' ) ? ONTARIO_OBITUARIES_VERSION : '?';
+    $run_id    = isset( $context['run_id'] ) ? $context['run_id'] : oo_run_id();
+
+    // Extract only the subsystem from the code (e.g., 'SCRAPE' from 'SCRAPE_HTTP_FAIL').
+    $subsystem = '';
+    if ( false !== strpos( $code, '_' ) ) {
+        $subsystem = substr( $code, 0, strpos( $code, '_' ) );
+    }
+
+    // Sanitize message for email: strip anything that looks like a URL, token,
+    // or key, and truncate to 150 chars. This prevents accidental PII/secret leakage.
+    $safe_message = preg_replace( '/https?:\/\/\S+/', '[url-redacted]', $message );
+    $safe_message = preg_replace( '/[a-zA-Z0-9_\-]{20,}/', '[redacted]', $safe_message );
+    $safe_message = substr( $safe_message, 0, 150 );
+
+    $subject = sprintf(
+        '[%s] CRITICAL: Ontario Obituaries — %s',
+        $site_name,
+        $code
+    );
+
+    $body = sprintf(
+        "A critical error occurred in the Ontario Obituaries plugin.\n\n"
+        . "Site:       %s (%s)\n"
+        . "Plugin:     v%s\n"
+        . "Subsystem:  %s\n"
+        . "Error code: %s\n"
+        . "Summary:    %s\n"
+        . "Run ID:     %s\n"
+        . "Time (UTC): %s\n\n"
+        . "View full details (including context) in the Error Log:\n%s\n\n"
+        . "This alert is rate-limited to 1 per hour.\n"
+        . "To disable alerts: add_filter('ontario_obituaries_send_critical_alerts', '__return_false');",
+        $site_name,
+        $site_url,
+        $version,
+        $subsystem,
+        $code,
+        $safe_message,
+        $run_id,
+        gmdate( 'Y-m-d H:i:s' ),
+        admin_url( 'admin.php?page=ontario-obituaries-error-log' )
+    );
+
+    wp_mail( $recipients, $subject, $body );
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════
  *  STRUCTURED LOGGING
@@ -218,6 +640,26 @@ function oo_log( $level, $subsystem, $code, $message, $context = array() ) {
     // Record critical in wp_options for dashboard visibility.
     if ( 'critical' === $level ) {
         oo_health_record_critical( $code, $message, $context );
+    }
+
+    // v6.0.0 Phase 5: Buffer entry for DB persistence.
+    // Entries are flushed on shutdown or immediately for error/critical.
+    // The error_log write above is the primary fallback; DB is secondary.
+    if ( function_exists( 'oo_error_log_buffer' ) ) {
+        oo_error_log_buffer( array(
+            'level'      => $level,
+            'subsystem'  => strtoupper( $subsystem ),
+            'code'       => $code,
+            'message'    => $message,
+            'context'    => ! empty( $context ) ? wp_json_encode( $context ) : '',
+            'run_id'     => isset( $context['run_id'] ) ? $context['run_id'] : oo_run_id(),
+            'created_at' => current_time( 'mysql', true ),
+        ) );
+    }
+
+    // v6.0.0 Phase 5: Email alert on critical errors (max 1/hour).
+    if ( 'critical' === $level && function_exists( 'oo_maybe_send_critical_alert' ) ) {
+        oo_maybe_send_critical_alert( $code, $message, $context );
     }
 }
 
@@ -1016,7 +1458,11 @@ function oo_health_record_critical( $code, $message, $context = array() ) {
 }
 
 /**
- * Clean up all health data. Called from uninstall.php.
+ * Clean up all health data. Called from uninstall.php AND daily cron.
+ *
+ * When called from uninstall: drops error table, removes all options/transients.
+ * When called from daily cron: prunes error table (5000-row cap, 30-day TTL)
+ * and cleans up dedupe transients.
  *
  * @since 6.0.0
  */
@@ -1031,4 +1477,16 @@ function oo_health_cleanup() {
     // but we clean them explicitly on uninstall for completeness.
     global $wpdb;
     $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_transient_oo_dedupe_%' OR option_name LIKE '_transient_timeout_oo_dedupe_%'" );
+
+    // v6.0.0 Phase 5: Prune the error log table (daily cron).
+    // On uninstall, the table is dropped separately in uninstall.php.
+    if ( function_exists( 'oo_error_log_prune' ) ) {
+        oo_error_log_prune();
+    }
+
+    // Clean up error table existence transient.
+    delete_transient( 'oo_error_table_exists' );
+
+    // Clean up critical alert cooldown transient.
+    delete_transient( 'oo_critical_alert_cooldown' );
 }
