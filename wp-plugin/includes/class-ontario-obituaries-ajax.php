@@ -136,8 +136,18 @@ class Ontario_Obituaries_Ajax {
         $table_name = $wpdb->prefix . 'ontario_obituaries';
         $result     = $wpdb->delete( $table_name, array( 'id' => $id ), array( '%d' ) );
 
+        // v5.3.4: Phase 2d — structured DB check for delete (QC fix: gate audit on $result > 0).
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'AJAX', $result, 'DB_DELETE_FAIL', 'AJAX delete obituary failed', array( 'obit_id' => $id, 'user_id' => get_current_user_id() ) );
+        }
+
         if ( false === $result ) {
             wp_send_json_error( array( 'message' => __( 'Failed to delete obituary.', 'ontario-obituaries' ) ) );
+        }
+
+        // v5.3.4: Phase 2d — audit log only when a row was actually removed.
+        if ( $result > 0 && function_exists( 'oo_log' ) ) {
+            oo_log( 'info', 'AJAX', 'OBIT_DELETED', 'Obituary deleted via AJAX', array( 'obit_id' => $id, 'user_id' => get_current_user_id() ) );
         }
 
         // Clear caches after deletion

@@ -636,11 +636,17 @@ class Ontario_Obituaries_Groq_Rate_Limiter {
         // QC-R13: Check START TRANSACTION result — catches connection loss,
         // permission errors, and MyISAM-only tables up front.
         $tx_result = $wpdb->query( 'START TRANSACTION' );
+        // v5.3.4: Phase 2d — structured DB check; guard legacy log to avoid duplicate logging.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'RATELIMIT', $tx_result, 'DB_TRANSACTION_FAIL', 'START TRANSACTION failed in rate limiter CAS' );
+        }
         if ( false === $tx_result || ! empty( $wpdb->last_error ) ) {
-            $this->log_message(
-                sprintf( 'Groq rate limiter: START TRANSACTION failed — %s. Falling back to non-transactional CAS.', $wpdb->last_error ),
-                'error'
-            );
+            if ( ! function_exists( 'oo_db_check' ) ) {
+                $this->log_message(
+                    sprintf( 'Groq rate limiter: START TRANSACTION failed — %s. Falling back to non-transactional CAS.', $wpdb->last_error ),
+                    'error'
+                );
+            }
             // Fallback: non-transactional exact-match UPDATE (safe for single-row CAS).
             return $this->cas_update_fallback( $new_json, $old_version );
         }
@@ -698,11 +704,17 @@ class Ontario_Obituaries_Groq_Rate_Limiter {
             // QC-R13: Check COMMIT result — if COMMIT fails the transaction
             // is still open; ROLLBACK to release the lock cleanly.
             $commit_result = $wpdb->query( 'COMMIT' );
+            // v5.3.4: Phase 2d — structured DB check; guard legacy log to avoid duplicate logging.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'RATELIMIT', $commit_result, 'DB_TRANSACTION_FAIL', 'COMMIT failed in rate limiter CAS' );
+            }
             if ( false === $commit_result || ! empty( $wpdb->last_error ) ) {
-                $this->log_message(
-                    sprintf( 'Groq rate limiter: COMMIT failed — %s. Rolling back.', $wpdb->last_error ),
-                    'error'
-                );
+                if ( ! function_exists( 'oo_db_check' ) ) {
+                    $this->log_message(
+                        sprintf( 'Groq rate limiter: COMMIT failed — %s. Rolling back.', $wpdb->last_error ),
+                        'error'
+                    );
+                }
                 $wpdb->query( 'ROLLBACK' );
                 return 0;
             }
