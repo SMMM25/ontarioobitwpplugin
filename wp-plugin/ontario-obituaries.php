@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.3.6
+ * Version: 5.3.7
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.3.6' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.3.7' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -445,16 +445,30 @@ function ontario_obituaries_activate() {
     if ( version_compare( $current_db_version, '2.2.0', '<' ) ) {
         $fh_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$table_name}` LIKE 'funeral_home'" );
         if ( $fh_col && ( 'YES' === $fh_col->Null || '' !== (string) $fh_col->Default ) ) {
-            $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY funeral_home varchar(200) NOT NULL DEFAULT ''" );
+            $fh_mod = $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY funeral_home varchar(200) NOT NULL DEFAULT ''" );
+            // v5.3.7: Phase 4c — DB schema check (false = failure, 0 = OK).
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $fh_mod, 'DB_SCHEMA_FAIL', 'Failed to modify funeral_home column', array( 'table' => $table_name ) );
+            }
         }
 
         $loc_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$table_name}` LIKE 'location'" );
         if ( $loc_col && ( 'YES' === $loc_col->Null || '' !== (string) $loc_col->Default ) ) {
-            $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY location varchar(100) NOT NULL DEFAULT ''" );
+            $loc_mod = $wpdb->query( "ALTER TABLE `{$table_name}` MODIFY location varchar(100) NOT NULL DEFAULT ''" );
+            // v5.3.7: Phase 4c — DB schema check.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $loc_mod, 'DB_SCHEMA_FAIL', 'Failed to modify location column', array( 'table' => $table_name ) );
+            }
         }
 
-        $wpdb->query( "UPDATE `{$table_name}` SET funeral_home = '' WHERE funeral_home IS NULL" );
-        $wpdb->query( "UPDATE `{$table_name}` SET location = '' WHERE location IS NULL" );
+        $fh_null = $wpdb->query( "UPDATE `{$table_name}` SET funeral_home = '' WHERE funeral_home IS NULL" );
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCHEMA', $fh_null, 'DB_SCHEMA_FAIL', 'Failed to backfill NULL funeral_home', array( 'table' => $table_name ) );
+        }
+        $loc_null = $wpdb->query( "UPDATE `{$table_name}` SET location = '' WHERE location IS NULL" );
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCHEMA', $loc_null, 'DB_SCHEMA_FAIL', 'Failed to backfill NULL location', array( 'table' => $table_name ) );
+        }
     }
 
     // v3.0.0 migration: Add new columns if upgrading from < 3.0.0
@@ -478,7 +492,11 @@ function ontario_obituaries_activate() {
 
         foreach ( $new_columns as $col_name => $alter_sql ) {
             if ( ! in_array( $col_name, $existing_cols, true ) ) {
-                $wpdb->query( $alter_sql );
+                $col_result = $wpdb->query( $alter_sql );
+                // v5.3.7: Phase 4c — DB schema check.
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'SCHEMA', $col_result, 'DB_SCHEMA_FAIL', sprintf( 'Failed to add column %s', $col_name ), array( 'table' => $table_name, 'column' => $col_name ) );
+                }
             }
         }
 
@@ -496,7 +514,11 @@ function ontario_obituaries_activate() {
 
         foreach ( $new_indexes as $idx_name => $idx_sql ) {
             if ( ! in_array( $idx_name, $index_names, true ) ) {
-                $wpdb->query( $idx_sql );
+                $idx_result = $wpdb->query( $idx_sql );
+                // v5.3.7: Phase 4c — DB schema check.
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'SCHEMA', $idx_result, 'DB_SCHEMA_FAIL', sprintf( 'Failed to add index %s', $idx_name ), array( 'table' => $table_name, 'index' => $idx_name ) );
+                }
             }
         }
     }
@@ -524,20 +546,32 @@ function ontario_obituaries_activate() {
         );
         foreach ( $supp_migrations as $col => $sql ) {
             if ( ! in_array( $col, $supp_cols, true ) ) {
-                $wpdb->query( $sql );
+                $supp_col_result = $wpdb->query( $sql );
+                // v5.3.7: Phase 4c — DB schema check.
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'SCHEMA', $supp_col_result, 'DB_SCHEMA_FAIL', sprintf( 'Failed to add suppression column %s', $col ), array( 'table' => $supp_table, 'column' => $col ) );
+                }
             }
         }
 
         // Modify suppressed_at to allow NULL (suppress-after-verify requires NULL default)
         $supp_at_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$supp_table}` LIKE 'suppressed_at'" );
         if ( $supp_at_col && 'NO' === $supp_at_col->Null ) {
-            $wpdb->query( "ALTER TABLE `{$supp_table}` MODIFY suppressed_at datetime DEFAULT NULL" );
+            $supp_at_mod = $wpdb->query( "ALTER TABLE `{$supp_table}` MODIFY suppressed_at datetime DEFAULT NULL" );
+            // v5.3.7: Phase 4c — DB schema check.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $supp_at_mod, 'DB_SCHEMA_FAIL', 'Failed to modify suppressed_at to allow NULL', array( 'table' => $supp_table ) );
+            }
         }
 
         // Modify do_not_republish default to 0 (was 1; now 0 until verified)
         $dnr_col = $wpdb->get_row( "SHOW COLUMNS FROM `{$supp_table}` LIKE 'do_not_republish'" );
         if ( $dnr_col && '1' === (string) $dnr_col->Default ) {
-            $wpdb->query( "ALTER TABLE `{$supp_table}` MODIFY do_not_republish tinyint(1) NOT NULL DEFAULT 0" );
+            $dnr_mod = $wpdb->query( "ALTER TABLE `{$supp_table}` MODIFY do_not_republish tinyint(1) NOT NULL DEFAULT 0" );
+            // v5.3.7: Phase 4c — DB schema check.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $dnr_mod, 'DB_SCHEMA_FAIL', 'Failed to modify do_not_republish default', array( 'table' => $supp_table ) );
+            }
         }
     }
 
@@ -555,15 +589,24 @@ function ontario_obituaries_activate() {
 
         // Add 'status' column if it doesn't exist.
         if ( ! in_array( 'status', $existing_cols_460, true ) ) {
-            $wpdb->query( "ALTER TABLE `{$table_name}` ADD COLUMN status varchar(20) NOT NULL DEFAULT 'pending' AFTER provenance_hash" );
-            $wpdb->query( "ALTER TABLE `{$table_name}` ADD KEY idx_status (status)" );
+            $status_col = $wpdb->query( "ALTER TABLE `{$table_name}` ADD COLUMN status varchar(20) NOT NULL DEFAULT 'pending' AFTER provenance_hash" );
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $status_col, 'DB_SCHEMA_FAIL', 'Failed to add status column', array( 'table' => $table_name ) );
+            }
+            $status_idx = $wpdb->query( "ALTER TABLE `{$table_name}` ADD KEY idx_status (status)" );
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $status_idx, 'DB_SCHEMA_FAIL', 'Failed to add idx_status index', array( 'table' => $table_name ) );
+            }
         }
 
         // Add 'ai_description' column if it doesn't exist.
         // v4.6.4 FIX: This column is required by the AI Rewriter to store rewritten text.
         // It was missing from the original v4.6.0 migration, causing silent INSERT failures.
         if ( ! in_array( 'ai_description', $existing_cols_460, true ) ) {
-            $wpdb->query( "ALTER TABLE `{$table_name}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
+            $ai_desc_col = $wpdb->query( "ALTER TABLE `{$table_name}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $ai_desc_col, 'DB_SCHEMA_FAIL', 'Failed to add ai_description column', array( 'table' => $table_name ) );
+            }
         }
 
         // v5.0.0 FIX: REMOVED the TRUNCATE that was here. It wiped all obituaries
@@ -575,7 +618,11 @@ function ontario_obituaries_activate() {
         // Uses LIMIT 500 to bound execution time on large tables; runs once
         // per plugin update so stragglers are caught on next activation.
         $valid = implode( "','", array_map( 'esc_sql', ontario_obituaries_valid_statuses() ) );
-        $wpdb->query( "UPDATE `{$table_name}` SET status = 'pending' WHERE LOWER(COALESCE(status, '')) NOT IN ('{$valid}') LIMIT 500" );
+        $status_norm = $wpdb->query( "UPDATE `{$table_name}` SET status = 'pending' WHERE LOWER(COALESCE(status, '')) NOT IN ('{$valid}') LIMIT 500" );
+        // v5.3.7: Phase 4c — data cleanup check (false = failure, 0 = no dirty rows).
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCHEMA', $status_norm, 'DB_UPDATE_FAIL', 'Failed to normalize invalid status values', array( 'table' => $table_name ) );
+        }
         ontario_obituaries_log( 'v4.6.0 migration: Added status/ai_description columns. Existing records set to pending.', 'info' );
 
         // Clear cached data.
@@ -800,6 +847,10 @@ function ontario_obituaries_cleanup_duplicates() {
     $test_removed = $wpdb->query(
         "DELETE FROM `{$table}` WHERE ( name LIKE 'Test Obituary%' OR name LIKE 'Test Record%' OR name LIKE 'Test Data%' ) AND ( source_url = '' OR source_url LIKE '%monacomonuments.ca%' OR source_url LIKE '%example.com%' OR source_url LIKE '%localhost%' )"
     );
+    // v5.3.7: Phase 4c — DB check (false = failure, 0 = no test data).
+    if ( function_exists( 'oo_db_check' ) ) {
+        oo_db_check( 'CLEANUP', $test_removed, 'DB_DELETE_FAIL', 'Failed to remove test data records', array( 'table' => $table ) );
+    }
     if ( $test_removed > 0 ) {
         ontario_obituaries_log( sprintf( 'Removed %d test data records', $test_removed ), 'info' );
         $removed += $test_removed;
@@ -811,6 +862,10 @@ function ontario_obituaries_cleanup_duplicates() {
     $backfill_result = $wpdb->query(
         "UPDATE `{$table}` SET city_normalized = TRIM(location) WHERE city_normalized = '' AND location != '' AND location IS NOT NULL AND suppressed_at IS NULL"
     );
+    // v5.3.7: Phase 4c — DB check (false = failure, 0 = nothing to backfill).
+    if ( function_exists( 'oo_db_check' ) ) {
+        oo_db_check( 'CLEANUP', $backfill_result, 'DB_UPDATE_FAIL', 'Failed to backfill city_normalized', array( 'table' => $table ) );
+    }
     if ( $backfill_result > 0 ) {
         ontario_obituaries_log( sprintf( 'Backfilled city_normalized for %d records', $backfill_result ), 'info' );
     }
@@ -825,7 +880,11 @@ function ontario_obituaries_cleanup_duplicates() {
         foreach ( $obit_rows as $orow ) {
             $clean = preg_replace( '/\s+(Obituary|Obit\.?)$/i', '', $orow->name );
             if ( $clean !== $orow->name ) {
-                $wpdb->update( $table, array( 'name' => $clean ), array( 'id' => $orow->id ) );
+                $name_upd = $wpdb->update( $table, array( 'name' => $clean ), array( 'id' => $orow->id ) );
+                // v5.3.7: Phase 4c — DB check.
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'CLEANUP', $name_upd, 'DB_UPDATE_FAIL', 'Failed to strip Obituary suffix from name', array( 'obit_id' => $orow->id ) );
+                }
                 $name_cleaned++;
             }
         }
@@ -1278,13 +1337,21 @@ function ontario_obituaries_merge_rows( $table, $rows ) {
             $keep->description = $dupe->description;
         }
 
-        $wpdb->delete( $table, array( 'id' => $dupe->id ), array( '%d' ) );
+        $del_dupe = $wpdb->delete( $table, array( 'id' => $dupe->id ), array( '%d' ) );
+        // v5.3.7: Phase 4c — DB check (false = failure).
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'DEDUP', $del_dupe, 'DB_DELETE_FAIL', 'Failed to delete duplicate obituary', array( 'dupe_id' => $dupe->id, 'keep_id' => $keep->id ) );
+        }
         $removed++;
     }
 
     // Apply enrichments to the kept record
     if ( ! empty( $enrichments ) ) {
-        $wpdb->update( $table, $enrichments, array( 'id' => $keep->id ) );
+        $enrich_upd = $wpdb->update( $table, $enrichments, array( 'id' => $keep->id ) );
+        // v5.3.7: Phase 4c — DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'DEDUP', $enrich_upd, 'DB_UPDATE_FAIL', 'Failed to apply enrichments to kept record', array( 'keep_id' => $keep->id ) );
+        }
     }
 
     return $removed;

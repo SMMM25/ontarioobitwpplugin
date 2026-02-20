@@ -35,20 +35,21 @@ to prevent further breakage.
 ### Current Versions (as of 2026-02-20)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 5.3.5 | monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload |
-| **Main branch** | 5.3.6 | PR #108 merged (Phase 4.1 legacy logger bridge + cleanup cron + template helper) |
-| **Sandbox** | 5.3.6 | Ahead of live — awaiting deploy |
+| **Live site** | 5.3.6 | monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload |
+| **Main branch** | 5.3.7 | PR #109 merged (Phase 4.2 DB write wrappers for top 5 hotspot files) |
+| **Sandbox** | 5.3.7 | Ahead of live — awaiting deploy |
 
-### PROJECT STATUS: ERROR HANDLING 70% COMPLETE — v5.3.6 (2026-02-20)
+### PROJECT STATUS: ERROR HANDLING 75% COMPLETE — v5.3.7 (2026-02-20)
 > **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
 > AI rewriter running autonomously. ~300+ published, ~296 pending.
-> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 complete (70%)** — Foundation, cron hardening,
-> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, Health Dashboard, and legacy logger bridge all done.
-> v5.3.6 adds legacy-to-structured log bridge (154 calls captured), daily cleanup cron, and `oo_safe_render_template()` helper.
+> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 + 4.2 complete (75%)** — Foundation, cron hardening,
+> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, Health Dashboard, legacy logger bridge, and DB write wrapping all done.
+> v5.3.7 adds 15 oo_db_check() calls for schema migrations, data cleanup, dedup, and CAS rate-limiter writes.
 > **Phase 2c** (PR #102): 35 `oo_db_check()` calls across 8 files, strict false checks, NULL token fix.
 > **Phase 2d** (PR #104): AJAX delete audit gating, rate limiter duplicate-log guard, 4 files.
 > **Phase 3** (PR #106): `class-health-monitor.php`, submenu page, admin-bar badge, REST endpoint.
 > **Phase 4.1** (PR #108): Legacy logger bridge, daily cleanup cron, template render helper.
+> **Phase 4.2** (PR #109): 15 new oo_db_check() calls in ontario-obituaries.php (schema/DDL + cleanup + dedup) and class-groq-rate-limiter.php (CAS writes).
 >
 > **URGENT ISSUE**: All obituary images are **hotlinked** from `cdn-otf-cas.prfct.cc`.
 > See **Section 28** for details.
@@ -108,6 +109,7 @@ to prevent further breakage.
 | Error handling Phase 2d (AJAX + Remaining DB) | v5.3.4 | ✅ DEPLOYED — AJAX audit logging, rate limiter guard, display read logging |
 | Error handling Phase 3 (Health Dashboard) | v5.3.5 | ✅ DEPLOYED — Admin Health page, admin-bar badge, REST endpoint. QC-R1: frontend guard, QC-R2: table-name regex. Merge commit `f36e7f4` |
 | Error handling Phase 4.1 (Logger Bridge + Cron + Helper) | v5.3.6 | ✅ MERGED — Legacy→structured log bridge (154 calls), daily cleanup cron, `oo_safe_render_template()` helper |
+| Error handling Phase 4.2 (DB Write Wrapping) | v5.3.7 | ✅ MERGED — 15 new `oo_db_check()` calls: 13 in ontario-obituaries.php (schema/DDL + cleanup + dedup), 2 in class-groq-rate-limiter.php (CAS writes). Total ~52 DB checks across all phases |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -237,6 +239,7 @@ to prevent further breakage.
 | #106 | Merged | v5.3.5 | Phase 3 — Health Dashboard + admin-bar badge + REST endpoint + QC fixes (R1 frontend guard, R2 table regex). Merge `f36e7f4` |
 | #107 | Merged | v5.3.5 | Docs: Phase 3 QC fix details, merge commit, 65% progress |
 | #108 | Merged | v5.3.6 | Phase 4.1 — Legacy logger bridge + daily cleanup cron + oo_safe_render_template() helper |
+| #109 | Merged | v5.3.7 | Phase 4.2 — DB write wrappers for top 5 hotspot files (15 new oo_db_check calls) |
 
 ### Remaining Work (priority order — updated 2026-02-18)
 
@@ -272,7 +275,7 @@ to prevent further breakage.
 #### PREVIOUSLY KNOWN (carried forward)
 18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done
 19. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ → **RESOLVED** — v5.1.5 runs autonomously with 5-min repeating schedule
-20. **Error handling project** — Phases 4.2-4.3 remaining (DB write wrapping, template fallback wrappers). **Phase 4.1 COMPLETE** (v5.3.6, PR #108). Progress: **70%**.
+20. **Error handling project** — Phase 4.3 remaining (template fallback wrappers). **Phase 4.2 COMPLETE** (v5.3.7, PR #109). Progress: **75%**.
 21. **Enable Google Ads Optimizer** when busy season starts (spring)
 22. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
 23. **Schema redesign**: Handle records without death date (future PR)

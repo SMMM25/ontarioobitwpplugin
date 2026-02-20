@@ -700,6 +700,10 @@ class Ontario_Obituaries_Groq_Rate_Limiter {
                 self::OPTION_KEY,
                 $locked_row
             ) );
+            // v5.3.7: Phase 4c — DB check for CAS update (false = failure, 0 = version mismatch).
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'RATELIMIT', $rows, 'DB_UPDATE_FAIL', 'CAS update failed in rate limiter', array( 'option' => self::OPTION_KEY ) );
+            }
 
             // QC-R13: Check COMMIT result — if COMMIT fails the transaction
             // is still open; ROLLBACK to release the lock cleanly.
@@ -761,12 +765,17 @@ class Ontario_Obituaries_Groq_Rate_Limiter {
         }
 
         // Exact string match — if someone else changed it, this returns 0.
-        return (int) $wpdb->query( $wpdb->prepare(
+        $fallback_rows = (int) $wpdb->query( $wpdb->prepare(
             "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
             $new_json,
             self::OPTION_KEY,
             $current_raw
         ) );
+        // v5.3.7: Phase 4c — DB check for fallback CAS update.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'RATELIMIT', $fallback_rows, 'DB_UPDATE_FAIL', 'Fallback CAS update failed in rate limiter', array( 'option' => self::OPTION_KEY ) );
+        }
+        return $fallback_rows;
     }
 
     /**
