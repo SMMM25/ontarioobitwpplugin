@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.3.5
+ * Version: 5.3.6
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.3.5' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.3.6' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -161,6 +161,14 @@ function ontario_obituaries_get_settings() {
  * - 'error' level messages are ALWAYS logged regardless of the debug_logging setting.
  * - 'info' and 'warning' messages are only logged when debug_logging is enabled.
  *
+ * v5.3.6 Phase 4a: Bridge to structured oo_log() when available.
+ *   - One-way bridge only: oo_log() does NOT call back into this function
+ *     (the reverse dependency was removed in the same commit).
+ *   - Level mapping: info→info, warning→warning, error→error (1:1).
+ *   - Redaction: URLs in the message are redacted via oo_redact_url() if available.
+ *   - Subsystem 'LEGACY' and code 'LEGACY_LOG' tag all forwarded messages
+ *     for easy identification in structured logs.
+ *
  * @param string $message Log message.
  * @param string $level   One of: info, warning, error.
  */
@@ -169,6 +177,32 @@ function ontario_obituaries_log( $message, $level = 'info' ) {
     if ( empty( $settings['debug_logging'] ) && 'error' !== $level ) {
         return;
     }
+
+    // v5.3.6: Forward to structured oo_log() when Phase 1 error handler is loaded.
+    if ( function_exists( 'oo_log' ) ) {
+        // QC-R1: Redact ALL URLs that may contain query-string tokens.
+        // Strategy: regex find every URL-like string, run oo_redact_url() on each,
+        // then as a safety net strip any surviving ?… query strings that slipped
+        // through (e.g. malformed URLs the regex caught but oo_redact_url missed).
+        $safe_message = $message;
+        if ( function_exists( 'oo_redact_url' ) ) {
+            // Match http(s) URLs — liberal \S+ captures trailing punctuation;
+            // oo_redact_url() handles malformed input gracefully (returns sentinel).
+            $safe_message = preg_replace_callback(
+                '#https?://[^\s<>\"\')\]]+#i',
+                function ( $m ) { return oo_redact_url( $m[0] ); },
+                $safe_message
+            );
+        }
+        // Safety net: if oo_redact_url is unavailable or any query string survived,
+        // strip ?… from anything that looks like a URL. This guarantees no token leak.
+        $safe_message = preg_replace( '#(\bhttps?://[^\s<>\"\')\]]*)\?[^\s<>\"\')\]]*#i', '$1', $safe_message );
+
+        oo_log( $level, 'LEGACY', 'LEGACY_LOG', $safe_message );
+        return;
+    }
+
+    // Fallback: raw error_log when oo_log is not yet loaded.
     error_log( sprintf( '[Ontario Obituaries][%s] %s', strtoupper( $level ), $message ) );
 }
 
@@ -623,6 +657,16 @@ function ontario_obituaries_activate() {
     // Runs every 5 min, processes 20 images/batch, self-removes when done.
     if ( class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
         Ontario_Obituaries_Image_Localizer::maybe_schedule_migration();
+    }
+
+    // v5.3.6 Phase 4d: Schedule daily health cleanup cron.
+    // Prunes stale dedupe transients and expired health counters.
+    // Only schedule if the cleanup function actually exists (Phase 1 handler loaded).
+    // QC-R2: Idempotent — clear first, then guard with wp_next_scheduled() to
+    // prevent duplicate events on repeated activations or plugin updates.
+    wp_clear_scheduled_hook( 'ontario_obituaries_health_cleanup_daily' );
+    if ( function_exists( 'oo_health_cleanup' ) && ! wp_next_scheduled( 'ontario_obituaries_health_cleanup_daily' ) ) {
+        wp_schedule_event( time() + 7200, 'daily', 'ontario_obituaries_health_cleanup_daily' );
     }
 
     // v3.0.0: Auto-create the Obituaries page with shortcode if it doesn't exist.
@@ -1083,6 +1127,17 @@ function ontario_obituaries_maybe_cleanup_duplicates( $force = false ) {
 // Registered in ontario_obituaries_activate(). Fires once per day.
 add_action( 'ontario_obituaries_dedup_daily', 'ontario_obituaries_maybe_cleanup_duplicates' );
 
+// v5.3.6 Phase 4d: Daily health cleanup cron handler.
+// Prunes stale dedupe transients, expired counters, and old health data.
+// Wrapped in oo_safe_call() so a cleanup crash can't break WP-Cron.
+add_action( 'ontario_obituaries_health_cleanup_daily', function () {
+    if ( function_exists( 'oo_safe_call' ) && function_exists( 'oo_health_cleanup' ) ) {
+        oo_safe_call( 'HEALTH', 'HEALTH_CLEANUP_FAIL', 'oo_health_cleanup' );
+    } elseif ( function_exists( 'oo_health_cleanup' ) ) {
+        oo_health_cleanup();
+    }
+} );
+
 // BUG-C4 FIX (v5.0.4): Separate one-shot hook for post-scrape/post-REST dedup.
 // Uses a distinct hook name so wp_clear_scheduled_hook('ontario_obituaries_dedup_daily')
 // does not cancel pending one-shot events, and vice versa.
@@ -1396,6 +1451,9 @@ function ontario_obituaries_deactivate() {
         delete_option( 'ontario_obituaries_groq_rate_window' );
     }
     delete_transient( 'ontario_obituaries_collection_cooldown' ); // QC-R10 (v5.0.10): Collection burst guard.
+
+    // v5.3.6 Phase 4d: Clear health cleanup cron on deactivation.
+    wp_clear_scheduled_hook( 'ontario_obituaries_health_cleanup_daily' );
 
     // v3.0.0: Remove SEO rewrite rules
     flush_rewrite_rules();

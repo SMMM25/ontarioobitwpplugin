@@ -15,7 +15,7 @@
  *
  * Logging:
  *   oo_log( $level, $subsystem, $code, $message, $context )
- *     → routes through ontario_obituaries_log() for backward compatibility
+ *     → writes directly to error_log (v5.3.6: no longer calls ontario_obituaries_log)
  *     → always writes structured prefix for grep-ability
  *
  * Health counters (wp_options, no DB table):
@@ -38,7 +38,8 @@
  * PHASE 1 SCOPE:
  *   - This file is loaded via require_once in ontario-obituaries.php.
  *   - Zero changes to existing data paths in the happy path.
- *   - Existing ontario_obituaries_log() is NOT replaced; oo_log() calls it.
+ *   - v5.3.6: oo_log() now writes directly to error_log. ontario_obituaries_log()
+ *     forwards TO oo_log() (one-way bridge). No circular dependency.
  *   - No new DB table. Counters use transients + a single wp_option.
  */
 
@@ -78,7 +79,7 @@ function oo_run_id() {
  * Produces a grep-friendly line in the PHP error log:
  *   [Ontario Obituaries][ERROR][SCRAPE][SCRAPE_HTTP_FAIL][r-a3f1c9b2] Message {context}
  *
- * Also calls the existing ontario_obituaries_log() for backward compat
+ * Also writes directly to error_log (v5.3.6: respects debug_logging setting).
  * (which respects the debug_logging setting for non-error levels).
  *
  * @since 6.0.0
@@ -202,17 +203,15 @@ function oo_log( $level, $subsystem, $code, $message, $context = array() ) {
         $context_str
     );
 
-    // Route through existing ontario_obituaries_log() for backward compat.
-    // That function checks debug_logging setting and writes to error_log.
-    if ( function_exists( 'ontario_obituaries_log' ) ) {
-        // Map our levels to what the existing function expects.
-        $legacy_level = $level;
-        if ( 'critical' === $level ) {
-            $legacy_level = 'error'; // Existing function only knows info/warning/error.
-        }
-        ontario_obituaries_log( $structured, $legacy_level );
-    } else {
-        // Fallback if called before main plugin loads.
+    // v5.3.6 Phase 4a: Write directly to error_log instead of routing through
+    // ontario_obituaries_log(). This breaks the circular dependency so that
+    // ontario_obituaries_log() can safely forward TO oo_log() (one-way bridge).
+    // The debug_logging gate is respected: only 'error'/'critical' bypass it.
+    $settings = function_exists( 'ontario_obituaries_get_settings' )
+        ? ontario_obituaries_get_settings()
+        : array();
+    $debug_on = ! empty( $settings['debug_logging'] );
+    if ( $debug_on || in_array( $level, array( 'error', 'critical' ), true ) ) {
         error_log( '[Ontario Obituaries]' . $structured );
     }
 
@@ -278,6 +277,74 @@ function oo_safe_call( $subsystem, $code, $callable, $fallback = null, $context 
         $context['exception_line']    = $e->getLine();
         oo_log( 'critical', $subsystem, $code, 'Fatal: ' . $e->getMessage(), $context );
         return $fallback;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  WRAPPER 1b: oo_safe_render_template()
+ *
+ *  Renders a template callable inside an output buffer + Throwable catch.
+ *
+ *  On success: returns the captured HTML (caller echoes it).
+ *  On failure: discards partial output, logs via oo_log(), returns a
+ *              small user-friendly placeholder block.
+ *
+ *  This does NOT catch PHP warnings/notices (which are not Throwables).
+ *  It protects against hard crashes (TypeError, DivisionByZeroError,
+ *  undefined method calls, etc.) that would otherwise produce a white
+ *  screen or broken HTML in the middle of a page.
+ *
+ *  Usage (in the Display class that includes a template):
+ *    echo oo_safe_render_template( 'obituaries', function () use ( $vars ) {
+ *        extract( $vars );
+ *        include ONTARIO_OBITUARIES_PLUGIN_DIR . 'templates/obituaries.php';
+ *    });
+ *
+ * @since 5.3.6 (Phase 4)
+ *
+ * @param string   $template_name  Short name for logging (e.g. 'obituaries', 'hub-city').
+ * @param callable $render_fn      Callable that produces HTML output (echo/include).
+ * @return string                  Captured HTML on success, or placeholder on failure.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+function oo_safe_render_template( $template_name, $render_fn ) {
+    // QC-R3: Record the buffer level BEFORE we start, so on crash we can
+    // unwind any nested buffers the template may have opened without
+    // accidentally closing buffers that belong to the caller.
+    $start_level = ob_get_level();
+    ob_start();
+    try {
+        call_user_func( $render_fn );
+        return ob_get_clean();
+    } catch ( \Throwable $e ) {
+        // QC-R3: Clean ALL buffers opened since $start_level (our own +
+        // any nested ones the template opened before crashing). This
+        // prevents partial/broken HTML from leaking into the page and
+        // avoids "ob_end_clean(): failed" warnings from mismatched levels.
+        while ( ob_get_level() > $start_level ) {
+            ob_end_clean();
+        }
+
+        $context = array(
+            'template'  => $template_name,
+            'exception' => $e,
+        );
+        if ( function_exists( 'oo_run_id' ) ) {
+            $context['run_id'] = oo_run_id();
+        }
+
+        oo_log( 'error', 'TEMPLATE', 'TEMPLATE_CRASH', sprintf(
+            'Template "%s" crashed: %s in %s:%d',
+            $template_name,
+            $e->getMessage(),
+            basename( $e->getFile() ),
+            $e->getLine()
+        ), $context );
+
+        // Return a user-friendly placeholder that doesn't break the page layout.
+        return '<div class="ontario-obituaries-error" style="padding:20px;margin:20px 0;border:1px solid #ddd;border-radius:4px;text-align:center;color:#666;font-size:14px;">'
+            . esc_html__( 'This content is temporarily unavailable. Please try refreshing the page.', 'ontario-obituaries' )
+            . '</div>';
     }
 }
 
