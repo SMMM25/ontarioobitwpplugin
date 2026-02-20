@@ -94,6 +94,18 @@ class Ontario_Obituaries {
             'ontario-obituaries-reset-rescan',
             array( $this, 'reset_rescan_page' )
         );
+
+        // v5.3.5: Phase 3 — System Health dashboard.
+        if ( class_exists( 'Ontario_Obituaries_Health_Monitor' ) ) {
+            add_submenu_page(
+                'ontario-obituaries',
+                __( 'System Health', 'ontario-obituaries' ),
+                __( 'System Health', 'ontario-obituaries' ),
+                'manage_options',
+                'ontario-obituaries-health',
+                array( 'Ontario_Obituaries_Health_Monitor', 'render_page' )
+            );
+        }
     }
 
     /* ────────────────────────── SETTINGS ───────────────────────────────── */
