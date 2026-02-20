@@ -36,18 +36,19 @@ to prevent further breakage.
 | Environment | Version | Notes |
 |-------------|---------|-------|
 | **Live site** | 5.3.5 | monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload |
-| **Main branch** | 5.3.5 | PR #106 merged (Phase 3 Health Dashboard + docs) |
-| **Sandbox** | 5.3.5 | Matches live + main |
+| **Main branch** | 5.3.6 | PR #108 merged (Phase 4.1 legacy logger bridge + cleanup cron + template helper) |
+| **Sandbox** | 5.3.6 | Ahead of live — awaiting deploy |
 
-### PROJECT STATUS: ERROR HANDLING 65% COMPLETE — v5.3.5 LIVE (2026-02-20)
+### PROJECT STATUS: ERROR HANDLING 70% COMPLETE — v5.3.6 (2026-02-20)
 > **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
 > AI rewriter running autonomously. ~300+ published, ~296 pending.
-> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 complete (65%)** — Foundation, cron hardening,
-> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, and Health Dashboard all done.
-> v5.3.5 adds admin-visible System Health page, admin-bar badge, and REST health endpoint.
+> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 complete (70%)** — Foundation, cron hardening,
+> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, Health Dashboard, and legacy logger bridge all done.
+> v5.3.6 adds legacy-to-structured log bridge (154 calls captured), daily cleanup cron, and `oo_safe_render_template()` helper.
 > **Phase 2c** (PR #102): 35 `oo_db_check()` calls across 8 files, strict false checks, NULL token fix.
 > **Phase 2d** (PR #104): AJAX delete audit gating, rate limiter duplicate-log guard, 4 files.
 > **Phase 3** (PR #106): `class-health-monitor.php`, submenu page, admin-bar badge, REST endpoint.
+> **Phase 4.1** (PR #108): Legacy logger bridge, daily cleanup cron, template render helper.
 >
 > **URGENT ISSUE**: All obituary images are **hotlinked** from `cdn-otf-cas.prfct.cc`.
 > See **Section 28** for details.
@@ -106,6 +107,7 @@ to prevent further breakage.
 | Error handling Phase 2c (DB Hotspots) | v5.3.3 | ✅ DEPLOYED — 35 `oo_db_check()` calls, strict false checks, NULL token fix |
 | Error handling Phase 2d (AJAX + Remaining DB) | v5.3.4 | ✅ DEPLOYED — AJAX audit logging, rate limiter guard, display read logging |
 | Error handling Phase 3 (Health Dashboard) | v5.3.5 | ✅ DEPLOYED — Admin Health page, admin-bar badge, REST endpoint. QC-R1: frontend guard, QC-R2: table-name regex. Merge commit `f36e7f4` |
+| Error handling Phase 4.1 (Logger Bridge + Cron + Helper) | v5.3.6 | ✅ MERGED — Legacy→structured log bridge (154 calls), daily cleanup cron, `oo_safe_render_template()` helper |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -233,6 +235,8 @@ to prevent further breakage.
 | #104 | Merged | v5.3.4 | Phase 2d — remaining DB checks + AJAX audit logging (4 files, QC fixes) |
 | #105 | Merged | v5.3.4 | Version bump to v5.3.4 |
 | #106 | Merged | v5.3.5 | Phase 3 — Health Dashboard + admin-bar badge + REST endpoint + QC fixes (R1 frontend guard, R2 table regex). Merge `f36e7f4` |
+| #107 | Merged | v5.3.5 | Docs: Phase 3 QC fix details, merge commit, 65% progress |
+| #108 | Merged | v5.3.6 | Phase 4.1 — Legacy logger bridge + daily cleanup cron + oo_safe_render_template() helper |
 
 ### Remaining Work (priority order — updated 2026-02-18)
 
@@ -268,7 +272,7 @@ to prevent further breakage.
 #### PREVIOUSLY KNOWN (carried forward)
 18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done
 19. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ → **RESOLVED** — v5.1.5 runs autonomously with 5-min repeating schedule
-20. **Error handling project** — Phase 4 remaining (advanced logging: template try/catch, raw error_log replacement). **Phase 3 COMPLETE** (v5.3.5, PR #106). Progress: **65%**.
+20. **Error handling project** — Phases 4.2-4.3 remaining (DB write wrapping, template fallback wrappers). **Phase 4.1 COMPLETE** (v5.3.6, PR #108). Progress: **70%**.
 21. **Enable Google Ads Optimizer** when busy season starts (spring)
 22. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
 23. **Schema redesign**: Handle records without death date (future PR)

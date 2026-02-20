@@ -1,12 +1,12 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-20 (v5.3.5 — Phase 3 Health Dashboard deployed live)
-> **Plugin version:** `5.3.5` (live + main + sandbox)
+> **Last updated:** 2026-02-20 (v5.3.6 — Phase 4.1 legacy logger bridge + cleanup cron + template helper)
+> **Plugin version:** `5.3.6` (sandbox — awaiting deploy)
 > **Live site version:** `5.3.5` (monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload)
 > **Live plugin slug:** `ontario-obituaries` (folder: `~/public_html/wp-content/plugins/ontario-obituaries/`)
-> **Main branch HEAD:** PR #106 merged (v5.3.5 Phase 3 Health Dashboard + docs)
-> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **65% complete** (Phase 1 + 2a + 2b + 2c + 2d + 3 deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
-> **Next priority:** Phase 4 (Advanced Logging — template try/catch, raw error_log replacement).
+> **Main branch HEAD:** PR #107 merged (v5.3.5 Phase 3 docs update)
+> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **70% complete** (Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
+> **Next priority:** Phase 4.2 (DB write wrapping for top 5 hotspot files).
 
 ---
 
@@ -442,6 +442,25 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
   - QC-R1: `require_once` + `init()` guarded with `is_admin() || REST_REQUEST` — zero frontend overhead
   - QC-R2: Table name validated against `/^[A-Za-z0-9_]+$/` regex before raw SQL count query
   - Non-blocking: REST fallback changed 500 → 503 (feature unavailable, not server error)
+
+**Phase 4.1 — Legacy Logger Bridge + Cleanup Cron + Template Helper (PR #108, v5.3.6)**:
+- `ontario_obituaries_log()` now forwards to `oo_log()` when available (one-way bridge)
+  - All 154 legacy log calls now route through structured logging (subsystem=LEGACY, code=LEGACY_LOG)
+  - No recursion: `oo_log()` no longer calls `ontario_obituaries_log()` (writes directly to `error_log`)
+  - URL redaction via `oo_redact_url()` on any URLs in legacy messages
+  - Level mapping: info→info, warning→warning, error→error (1:1 pass-through)
+  - Fallback: raw `error_log()` if Phase 1 handler not yet loaded
+- `oo_log()` now respects `debug_logging` setting directly (error/critical always logged, info/warning gated)
+- New `oo_safe_render_template($name, $callable)` helper in `class-error-handler.php`
+  - Output buffer + Throwable catch
+  - On crash: discards partial output, logs TEMPLATE_CRASH, returns user-friendly placeholder
+  - Does NOT wrap templates yet (that's Phase 4.3, v5.3.8)
+- Daily health cleanup cron: `ontario_obituaries_health_cleanup_daily`
+  - Scheduled on activation (only if `oo_health_cleanup` exists)
+  - Cleared on deactivation
+  - Handler wrapped in `oo_safe_call()` so cleanup can't crash WP-Cron
+  - Calls existing `oo_health_cleanup()` to prune stale dedupe transients + expired counters
+- 2 files changed: `ontario-obituaries.php`, `class-error-handler.php`
 
 ### Previous State (as of 2026-02-18)
 

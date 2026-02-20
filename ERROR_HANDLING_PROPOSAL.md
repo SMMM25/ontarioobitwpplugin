@@ -953,12 +953,33 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 - [x] Non-blocking: REST fallback HTTP status 500 → 503
 - **Risk:** Low — UI only, no data path changes
 
-### Phase 4 — Advanced (v6.0.0) — ⬜ PENDING
+### Phase 4.1 — Legacy Logger Bridge + Cleanup Cron + Template Helper (v5.3.6) — ✅ COMPLETE (PR #108)
+- [x] `ontario_obituaries_log()` forwards to `oo_log()` (one-way bridge, no recursion)
+- [x] `oo_log()` writes directly to `error_log()` (removed reverse call to legacy logger)
+- [x] URL redaction via `oo_redact_url()` on legacy messages
+- [x] Level mapping: info→info, warning→warning, error→error (1:1)
+- [x] `oo_log()` respects `debug_logging` setting directly
+- [x] New `oo_safe_render_template()` helper (output buffer + Throwable catch + placeholder)
+- [x] Daily health cleanup cron (`ontario_obituaries_health_cleanup_daily`)
+- [x] Cron scheduled on activation (only if `oo_health_cleanup` exists), cleared on deactivation
+- [x] Cron handler wrapped in `oo_safe_call()` for crash safety
+- **Risk:** Low — backward-compatible shim + additive helper
+
+### Phase 4.2 — DB Write Wrapping (v5.3.7) — ⬜ PENDING
+- [ ] Add `oo_db_check()` to remaining unchecked writes in top 5 files
+- [ ] DDL/schema ops: log as `DB_SCHEMA_FAIL` (not `DB_UPDATE_FAIL`), 0 is OK
+- [ ] Guard legacy duplicate logs: log only if `!function_exists('oo_db_check')`
+- **Risk:** Low — additive wrappers, no behavior changes
+
+### Phase 4.3 — Template Fallback Wrappers (v5.3.8) — ⬜ PENDING
+- [ ] Wrap 6 templates with `oo_safe_render_template()` helper
+- [ ] Easy to revert if theme/plugin interactions appear
+- **Risk:** Low — additive, no layout changes on success path
+
+### Phase 4 Future — Advanced (v6.0.0) — ⬜ PENDING
 - [ ] Create DB error table for persistent structured logging
 - [ ] Add email alert on critical errors
-- [ ] Wrap all remaining 177 DB operations with `check_db()`
-- [ ] Schedule daily error cleanup cron
-- **Risk:** Medium — high volume of changes, but each is mechanical
+- **Risk:** Medium — new schema + email
 
 ---
 
@@ -973,8 +994,11 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 2c — DB Hotspots | ✅ Merged + Deployed | #102, #103 | v5.3.3 | 8 files (35 oo_db_check calls) |
 | Phase 2d — AJAX + Remaining DB | ✅ Merged + Deployed | #104, #105 | v5.3.4 | 4 files (+49/−8) |
 | Phase 3 — Health Dashboard | ✅ Merged + Deployed | #106 | v5.3.5 | 3 files (1 new + 2 modified) + QC fixes (R1 frontend guard, R2 table regex) |
-| Phase 4 — Advanced | ⬜ Pending | — | — | ~20 files |
-| **Overall** | **65% complete** | | | |
+| Phase 4.1 — Logger Bridge + Cron + Helper | ✅ Merged | #108 | v5.3.6 | 2 files (ontario-obituaries.php, class-error-handler.php) |
+| Phase 4.2 — DB Write Wrapping | ⬜ Pending | — | v5.3.7 | ~5 files |
+| Phase 4.3 — Template Fallback | ⬜ Pending | — | v5.3.8 | ~6 files |
+| Phase 4 Future — Advanced | ⬜ Pending | — | v6.0.0 | ~10 files |
+| **Overall** | **70% complete** | | | |
 
 ### Key Findings from Phase 2b Deployment
 
@@ -1064,4 +1088,4 @@ FROM wp_ontario_obituaries_errors;
 - [ ] Flag any concerns about performance (buffered writes)
 - [ ] Flag any concerns about table growth (5000 row cap + 30-day TTL)
 
-**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 approved/completed. Phase 4 (advanced logging) is next.**
+**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 approved/completed. Phase 4.2 (DB write wrapping) is next.**
