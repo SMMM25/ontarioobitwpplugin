@@ -918,21 +918,48 @@ SYSTEM;
         }
 
         // ── 2. Name check (last name required, first name preferred) ──
-        $name_parts = preg_split( '/\s+/', trim( $obituary->name ) );
+        // v5.3.1 FIX: Strip parenthesized nicknames/aliases BEFORE splitting.
+        // Names like "Patricia Gillian Ansaldo (Gillian)" caused the validator
+        // to treat "(Gillian)" as the last name — the parens never appear in the
+        // rewrite, so the check always fails. This blocked the entire queue
+        // (same deadlock pattern as date/age/location, demoted in v5.1.1-5.1.2).
+        $clean_name = preg_replace( '/\s*\([^)]*\)\s*/', ' ', trim( $obituary->name ) );
+        $clean_name = trim( preg_replace( '/\s+/', ' ', $clean_name ) );
+        $name_parts = preg_split( '/\s+/', $clean_name );
         $last_name  = end( $name_parts );
         $last_name  = preg_replace( '/^(Jr|Sr|III|II|IV)\.?$/i', '', $last_name );
         $last_name  = trim( $last_name );
 
+        // v5.3.1 FIX: Demote name_missing from hard-fail to warning. Same deadlock
+        // pattern as date_missing (v5.1.2) and location_missing (v5.1.1): With
+        // batch_size=1 and ORDER BY created_at DESC, a single record that
+        // consistently fails validation blocks the entire rewrite queue forever.
+        // Groq may use a nickname, middle name, or omit the first name entirely.
+        // The DB row retains the original name regardless of the rewrite text.
         if ( strlen( $last_name ) >= 3 && false === stripos( $rewritten, $last_name ) ) {
             $first_name = reset( $name_parts );
             $first_name = preg_replace( '/^(Mr|Mrs|Ms|Dr|Rev)\.?$/i', '', $first_name );
             $first_name = trim( $first_name );
 
             if ( strlen( $first_name ) >= 3 && false === stripos( $rewritten, $first_name ) ) {
-                return new WP_Error(
-                    'name_missing',
-                    sprintf( 'Rewrite does not mention "%s" or "%s".', $last_name, $first_name )
-                );
+                // Also check the original parenthesized parts — the nickname may
+                // appear in the rewrite even though the legal name doesn't.
+                $nickname_found = false;
+                if ( preg_match_all( '/\(([^)]+)\)/', $obituary->name, $nick_matches ) ) {
+                    foreach ( $nick_matches[1] as $nick ) {
+                        if ( strlen( $nick ) >= 3 && false !== stripos( $rewritten, $nick ) ) {
+                            $nickname_found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ( ! $nickname_found ) {
+                    ontario_obituaries_log(
+                        sprintf( 'AI Rewriter: Validation warning — rewrite does not mention "%s" or "%s" (ID %d). Continuing.', $last_name, $first_name, $obituary->id ),
+                        'warning'
+                    );
+                }
             }
         }
 
