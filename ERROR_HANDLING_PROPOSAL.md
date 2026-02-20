@@ -1007,8 +1007,9 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 4.1 — Logger Bridge + Cron + Helper | ✅ Merged | #108 | v5.3.6 | 2 files (ontario-obituaries.php, class-error-handler.php) |
 | Phase 4.2 — DB Write Wrapping | ✅ Merged | #109 | v5.3.7 | 2 files (ontario-obituaries.php, class-groq-rate-limiter.php) — 15 new oo_db_check calls |
 | Phase 4.3 — Template Fallback | ✅ Merged | #110 | v5.3.8 | 3 files (display, AJAX, wrapper) + version bump — 6 templates protected |
+| Phase 4.4 — Activation Hook Fix | ✅ Merged | #111 | v5.3.9 | 1 file (ontario-obituaries.php) — load error-handler before cron scheduling |
 | Phase 4 Future — Advanced | ⬜ Pending | — | v6.0.0 | ~10 files |
-| **Overall** | **80% complete** | | | |
+| **Overall** | **≈82% complete** | | | |
 
 ### Key Findings from Phase 2b Deployment
 
@@ -1098,4 +1099,4 @@ FROM wp_ontario_obituaries_errors;
 - [ ] Flag any concerns about performance (buffered writes)
 - [ ] Flag any concerns about table growth (5000 row cap + 30-day TTL)
 
-**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 + Phase 4.2 + Phase 4.3 approved/completed. Phase 4 Future (DB error table, email alerts) is next.**
+**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 + Phase 4.2 + Phase 4.3 + Phase 4.4 approved/completed. Phase 4 Future (DB error table, email alerts) is next.**
