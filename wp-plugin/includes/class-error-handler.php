@@ -649,29 +649,56 @@ function oo_health_get_summary() {
     $total    = array_sum( $counts );
     $last     = get_option( 'oo_last_critical', array() );
 
-    // ── QC Tweak 5: Include last_success timestamps ──────────────────
+    // ── QC Tweak 5: Include last_success and last_ran timestamps ─────
     $successes = get_option( 'oo_last_success', array() );
+    $ran       = get_option( 'oo_last_ran', array() );
 
     return array(
         'total_issues_24h'     => $total,
         'unique_codes'         => count( $counts ),
         'top_codes'            => array_slice( $counts, 0, 5, true ), // Top 5 by count.
         'last_critical'        => $last,
-        'last_success'         => $successes, // e.g., { 'SCRAPE' => '2026-02-20 14:32:00', 'REWRITE' => '...' }
+        'last_ran'             => is_array( $ran ) ? $ran : array(),       // e.g., { 'REWRITE' => '2026-02-20 14:32:00' }
+        'last_success'         => is_array( $successes ) ? $successes : array(), // e.g., { 'SCRAPE' => '2026-02-20 14:32:00' }
         'pipeline_healthy'     => oo_is_pipeline_healthy( $successes ),
     );
 }
 
 /**
- * Record a successful operation for a subsystem.
+ * Record that a cron handler ran to clean completion (even with 0 work).
  *
- * Called at the end of successful cron runs so the health summary
- * can report "pipeline running" vs "stuck".
+ * "Ran" means the handler executed without crashing — it may have found nothing
+ * to process (no pending, rate-limited, feature disabled), but the code path
+ * completed. This prevents the health dashboard from reading "dead" when the
+ * pipeline is actually running but idle.
  *
  * Usage:
- *   oo_health_record_success( 'SCRAPE' );   // after successful collection
- *   oo_health_record_success( 'REWRITE' );  // after successful rewrite batch
- *   oo_health_record_success( 'IMAGE' );    // after successful image batch
+ *   oo_health_record_ran( 'REWRITE' );  // end of ai_rewrite_batch(), even if 0 published
+ *   oo_health_record_ran( 'DEDUP' );    // end of maybe_cleanup_duplicates()
+ *
+ * @since 6.0.0
+ * @param string $subsystem Subsystem name (SCRAPE, REWRITE, IMAGE, DEDUP, etc.).
+ */
+function oo_health_record_ran( $subsystem ) {
+    $ran = get_option( 'oo_last_ran', array() );
+    if ( ! is_array( $ran ) ) {
+        $ran = array();
+    }
+    $ran[ strtoupper( $subsystem ) ] = current_time( 'mysql', true );
+    update_option( 'oo_last_ran', $ran, false ); // false = don't autoload.
+}
+
+/**
+ * Record a successful operation for a subsystem (made progress).
+ *
+ * Called when a cron handler actually did useful work (published obituaries,
+ * linked GoFundMe, etc.). Distinguished from oo_health_record_ran() which
+ * fires even on idle runs.
+ *
+ * Usage:
+ *   oo_health_record_success( 'SCRAPE' );   // after collection found new records
+ *   oo_health_record_success( 'REWRITE' );  // after rewrite published > 0
+ *   oo_health_record_success( 'IMAGE' );    // after image batch processed > 0
  *
  * @since 6.0.0
  * @param string $subsystem Subsystem name (SCRAPE, REWRITE, IMAGE, DEDUP, etc.).
@@ -742,6 +769,7 @@ function oo_health_cleanup() {
     delete_transient( 'oo_error_counts_24h' );
     delete_option( 'oo_last_critical' );
     delete_option( 'oo_last_success' );
+    delete_option( 'oo_last_ran' );
 
     // Clean up any dedupe transients (pattern: oo_dedupe_<md5>).
     // These are short-lived (5 min TTL) and will expire on their own,
