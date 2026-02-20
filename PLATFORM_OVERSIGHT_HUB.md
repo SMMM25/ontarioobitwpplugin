@@ -29,16 +29,17 @@ to prevent further breakage.
 - **WordPress theme**: Litho + Elementor page builder
 - **Cache**: LiteSpeed Cache (sole cache layer — W3 Total Cache MUST stay disabled)
 - **Hosting**: Shared hosting with cPanel, SSH access available, WP-CLI at `/usr/local/sbin/wp`
-- **Deployment**: Manual upload via WP Admin → Plugins → Upload (WP Pusher can't do private repos). **WARNING**: Delete→Upload path runs `uninstall.php`, wiping settings. Back up Groq key + settings first.
+- **Deployment**: SSH terminal — `git clone --depth 1` + `rsync --delete` into live plugin folder. **WARNING**: WP Admin Delete→Upload path runs `uninstall.php`, wiping settings — avoid it. Use SSH/rsync instead.
+- **Live plugin folder**: `~/public_html/wp-content/plugins/ontario-obituaries/` (slug: `ontario-obituaries`). Previously was `ontario-obituaries-v5.3.1` — renamed to canonical slug during v5.3.2 deploy.
 
 ### Current Versions (as of 2026-02-20)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 5.3.1 | monacomonuments.ca — deployed 2026-02-20 via SSH terminal |
-| **Main branch** | 5.3.1 | PR #99 merged |
-| **Sandbox** | 5.3.2 | PR #100 — Phase 2b HTTP wrapper conversion (pending merge) |
+| **Live site** | 5.3.2 | monacomonuments.ca — deployed 2026-02-20 via SSH `git clone` + `rsync` |
+| **Main branch** | 5.3.2 | PR #100 merged (Phase 2b HTTP wrappers + QC fixes) |
+| **Sandbox** | 5.3.2 | Matches live + main |
 
-### PROJECT STATUS: ERROR HANDLING 40% COMPLETE — v5.3.2 SANDBOX (2026-02-20)
+### PROJECT STATUS: ERROR HANDLING 40% COMPLETE — v5.3.2 LIVE (2026-02-20)
 > **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
 > AI rewriter running autonomously. ~300+ published, ~296 pending.
 > Error handling project: **Phase 1 + 2a + 2b complete (40%)** — Foundation, cron hardening,
@@ -52,10 +53,10 @@ to prevent further breakage.
 >
 > Previous audit findings (Section 26) and fix plan (Section 27) remain as historical reference.
 
-### Live Site Stats (verified 2026-02-18)
-- **581 obituaries** in database (178 published + 403 pending AI rewrite)
-- **178 obituaries AI-rewritten and published** — all have `ai_description`, zero copyright risk
-- **403 pending** — queued for autonomous 5-minute cron rewrite (~2-4 per cycle)
+### Live Site Stats (verified 2026-02-20)
+- **602 obituaries** in database (~300 published + ~302 pending AI rewrite)
+- **~300 obituaries AI-rewritten and published** — all have `ai_description`, zero copyright risk
+- **~302 pending** — queued for autonomous 5-minute cron rewrite (~2-4 per cycle)
 - **30 configured sources** (7 Postmedia active + 6 Dignity Memorial + 8 Legacy.com + 6 funeral homes + 2 Arbor + 1 Remembering.ca):
   - **Active (7)**: obituaries.yorkregion.com, obituaries.thestar.com, obituaries.therecord.com,
     obituaries.thespec.com, obituaries.simcoe.com, obituaries.niagarafallsreview.ca,
@@ -100,7 +101,7 @@ to prevent further breakage.
 | q2l0eq garbled slug cleanup | v4.2.4 | ✅ LIVE |
 | Error handling Phase 1 (Foundation) | v5.3.0 | ✅ DEPLOYED — `oo_log`, `oo_safe_call`, `oo_db_check`, health counters |
 | Error handling Phase 2a (Cron Hardening) | v5.3.1 | ✅ DEPLOYED — All 8 cron handlers wrapped, health monitoring |
-| Error handling Phase 2b (HTTP Wrappers) | v5.3.2 | ✅ CODE COMPLETE (PR #100) — All 15 `wp_remote_*` → `oo_safe_http_*`, SSRF, URL sanitization |
+| Error handling Phase 2b (HTTP Wrappers) | v5.3.2 | ✅ DEPLOYED — All 15 `wp_remote_*` → `oo_safe_http_*`, SSRF, URL sanitization, QC-approved |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -116,7 +117,8 @@ to prevent further breakage.
 - **Estimated clearance**: ~6-8 hours for 403 pending items
 - **cPanel cron command**: `*/5 * * * * /usr/local/bin/php /usr/local/sbin/wp --path=/home/monaylnf/public_html cron event run --due-now >/dev/null 2>&1`
 - **IMPORTANT**: The cron uses `/usr/local/bin/php /usr/local/sbin/wp` (not bare `wp`). Bare `wp` causes `$argv` undefined fatal error in cron environment.
-- **Delete-upgrade awareness**: When deploying via WP Admin Delete→Upload, `uninstall.php` runs and wipes ALL settings including the Groq key. After upload, restore the key and settings via WP-CLI or re-enter in admin, then deactivate/reactivate to trigger scheduling.
+- **Deployment method**: SSH terminal — `git clone --depth 1 https://github.com/SMMM25/ontarioobitwpplugin.git oo-deploy-tmp && rsync -av --delete --exclude='.git' --exclude='.github' ~/oo-deploy-tmp/wp-plugin/ ~/public_html/wp-content/plugins/ontario-obituaries/ && rm -rf ~/oo-deploy-tmp` then deactivate/activate.
+- **Delete-upgrade awareness**: WP Admin Delete→Upload runs `uninstall.php` and wipes ALL settings including the Groq key — **avoid this method**. Use SSH/rsync instead.
 
 ### AI Chatbot Status (v4.5.0 — NEW)
 - **Code**: `includes/class-ai-chatbot.php` (32 KB)
