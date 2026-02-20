@@ -1,11 +1,12 @@
 # DEVELOPER LOG — Ontario Obituaries WordPress Plugin
 
-> **Last updated:** 2026-02-20 (v5.3.2 — Phase 2b HTTP Wrapper Conversion, PR #100)
-> **Plugin version:** `5.3.2` (sandbox) / `5.3.1` (live + main branch)
-> **Live site version:** `5.3.1` (monacomonuments.ca — deployed 2026-02-20 via SSH terminal)
-> **Main branch HEAD:** PR #99 merged (v5.3.1 hotfix)
-> **Project status:** AI rewriter running autonomously. ~300+ published, ~296 pending. Error handling **40% complete** (Phase 1 + 2a deployed, Phase 2b code-complete in PR #100). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
-> **Next priority:** Merge PR #100 (v5.3.2), deploy, then Phase 2c (DB hotspots).
+> **Last updated:** 2026-02-20 (v5.3.2 — Phase 2b HTTP Wrappers + QC fixes deployed live)
+> **Plugin version:** `5.3.2` (live + main + sandbox)
+> **Live site version:** `5.3.2` (monacomonuments.ca — deployed 2026-02-20 via SSH `git clone` + `rsync`)
+> **Live plugin slug:** `ontario-obituaries` (folder: `~/public_html/wp-content/plugins/ontario-obituaries/`)
+> **Main branch HEAD:** PR #100 merged (v5.3.2 Phase 2b + QC fixes)
+> **Project status:** AI rewriter running autonomously. ~300 published, ~302 pending. Error handling **40% complete** (Phase 1 + 2a + 2b deployed). **URGENT: Image hotlink issue** (Section 28 of Oversight Hub).
+> **Next priority:** Phase 2c (DB hotspots).
 
 ---
 
@@ -295,22 +296,23 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 | #97 | Merged | `de1a80f` | feat(errors): Phase 2a Cron Handler Hardening — all 8 cron handlers wrapped, QC-approved (v5.3.1) |
 | #98 | Merged | `81587cf` | chore: bump version to v5.3.1 for Phase 2a release |
 | #99 | Merged | `2029a77` | fix(rewriter): unblock queue — demote name validation + strip nicknames (v5.3.1) |
-| #100 | Open | `4b73230` | feat(errors): Phase 2b — route all HTTP through oo_safe_http wrappers + QC fixes (v5.3.2) |
+| #100 | Merged | `4002029` | feat(errors): Phase 2b — route all HTTP through oo_safe_http wrappers + QC fixes (v5.3.2) |
 
 ---
 
 ## CURRENT STATE (as of 2026-02-20)
 
-### Plugin Version: **5.3.2** (sandbox) / **5.3.1** (live + main)
-### Main Branch Version: **5.3.1** (PR #99 merged 2026-02-20)
-### Live Site Version: **5.3.1** (monacomonuments.ca — deployed 2026-02-20 via SSH terminal)
-### Project Status: **ERROR HANDLING 40% COMPLETE** — Phase 2b code-complete
+### Plugin Version: **5.3.2** (live + main + sandbox)
+### Main Branch Version: **5.3.2** (PR #100 merged 2026-02-20)
+### Live Site Version: **5.3.2** (monacomonuments.ca — deployed 2026-02-20 via SSH `git clone` + `rsync`)
+### Live Plugin Slug: **ontario-obituaries** (folder: `~/public_html/wp-content/plugins/ontario-obituaries/`)
+### Project Status: **ERROR HANDLING 40% COMPLETE** — Phase 2b deployed live
 
-### What's Working (Live — v5.3.1)
-- **AI Rewriter** — ✅ Autonomous. ~300 published (all AI-rewritten), ~296 pending.
+### What's Working (Live — v5.3.2)
+- **AI Rewriter** — ✅ Autonomous. ~300 published (all AI-rewritten), ~302 pending.
 - **Error Handling Phase 1** — ✅ `oo_log()`, `oo_safe_call()`, `oo_db_check()`, health counters, log deduplication
 - **Error Handling Phase 2a** — ✅ All 8 cron handlers wrapped with structured error handling
-- **Error Handling Phase 2b** — ✅ Code complete + QC-approved (PR #100, v5.3.2): All 15 `wp_remote_*` → `oo_safe_http_*`
+- **Error Handling Phase 2b** — ✅ Deployed live (PR #100, v5.3.2): All 15 `wp_remote_*` → `oo_safe_http_*`
   - SSRF protection via `wp_safe_remote_*`, URL sanitization via `esc_url_raw()`, body truncation ≤ 4 KB
   - Helper functions: `oo_http_error_status()`, `oo_http_error_body()`, `oo_http_error_header()`
   - QC gates passed: raw HTTP = 0, no duplicate logging, status-code preserved, no secrets logged
@@ -393,6 +395,21 @@ The authoritative scrape job is `ontario_obituaries_collection_event`.
 - Method: SSH terminal (unzip directly into plugin directory)
 - Post-deploy: `pipeline_healthy = true`, all subsystems reporting success
 - cPanel `cron-rewriter.php` confirmed as primary processor; WP-Cron correctly skips when lock set
+
+**v5.3.2 Deployment (2026-02-20)**:
+- PR #100 merged on GitHub, then deployed via SSH: `git clone --depth 1` + `rsync --delete` into `~/public_html/wp-content/plugins/ontario-obituaries/`
+- **Plugin slug changed**: Old folder `ontario-obituaries-v5.3.1` removed; new canonical folder `ontario-obituaries` (slug: `ontario-obituaries`). This eliminates the version-in-folder-name anti-pattern.
+- Resolved `Cannot redeclare` fatal caused by both old and new folders coexisting (WordPress scanned both plugin dirs)
+- Fix: deactivated old slug, deleted old folder, activated new slug — clean transition
+- Post-deploy verification:
+  - `ontario-obituaries` active, version 5.3.2
+  - All 4 QC-fixed functions loaded: `oo_safe_http_get`, `oo_http_error_header`, `oo_redact_url`, `oo_safe_error_headers` — all OK
+  - `ONTARIO_OBITUARIES_VERSION` = `5.3.2`
+  - Raw `wp_remote_*` calls in includes/ = 0
+  - Cron ran 52s (rewrite batch processed obituaries)
+  - `pipeline_healthy = 1`, `REWRITE` last_success updated
+  - Site HTTP/2 200 confirmed
+- **Future deploys**: `git clone --depth 1 ... && rsync -av --delete ... ~/public_html/wp-content/plugins/ontario-obituaries/ && rm -rf ~/oo-deploy-tmp` then deactivate/activate
 
 ### Previous State (as of 2026-02-18)
 

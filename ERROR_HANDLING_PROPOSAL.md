@@ -960,7 +960,7 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 1 — Foundation | ✅ Merged + Deployed | #96 | v5.3.0 | 2 (new class-error-handler.php + ontario-obituaries.php) |
 | Phase 2a — Cron Hardening | ✅ Merged + Deployed | #97, #98 | v5.3.1 | 2 (ontario-obituaries.php, class-error-handler.php) |
 | Phase 2a Hotfix | ✅ Merged + Deployed | #99 | v5.3.1 | 1 (class-ai-rewriter.php) |
-| Phase 2b — HTTP Wrappers | ✅ Code Complete | #100 | v5.3.2 | 11 (error-handler + 9 app files + ontario-obituaries.php) |
+| Phase 2b — HTTP Wrappers | ✅ Merged + Deployed | #100 | v5.3.2 | 11 (error-handler + 9 app files + ontario-obituaries.php) |
 | Phase 2c — DB Hotspots | ⬜ Next | — | — | ~8 files |
 | Phase 2d — AJAX Nonces | ⬜ Pending | — | — | ~4 files + JS |
 | Phase 3 — Health Dashboard | ⬜ Pending | — | — | ~3 new files |
