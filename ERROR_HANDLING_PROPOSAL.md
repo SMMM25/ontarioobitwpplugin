@@ -941,13 +941,16 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 - [x] All 21 AJAX handlers audited — nonce + capability checks already present
 - **Risk:** Low — additive wrappers only, no JS changes needed
 
-### Phase 3 — Health Dashboard (v5.3.5) — ✅ COMPLETE (PR #106, v5.3.5)
-- [x] Built `class-health-monitor.php` (~350 lines)
+### Phase 3 — Health Dashboard (v5.3.5) — ✅ COMPLETE (PR #106, v5.3.5, merge `f36e7f4`)
+- [x] Built `class-health-monitor.php` (~480 lines)
 - [x] Admin submenu page: Ontario Obituaries → System Health
 - [x] Admin bar badge (yellow/red with issue count)
 - [x] REST endpoint: `GET /wp-json/ontario-obituaries/v1/health` (admin-only)
 - [x] Cron status table, subsystem checks, error code breakdown, last success timestamps
 - [x] No new DB table — reads from existing wp_options + transients
+- [x] QC-R1: `require_once` + `init()` guarded with `is_admin() || REST_REQUEST` — zero frontend overhead
+- [x] QC-R2: Table name validated against `/^[A-Za-z0-9_]+$/` regex before raw SQL
+- [x] Non-blocking: REST fallback HTTP status 500 → 503
 - **Risk:** Low — UI only, no data path changes
 
 ### Phase 4 — Advanced (v6.0.0) — ⬜ PENDING
@@ -969,9 +972,9 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 2b — HTTP Wrappers | ✅ Merged + Deployed | #100 | v5.3.2 | 11 (error-handler + 9 app files + ontario-obituaries.php) |
 | Phase 2c — DB Hotspots | ✅ Merged + Deployed | #102, #103 | v5.3.3 | 8 files (35 oo_db_check calls) |
 | Phase 2d — AJAX + Remaining DB | ✅ Merged + Deployed | #104, #105 | v5.3.4 | 4 files (+49/−8) |
-| Phase 3 — Health Dashboard | ✅ Merged + Deployed | #106 | v5.3.5 | 3 files (1 new + 2 modified) |
+| Phase 3 — Health Dashboard | ✅ Merged + Deployed | #106 | v5.3.5 | 3 files (1 new + 2 modified) + QC fixes (R1 frontend guard, R2 table regex) |
 | Phase 4 — Advanced | ⬜ Pending | — | — | ~20 files |
-| **Overall** | **40% complete** | | | |
+| **Overall** | **65% complete** | | | |
 
 ### Key Findings from Phase 2b Deployment
 
