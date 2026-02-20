@@ -173,7 +173,7 @@ class Ontario_Obituaries_Source_Registry {
         $table = self::table_name();
 
         // P0-3 FIX: Single atomic query — removed broken $wpdb->update() with stdClass.
-        $wpdb->query( $wpdb->prepare(
+        $success_result = $wpdb->query( $wpdb->prepare(
             "UPDATE `{$table}` SET
                 last_success = %s,
                 consecutive_failures = 0,
@@ -184,6 +184,10 @@ class Ontario_Obituaries_Source_Registry {
             $count,
             $source_id
         ) );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCRAPE', $success_result, 'DB_UPDATE_FAIL', 'Failed to record source success', array( 'source_id' => $source_id ) );
+        }
     }
 
     /**
@@ -198,7 +202,7 @@ class Ontario_Obituaries_Source_Registry {
         $table = self::table_name();
 
         // Increment failures
-        $wpdb->query( $wpdb->prepare(
+        $fail_result = $wpdb->query( $wpdb->prepare(
             "UPDATE `{$table}` SET
                 last_failure = %s,
                 last_failure_reason = %s,
@@ -208,6 +212,10 @@ class Ontario_Obituaries_Source_Registry {
             $reason,
             $source_id
         ) );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCRAPE', $fail_result, 'DB_UPDATE_FAIL', 'Failed to record source failure', array( 'source_id' => $source_id ) );
+        }
 
         // Check if we should open the circuit breaker
         $failures = $wpdb->get_var( $wpdb->prepare(
@@ -218,13 +226,17 @@ class Ontario_Obituaries_Source_Registry {
         if ( intval( $failures ) >= $threshold ) {
             // Open circuit for 24 hours
             $reopen = gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS );
-            $wpdb->update(
+            $cb_result = $wpdb->update(
                 $table,
                 array( 'circuit_open_until' => $reopen ),
                 array( 'id' => $source_id ),
                 array( '%s' ),
                 array( '%d' )
             );
+            // v5.3.3: Phase 2c — structured DB check.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCRAPE', $cb_result, 'DB_UPDATE_FAIL', 'Failed to open circuit breaker', array( 'source_id' => $source_id ) );
+            }
             ontario_obituaries_log(
                 sprintf( 'Circuit breaker OPEN for source %d until %s (%d consecutive failures)', $source_id, $reopen, $failures ),
                 'warning'
@@ -310,11 +322,19 @@ class Ontario_Obituaries_Source_Registry {
         ) );
 
         if ( $existing ) {
-            $wpdb->update( $table, $data, array( 'id' => $existing ), $formats, array( '%d' ) );
+            $ups_upd = $wpdb->update( $table, $data, array( 'id' => $existing ), $formats, array( '%d' ) );
+            // v5.3.3: Phase 2c — structured DB check.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCRAPE', $ups_upd, 'DB_UPDATE_FAIL', 'Failed to update source record', array( 'source_id' => $existing, 'domain' => $data['domain'] ) );
+            }
             return intval( $existing );
         }
 
-        $wpdb->insert( $table, $data, $formats );
+        $ups_ins = $wpdb->insert( $table, $data, $formats );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCRAPE', $ups_ins, 'DB_INSERT_FAIL', 'Failed to insert source record', array( 'domain' => $data['domain'] ) );
+        }
         return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
     }
 
@@ -326,7 +346,12 @@ class Ontario_Obituaries_Source_Registry {
      */
     public static function delete_source( $source_id ) {
         global $wpdb;
-        return (bool) $wpdb->delete( self::table_name(), array( 'id' => $source_id ), array( '%d' ) );
+        $del_result = $wpdb->delete( self::table_name(), array( 'id' => $source_id ), array( '%d' ) );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SCRAPE', $del_result, 'DB_DELETE_FAIL', 'Failed to delete source record', array( 'source_id' => $source_id ) );
+        }
+        return (bool) $del_result;
     }
 
     /**

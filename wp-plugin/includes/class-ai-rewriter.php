@@ -241,7 +241,11 @@ class Ontario_Obituaries_AI_Rewriter {
         ) );
         if ( intval( $col_check ) < 1 ) {
             // Column missing — create it now.
-            $wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
+            $alter_result = $wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN ai_description text DEFAULT NULL AFTER description" );
+            // v5.3.3: Phase 2c — structured DB check for schema migration.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'REWRITE', $alter_result, 'DB_SCHEMA_FAIL', 'Failed to add ai_description column', array( 'table' => $table ) );
+            }
             ontario_obituaries_log( 'AI Rewriter: Created missing ai_description column.', 'warning' );
         }
 
@@ -423,13 +427,25 @@ class Ontario_Obituaries_AI_Rewriter {
                 $update_formats[] = ( 'age' === $col ) ? '%d' : '%s';
             }
 
-            $wpdb->update(
+            $upd_result = $wpdb->update(
                 $table,
                 $update_data,
                 array( 'id' => $obituary->id ),
                 $update_formats,
                 array( '%d' )
             );
+
+            // v5.3.3: Phase 2c — check publish update succeeded.
+            if ( function_exists( 'oo_db_check' ) ) {
+                if ( ! oo_db_check( 'REWRITE', $upd_result, 'DB_PUBLISH_FAIL', 'Failed to publish rewritten obituary', array(
+                    'obit_id' => $obituary->id,
+                    'name'    => $obituary->name,
+                ) ) ) {
+                    $result['failed']++;
+                    $result['errors'][] = sprintf( 'ID %d (%s): DB update failed during publish', $obituary->id, $obituary->name );
+                    continue;
+                }
+            }
 
             $corrections_msg = ! empty( $rewritten['corrections'] )
                 ? ' Corrections: ' . implode( '; ', $rewritten['corrections'] )

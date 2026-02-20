@@ -185,7 +185,15 @@ class Ontario_Obituaries_Scraper {
                         'legacy_scraper'
                     );
 
-                    $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+                    $insert_result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+
+                    // v5.3.3: Phase 2c — structured DB check for obituary insert.
+                    if ( function_exists( 'oo_db_check' ) ) {
+                        oo_db_check( 'SCRAPE', $insert_result, 'DB_INSERT_FAIL', 'Failed to insert obituary (legacy scraper)', array(
+                            'name'   => $obituary['name'],
+                            'region' => $region,
+                        ) );
+                    }
 
                     if ( $wpdb->rows_affected > 0 ) {
                         $results['regions'][ $region ]['added']++;
@@ -709,7 +717,15 @@ class Ontario_Obituaries_Scraper {
                 'legacy_scraper'
             );
 
-            $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+            $hist_result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+
+            // v5.3.3: Phase 2c — structured DB check for historical insert.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCRAPE', $hist_result, 'DB_INSERT_FAIL', 'Failed to insert obituary (historical scraper)', array(
+                    'name'   => isset( $obituary['name'] ) ? $obituary['name'] : '',
+                    'region' => $region,
+                ) );
+            }
 
             if ( $wpdb->rows_affected > 0 ) {
                 $results['regions'][ $region ]['added']++;
@@ -855,7 +871,15 @@ class Ontario_Obituaries_Scraper {
                 $obituary['source_url']
             );
 
-            $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+            $test_result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+
+            // v5.3.3: Phase 2c — structured DB check for test data insert.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCRAPE', $test_result, 'DB_INSERT_FAIL', 'Failed to insert test obituary', array(
+                    'name' => $obituary['name'],
+                ) );
+            }
+
             if ( $wpdb->rows_affected > 0 ) {
                 $added++;
             }
