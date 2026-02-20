@@ -35,22 +35,23 @@ to prevent further breakage.
 ### Current Versions (as of 2026-02-20)
 | Environment | Version | Notes |
 |-------------|---------|-------|
-| **Live site** | 5.3.7 | monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload |
-| **Main branch** | 5.3.8 | PR #110 merged (Phase 4.3 template safety wrappers) |
-| **Sandbox** | 5.3.8 | Ahead of live — awaiting deploy |
+| **Live site** | 5.3.8 | monacomonuments.ca — deployed 2026-02-20 via SSH ZIP upload |
+| **Main branch** | 5.3.9 | PR #111 merged (hotfix: health cleanup cron activation-time loading) |
+| **Sandbox** | 5.3.9 | Ahead of live — awaiting deploy |
 
-### PROJECT STATUS: ERROR HANDLING 80% COMPLETE — v5.3.8 (2026-02-20)
+### PROJECT STATUS: ERROR HANDLING ≈82% COMPLETE — v5.3.9 (2026-02-20)
 > **All critical, high-severity, and medium-severity bugs from the 2026-02-16 audit are FIXED.**
 > AI rewriter running autonomously. ~300+ published, ~296 pending.
-> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 + 4.2 + 4.3 complete (80%)** — Foundation, cron hardening,
-> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, Health Dashboard, legacy logger bridge, DB write wrapping, and template safety all done.
-> v5.3.8 wraps 6 templates with oo_safe_render_template() for Throwable-safe rendering with proper buffer cleanup.
+> Error handling project: **Phase 1 + 2a + 2b + 2c + 2d + 3 + 4.1 + 4.2 + 4.3 + 4.4 complete (≈82%)** — Foundation, cron hardening,
+> HTTP wrapper conversion, DB hotspot wrapping, AJAX audit logging, Health Dashboard, legacy logger bridge, DB write wrapping, template safety, and activation-time fix all done.
+> v5.3.9 fixes activation hook: error-handler loaded before health_cleanup cron scheduling.
 > **Phase 2c** (PR #102): 35 `oo_db_check()` calls across 8 files, strict false checks, NULL token fix.
 > **Phase 2d** (PR #104): AJAX delete audit gating, rate limiter duplicate-log guard, 4 files.
 > **Phase 3** (PR #106): `class-health-monitor.php`, submenu page, admin-bar badge, REST endpoint.
 > **Phase 4.1** (PR #108): Legacy logger bridge, daily cleanup cron, template render helper.
 > **Phase 4.2** (PR #109): 15 new oo_db_check() calls in ontario-obituaries.php (schema/DDL + cleanup + dedup) and class-groq-rate-limiter.php (CAS writes).
 > **Phase 4.3** (PR #110): 6 templates protected with oo_safe_render_template() (obituaries, obituary-detail, hub-city, hub-ontario, individual via wrapper).
+> **Phase 4.4** (PR #111): Activation hook fix — require error-handler before function_exists('oo_health_cleanup') check.
 >
 > **URGENT ISSUE**: All obituary images are **hotlinked** from `cdn-otf-cas.prfct.cc`.
 > See **Section 28** for details.
@@ -112,6 +113,7 @@ to prevent further breakage.
 | Error handling Phase 4.1 (Logger Bridge + Cron + Helper) | v5.3.6 | ✅ MERGED — Legacy→structured log bridge (154 calls), daily cleanup cron, `oo_safe_render_template()` helper |
 | Error handling Phase 4.2 (DB Write Wrapping) | v5.3.7 | ✅ MERGED — 15 new `oo_db_check()` calls: 13 in ontario-obituaries.php (schema/DDL + cleanup + dedup), 2 in class-groq-rate-limiter.php (CAS writes). Total ~52 DB checks across all phases |
 | Error handling Phase 4.3 (Template Safety) | v5.3.8 | ✅ MERGED — 6 templates wrapped with `oo_safe_render_template()`: obituaries, obituary-detail, hub-city, hub-ontario, individual (via wrapper). Catches Throwable, cleans buffers |
+| Error handling Phase 4.4 (Activation Hook Fix) | v5.3.9 | ✅ MERGED — `require_once class-error-handler.php` inside activation hook so `oo_health_cleanup` exists before cron scheduling |
 
 ### AI Rewriter Status (v5.1.5 — AUTONOMOUS, LIVE)
 - **Status**: ✅ Running autonomously. 178 published, 403 pending. Cron fires every 5 minutes.
@@ -243,6 +245,7 @@ to prevent further breakage.
 | #108 | Merged | v5.3.6 | Phase 4.1 — Legacy logger bridge + daily cleanup cron + oo_safe_render_template() helper |
 | #109 | Merged | v5.3.7 | Phase 4.2 — DB write wrappers for top 5 hotspot files (15 new oo_db_check calls) |
 | #110 | Merged | v5.3.8 | Phase 4.3 — Template safety wrappers (6 templates protected with oo_safe_render_template) |
+| #111 | Merged | v5.3.9 | Phase 4.4 — Activation hook fix: load error-handler before health_cleanup cron scheduling |
 
 ### Remaining Work (priority order — updated 2026-02-18)
 
@@ -278,7 +281,7 @@ to prevent further breakage.
 #### PREVIOUSLY KNOWN (carried forward)
 18. ~~**Deploy v4.2.2-v5.0.2**~~ → Done
 19. ~~**BLOCKED: AI Rewriter Groq TPM limit**~~ → **RESOLVED** — v5.1.5 runs autonomously with 5-min repeating schedule
-20. **Error handling project** — Phase 4 Future remaining (DB error table, email alerts). **Phase 4.3 COMPLETE** (v5.3.8, PR #110). Progress: **80%**.
+20. **Error handling project** — Phase 4 Future remaining (DB error table, email alerts). **Phase 4.4 COMPLETE** (v5.3.9, PR #111). Progress: **≈82%**.
 21. **Enable Google Ads Optimizer** when busy season starts (spring)
 22. **Data repair**: Clean fabricated YYYY-01-01 dates (future PR)
 23. **Schema redesign**: Handle records without death date (future PR)

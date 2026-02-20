@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 5.3.8
+ * Version: 5.3.9
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '5.3.8' );
+define( 'ONTARIO_OBITUARIES_VERSION', '5.3.9' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -711,6 +711,12 @@ function ontario_obituaries_activate() {
     // Only schedule if the cleanup function actually exists (Phase 1 handler loaded).
     // QC-R2: Idempotent — clear first, then guard with wp_next_scheduled() to
     // prevent duplicate events on repeated activations or plugin updates.
+    // v5.3.9 FIX: Activation hook fires before plugins_loaded, so the error
+    // handler is not yet loaded. Require it here so oo_health_cleanup exists.
+    $error_handler_path = ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-error-handler.php';
+    if ( ! function_exists( 'oo_health_cleanup' ) && file_exists( $error_handler_path ) ) {
+        require_once $error_handler_path;
+    }
     wp_clear_scheduled_hook( 'ontario_obituaries_health_cleanup_daily' );
     if ( function_exists( 'oo_health_cleanup' ) && ! wp_next_scheduled( 'ontario_obituaries_health_cleanup_daily' ) ) {
         wp_schedule_event( time() + 7200, 'daily', 'ontario_obituaries_health_cleanup_daily' );
