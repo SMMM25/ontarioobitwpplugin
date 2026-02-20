@@ -114,19 +114,22 @@ class Ontario_Obituaries_GoFundMe_Linker {
                 $result['errors'][] = sprintf( 'ID %d (%s): %s', $obit->id, $obit->name, $match->get_error_message() );
 
                 // Mark as checked even on error so we don't retry endlessly.
-                $wpdb->update(
+                $gfm_upd = $wpdb->update(
                     $table,
                     array( 'gofundme_checked_at' => current_time( 'mysql' ) ),
                     array( 'id' => $obit->id ),
                     array( '%s' ),
                     array( '%d' )
                 );
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'GOFUNDME', $gfm_upd, 'DB_UPDATE_FAIL', 'Failed to mark GoFundMe checked (error path)', array( 'obit_id' => $obit->id ) );
+                }
                 continue;
             }
 
             if ( ! empty( $match ) ) {
                 // Verified match found — store the link.
-                $wpdb->update(
+                $gfm_upd = $wpdb->update(
                     $table,
                     array(
                         'gofundme_url'        => esc_url_raw( $match['url'] ),
@@ -136,6 +139,9 @@ class Ontario_Obituaries_GoFundMe_Linker {
                     array( '%s', '%s' ),
                     array( '%d' )
                 );
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'GOFUNDME', $gfm_upd, 'DB_UPDATE_FAIL', 'Failed to store GoFundMe match', array( 'obit_id' => $obit->id ) );
+                }
 
                 ontario_obituaries_log(
                     sprintf(
@@ -148,13 +154,16 @@ class Ontario_Obituaries_GoFundMe_Linker {
                 $result['matched']++;
             } else {
                 // No match — mark as checked.
-                $wpdb->update(
+                $gfm_upd = $wpdb->update(
                     $table,
                     array( 'gofundme_checked_at' => current_time( 'mysql' ) ),
                     array( 'id' => $obit->id ),
                     array( '%s' ),
                     array( '%d' )
                 );
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'GOFUNDME', $gfm_upd, 'DB_UPDATE_FAIL', 'Failed to mark GoFundMe checked (no-match path)', array( 'obit_id' => $obit->id ) );
+                }
                 $result['no_match']++;
             }
         }

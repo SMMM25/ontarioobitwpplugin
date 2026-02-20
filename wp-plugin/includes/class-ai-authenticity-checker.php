@@ -186,13 +186,16 @@ class Ontario_Obituaries_Authenticity_Checker {
                 $result['passed']++;
             }
 
-            $wpdb->update(
+            $audit_upd = $wpdb->update(
                 $table,
                 $update_data,
                 array( 'id' => $obit->id ),
                 array( '%s', '%s', '%s' ),
                 array( '%d' )
             );
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'AUDIT', $audit_upd, 'DB_UPDATE_FAIL', 'Failed to store audit result', array( 'obit_id' => $obit->id ) );
+            }
         }
 
         ontario_obituaries_log(
@@ -393,13 +396,19 @@ SYSTEM;
 
             // Only correct if the value actually differs.
             if ( (string) $old_value !== (string) $value ) {
-                $wpdb->update(
+                $corr_upd = $wpdb->update(
                     $table,
                     array( $field => $value ),
                     array( 'id' => $obit_id ),
                     array( '%s' ),
                     array( '%d' )
                 );
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'AUDIT', $corr_upd, 'DB_CORRECTION_FAIL', 'Failed to apply auto-correction', array(
+                        'obit_id' => $obit_id,
+                        'field'   => $field,
+                    ) );
+                }
 
                 ontario_obituaries_log(
                     sprintf(

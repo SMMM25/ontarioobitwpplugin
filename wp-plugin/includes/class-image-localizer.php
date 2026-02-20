@@ -539,6 +539,11 @@ class Ontario_Obituaries_Image_Localizer {
             array( '%d' )
         );
 
+        // v5.3.3: Phase 2c — structured DB check for the success-path update.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'IMAGE', $updated, 'DB_UPDATE_FAIL', 'Failed to update image URLs after localization', array( 'obit_id' => $obit_id ) );
+        }
+
         if ( false === $updated ) {
             ontario_obituaries_log( sprintf( 'Image Localizer #%d: DB update failed.', $obit_id ), 'error' );
             // Clean up the downloaded file since DB wasn't updated.
@@ -566,7 +571,7 @@ class Ontario_Obituaries_Image_Localizer {
      */
     private static function mark_permanent_failure( $table, $obit_id, $image_url, $reason ) {
         global $wpdb;
-        $wpdb->update(
+        $pf_result = $wpdb->update(
             $table,
             array(
                 'image_url'       => '',           // Clear display URL — template hides area.
@@ -576,6 +581,10 @@ class Ontario_Obituaries_Image_Localizer {
             array( '%s', '%s' ),
             array( '%d' )
         );
+        // v5.3.3: Phase 2c — structured DB check for permanent failure marker.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'IMAGE', $pf_result, 'DB_UPDATE_FAIL', 'Failed to mark image permanent failure', array( 'obit_id' => $obit_id, 'reason' => $reason ) );
+        }
     }
 
     /**
@@ -608,13 +617,17 @@ class Ontario_Obituaries_Image_Localizer {
         }
 
         // Record retry count — row stays in pending queue for next batch.
-        $wpdb->update(
+        $retry_result = $wpdb->update(
             $table,
             array( 'image_local_url' => 'retry:' . $new_count ),
             array( 'id' => $obit_id ),
             array( '%s' ),
             array( '%d' )
         );
+        // v5.3.3: Phase 2c — structured DB check for retry counter update.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'IMAGE', $retry_result, 'DB_UPDATE_FAIL', 'Failed to update image retry counter', array( 'obit_id' => $obit_id, 'retry' => $new_count ) );
+        }
         return 'failed';
     }
 

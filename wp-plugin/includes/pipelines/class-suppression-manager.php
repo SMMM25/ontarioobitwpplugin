@@ -221,7 +221,7 @@ class Ontario_Obituaries_Suppression_Manager {
         $now = current_time( 'mysql', true );
 
         // 1. Mark suppressed on the main table.
-        $wpdb->update(
+        $supp_upd = $wpdb->update(
             $main_table,
             array(
                 'suppressed_at'     => $now,
@@ -231,6 +231,10 @@ class Ontario_Obituaries_Suppression_Manager {
             array( '%s', '%s' ),
             array( '%d' )
         );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $supp_upd, 'DB_UPDATE_FAIL', 'Failed to mark obituary suppressed', array( 'obit_id' => $obituary_id, 'reason' => $reason ) );
+        }
 
         // 2. Build audit record.
         $data = array(
@@ -275,7 +279,11 @@ class Ontario_Obituaries_Suppression_Manager {
             $formats[] = '%s'; // reviewed_at
         }
 
-        $wpdb->insert( $supp_table, $data, $formats );
+        $supp_ins = $wpdb->insert( $supp_table, $data, $formats );
+        // v5.3.3: Phase 2c — structured DB check for audit record insert.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $supp_ins, 'DB_INSERT_FAIL', 'Failed to insert suppression audit record', array( 'obit_id' => $obituary_id, 'reason' => $reason ) );
+        }
         $suppression_id = $wpdb->insert_id;
 
         if ( $suppression_id ) {
@@ -395,7 +403,11 @@ class Ontario_Obituaries_Suppression_Manager {
             '%s', // created_at
         );
 
-        $wpdb->insert( $supp_table, $data, $formats );
+        $req_ins = $wpdb->insert( $supp_table, $data, $formats );
+        // v5.3.3: Phase 2c — structured DB check for public removal request insert.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $req_ins, 'DB_INSERT_FAIL', 'Failed to insert public removal request', array( 'obit_id' => $obituary_id ) );
+        }
 
         if ( ! $wpdb->insert_id ) {
             ontario_obituaries_log(
@@ -475,7 +487,7 @@ class Ontario_Obituaries_Suppression_Manager {
         $main_table = $wpdb->prefix . 'ontario_obituaries';
 
         // 1. Mark verified + suppressed on the suppression record.
-        $wpdb->update(
+        $verify_upd = $wpdb->update(
             $table,
             array(
                 'verified_at'     => $now,
@@ -486,10 +498,14 @@ class Ontario_Obituaries_Suppression_Manager {
             array( '%s', '%s', '%d' ),
             array( '%d' )
         );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $verify_upd, 'DB_UPDATE_FAIL', 'Failed to mark suppression record verified', array( 'suppression_id' => $record->id ) );
+        }
 
         // 2. Mark suppressed on the main obituary table.
         if ( ! empty( $record->obituary_id ) ) {
-            $wpdb->update(
+            $main_upd = $wpdb->update(
                 $main_table,
                 array(
                     'suppressed_at'     => $now,
@@ -499,16 +515,23 @@ class Ontario_Obituaries_Suppression_Manager {
                 array( '%s', '%s' ),
                 array( '%d' )
             );
+            // v5.3.3: Phase 2c — structured DB check.
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SUPPRESS', $main_upd, 'DB_UPDATE_FAIL', 'Failed to suppress obituary after verification', array( 'obit_id' => $record->obituary_id ) );
+            }
         }
 
         // 3. Invalidate the token (prevent reuse).
-        $wpdb->update(
-            $table,
-            array( 'verification_token' => null ),
-            array( 'id' => $record->id ),
-            array( '%s' ),
-            array( '%d' )
-        );
+        // Use raw query for NULL assignment — $wpdb->update() with PHP null
+        // and '%s' format produces an empty string, not SQL NULL.
+        $token_upd = $wpdb->query( $wpdb->prepare(
+            "UPDATE `{$table}` SET verification_token = NULL WHERE id = %d",
+            $record->id
+        ) );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $token_upd, 'DB_UPDATE_FAIL', 'Failed to invalidate verification token', array( 'suppression_id' => $record->id ) );
+        }
 
         ontario_obituaries_log(
             sprintf( 'Removal request verified and obituary %d suppressed (token: %s...)', $record->obituary_id, substr( $token, 0, 8 ) ),
@@ -579,7 +602,7 @@ class Ontario_Obituaries_Suppression_Manager {
         global $wpdb;
         $table = self::table_name();
 
-        return $wpdb->update(
+        $review_upd = $wpdb->update(
             $table,
             array(
                 'reviewed_by' => $admin_id ? absint( $admin_id ) : get_current_user_id(),
@@ -589,6 +612,12 @@ class Ontario_Obituaries_Suppression_Manager {
             array( '%d', '%s' ),
             array( '%d' )
         );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $review_upd, 'DB_UPDATE_FAIL', 'Failed to mark suppression reviewed', array( 'suppression_id' => $suppression_id ) );
+        }
+
+        return $review_upd;
     }
 
     /* ────────────────────────── UNSUPPRESS ───────────────────────────── */
@@ -607,14 +636,18 @@ class Ontario_Obituaries_Suppression_Manager {
         $main_table = $wpdb->prefix . 'ontario_obituaries';
 
         // Use raw query for NULL assignment — $wpdb->update() can't reliably SET col = NULL.
-        $wpdb->query( $wpdb->prepare(
+        $unsup_result = $wpdb->query( $wpdb->prepare(
             "UPDATE `{$main_table}` SET suppressed_at = NULL, suppressed_reason = NULL WHERE id = %d",
             $obituary_id
         ) );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $unsup_result, 'DB_UPDATE_FAIL', 'Failed to clear suppression on obituary', array( 'obit_id' => $obituary_id ) );
+        }
 
         // Clear do-not-republish on all suppression records for this obituary.
         $supp_table = self::table_name();
-        $wpdb->update(
+        $dnr_result = $wpdb->update(
             $supp_table,
             array(
                 'do_not_republish' => 0,
@@ -624,6 +657,10 @@ class Ontario_Obituaries_Suppression_Manager {
             array( '%d', '%s' ),
             array( '%d' )
         );
+        // v5.3.3: Phase 2c — structured DB check.
+        if ( function_exists( 'oo_db_check' ) ) {
+            oo_db_check( 'SUPPRESS', $dnr_result, 'DB_UPDATE_FAIL', 'Failed to clear do-not-republish flags', array( 'obit_id' => $obituary_id ) );
+        }
 
         ontario_obituaries_log(
             sprintf( 'Obituary %d unsuppressed by admin (user: %d)', $obituary_id, get_current_user_id() ),

@@ -493,7 +493,13 @@ class Ontario_Obituaries_Source_Collector {
                     }
 
                     if ( ! empty( $update_data ) ) {
-                        $wpdb->update( $table_name, $update_data, array( 'id' => $candidate->id ) );
+                        $upd_result = $wpdb->update( $table_name, $update_data, array( 'id' => $candidate->id ) );
+                        if ( function_exists( 'oo_db_check' ) ) {
+                            oo_db_check( 'SCRAPE', $upd_result, 'DB_UPDATE_FAIL', 'Failed to update duplicate obituary', array(
+                                'obit_id' => $candidate->id,
+                                'source'  => isset( $record['source_domain'] ) ? $record['source_domain'] : '',
+                            ) );
+                        }
                     }
 
                     return false; // Not a new insert — it's a cross-source duplicate
