@@ -965,10 +965,15 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 - [x] Cron handler wrapped in `oo_safe_call()` for crash safety
 - **Risk:** Low — backward-compatible shim + additive helper
 
-### Phase 4.2 — DB Write Wrapping (v5.3.7) — ⬜ PENDING
-- [ ] Add `oo_db_check()` to remaining unchecked writes in top 5 files
-- [ ] DDL/schema ops: log as `DB_SCHEMA_FAIL` (not `DB_UPDATE_FAIL`), 0 is OK
-- [ ] Guard legacy duplicate logs: log only if `!function_exists('oo_db_check')`
+### Phase 4.2 — DB Write Wrapping (v5.3.7) — ✅ COMPLETE (PR #109)
+- [x] Add `oo_db_check()` to 15 unchecked writes in ontario-obituaries.php (schema migrations + data cleanup + dedup)
+- [x] Add `oo_db_check()` to 2 unchecked CAS writes in class-groq-rate-limiter.php
+- [x] DDL/schema ops: logged as `DB_SCHEMA_FAIL` (false = failure, 0 = OK)
+- [x] Data cleanup ops: logged as `DB_UPDATE_FAIL` / `DB_DELETE_FAIL` (false = failure, 0 = no rows)
+- [x] Source registry, suppression manager, source collector: already wrapped from Phase 2c — no changes needed
+- **Files changed:** 2 (ontario-obituaries.php, class-groq-rate-limiter.php)
+- **New oo_db_check calls:** 15 (13 in ontario-obituaries.php + 2 in class-groq-rate-limiter.php)
+- **Total oo_db_check calls (all phases):** ~52 (35 from Phase 2c + 2 from Phase 2d + 15 from Phase 4.2)
 - **Risk:** Low — additive wrappers, no behavior changes
 
 ### Phase 4.3 — Template Fallback Wrappers (v5.3.8) — ⬜ PENDING
@@ -995,10 +1000,10 @@ $wpdb->query( "DELETE FROM `{$wpdb->prefix}options` WHERE option_name LIKE '_tra
 | Phase 2d — AJAX + Remaining DB | ✅ Merged + Deployed | #104, #105 | v5.3.4 | 4 files (+49/−8) |
 | Phase 3 — Health Dashboard | ✅ Merged + Deployed | #106 | v5.3.5 | 3 files (1 new + 2 modified) + QC fixes (R1 frontend guard, R2 table regex) |
 | Phase 4.1 — Logger Bridge + Cron + Helper | ✅ Merged | #108 | v5.3.6 | 2 files (ontario-obituaries.php, class-error-handler.php) |
-| Phase 4.2 — DB Write Wrapping | ⬜ Pending | — | v5.3.7 | ~5 files |
+| Phase 4.2 — DB Write Wrapping | ✅ Merged | #109 | v5.3.7 | 2 files (ontario-obituaries.php, class-groq-rate-limiter.php) — 15 new oo_db_check calls |
 | Phase 4.3 — Template Fallback | ⬜ Pending | — | v5.3.8 | ~6 files |
 | Phase 4 Future — Advanced | ⬜ Pending | — | v6.0.0 | ~10 files |
-| **Overall** | **70% complete** | | | |
+| **Overall** | **75% complete** | | | |
 
 ### Key Findings from Phase 2b Deployment
 
@@ -1088,4 +1093,4 @@ FROM wp_ontario_obituaries_errors;
 - [ ] Flag any concerns about performance (buffered writes)
 - [ ] Flag any concerns about table growth (5000 row cap + 30-day TTL)
 
-**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 approved/completed. Phase 4.2 (DB write wrapping) is next.**
+**Phase 1 + Phase 2a + Phase 2b + Phase 2c + Phase 2d + Phase 3 + Phase 4.1 + Phase 4.2 approved/completed. Phase 4.3 (template wrappers) is next.**
