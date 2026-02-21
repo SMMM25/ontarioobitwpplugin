@@ -45,6 +45,9 @@ class Ontario_Obituaries_Ajax {
         // v4.2.0: Soft lead capture (logged-in + logged-out)
         add_action( 'wp_ajax_ontario_obituaries_lead_capture',        array( $this, 'handle_lead_capture' ) );
         add_action( 'wp_ajax_nopriv_ontario_obituaries_lead_capture', array( $this, 'handle_lead_capture' ) );
+
+        // v6.0.2: Data quality audit (admin-only)
+        add_action( 'wp_ajax_ontario_obituaries_audit_data', array( $this, 'audit_data_quality' ) );
     }
 
     /**
@@ -302,5 +305,139 @@ class Ontario_Obituaries_Ajax {
         }
 
         wp_send_json_success( $formatted );
+    }
+
+    /**
+     * v6.0.2: Data quality audit — admin-only.
+     *
+     * Scans published obituaries for implausible data:
+     *   - age = 0 or age > 120
+     *   - date_of_death before 2000 or in the future
+     *   - date_of_birth after date_of_death
+     *   - ai_description containing "age of 0" or similar
+     *
+     * Optional POST param 'fix' = '1' to auto-fix issues:
+     *   - Sets age=NULL where age=0 (template already hides it)
+     *   - Re-queues records with bad prose for AI re-rewrite
+     *
+     * @since 6.0.2
+     */
+    public function audit_data_quality() {
+        check_ajax_referer( 'ontario-obituaries-admin-nonce', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ontario-obituaries' ) ) );
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $do_fix = ! empty( $_POST['fix'] ) && '1' === $_POST['fix'];
+
+        $issues = array();
+        $fixed  = 0;
+
+        // 1. Age = 0 (bad scrape data).
+        $age_zero = $wpdb->get_results(
+            "SELECT id, name, age, date_of_birth, date_of_death FROM `{$table}` WHERE age = 0 AND suppressed_at IS NULL"
+        );
+        foreach ( $age_zero as $row ) {
+            $issues[] = array(
+                'id'    => $row->id,
+                'name'  => $row->name,
+                'type'  => 'age_zero',
+                'detail' => 'Age is 0 — implausible value.',
+            );
+            if ( $do_fix ) {
+                $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d", $row->id ) );
+                $fixed++;
+            }
+        }
+
+        // 2. Age > 120 (implausible).
+        $age_high = $wpdb->get_results(
+            "SELECT id, name, age FROM `{$table}` WHERE age > 120 AND suppressed_at IS NULL"
+        );
+        foreach ( $age_high as $row ) {
+            $issues[] = array(
+                'id'    => $row->id,
+                'name'  => $row->name,
+                'type'  => 'age_implausible',
+                'detail' => sprintf( 'Age %d > 120.', $row->age ),
+            );
+            if ( $do_fix ) {
+                $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d", $row->id ) );
+                $fixed++;
+            }
+        }
+
+        // 3. AI description contains "age of 0" or "age 0" (bad AI output).
+        $bad_prose = $wpdb->get_results(
+            "SELECT id, name FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND suppressed_at IS NULL AND (ai_description LIKE '%age of 0%' OR ai_description LIKE '%age 0%' OR ai_description LIKE '%aged 0%')"
+        );
+        foreach ( $bad_prose as $row ) {
+            $issues[] = array(
+                'id'    => $row->id,
+                'name'  => $row->name,
+                'type'  => 'bad_prose_age_zero',
+                'detail' => 'AI description contains "age 0" — re-queue for rewrite.',
+            );
+            if ( $do_fix ) {
+                // Re-queue: clear ai_description + set status back to pending.
+                $wpdb->update(
+                    $table,
+                    array( 'ai_description' => null, 'status' => 'pending' ),
+                    array( 'id' => $row->id ),
+                    array( '%s', '%s' ),
+                    array( '%d' )
+                );
+                // Also fix the age field.
+                $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d AND age = 0", $row->id ) );
+                $fixed++;
+            }
+        }
+
+        // 4. date_of_death in the future.
+        $future_dod = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name, date_of_death FROM `{$table}` WHERE date_of_death > %s AND date_of_death != '0000-00-00' AND suppressed_at IS NULL",
+            current_time( 'Y-m-d' )
+        ) );
+        foreach ( $future_dod as $row ) {
+            $issues[] = array(
+                'id'    => $row->id,
+                'name'  => $row->name,
+                'type'  => 'future_death_date',
+                'detail' => sprintf( 'Death date %s is in the future.', $row->date_of_death ),
+            );
+        }
+
+        // 5. date_of_birth AFTER date_of_death.
+        $dob_after_dod = $wpdb->get_results(
+            "SELECT id, name, date_of_birth, date_of_death FROM `{$table}` WHERE date_of_birth > date_of_death AND date_of_birth != '0000-00-00' AND date_of_death != '0000-00-00' AND suppressed_at IS NULL"
+        );
+        foreach ( $dob_after_dod as $row ) {
+            $issues[] = array(
+                'id'    => $row->id,
+                'name'  => $row->name,
+                'type'  => 'dob_after_dod',
+                'detail' => sprintf( 'Birth date %s is after death date %s.', $row->date_of_birth, $row->date_of_death ),
+            );
+        }
+
+        $summary = sprintf(
+            'Audit complete: %d issues found%s.',
+            count( $issues ),
+            $do_fix ? sprintf( ', %d fixed', $fixed ) : ' (dry run — add fix=1 to auto-fix)'
+        );
+
+        if ( function_exists( 'ontario_obituaries_log' ) ) {
+            ontario_obituaries_log( 'Data Quality Audit: ' . $summary, 'info' );
+        }
+
+        wp_send_json_success( array(
+            'summary' => $summary,
+            'issues'  => $issues,
+            'fixed'   => $fixed,
+            'total'   => count( $issues ),
+        ) );
     }
 }

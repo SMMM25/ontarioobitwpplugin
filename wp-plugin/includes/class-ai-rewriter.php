@@ -402,8 +402,17 @@ class Ontario_Obituaries_AI_Rewriter {
             if ( ! empty( $rewritten['date_of_birth'] ) ) {
                 $update_data['date_of_birth'] = $rewritten['date_of_birth'];
             }
-            if ( ! empty( $rewritten['age'] ) && intval( $rewritten['age'] ) > 0 ) {
+            if ( ! empty( $rewritten['age'] ) && intval( $rewritten['age'] ) >= 1 && intval( $rewritten['age'] ) <= 120 ) {
                 $update_data['age'] = intval( $rewritten['age'] );
+            }
+            // v6.0.2: If the existing DB age is 0 (bad scrape) and Groq didn't fix it,
+            // actively set it to NULL to prevent "age 0" from displaying.
+            if ( isset( $obituary->age ) && intval( $obituary->age ) === 0 && ! isset( $update_data['age'] ) ) {
+                $update_data['age'] = null;
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Clearing age=0 for ID %d (%s) — bad scrape data.', $obituary->id, $obituary->name ),
+                    'info'
+                );
             }
             if ( ! empty( $rewritten['location'] ) ) {
                 $update_data['location'] = sanitize_text_field( $rewritten['location'] );
@@ -422,6 +431,12 @@ class Ontario_Obituaries_AI_Rewriter {
             // v5.0.0: Single atomic DB update — prose + corrected fields + status.
             // Build explicit format array so WordPress uses correct types
             // (especially %d for age, %s for everything else).
+            // v6.0.2: Handle NULL age — remove from $update_data and set via raw SQL.
+            $null_age = false;
+            if ( array_key_exists( 'age', $update_data ) && null === $update_data['age'] ) {
+                $null_age = true;
+                unset( $update_data['age'] );
+            }
             $update_formats = array();
             foreach ( $update_data as $col => $val ) {
                 $update_formats[] = ( 'age' === $col ) ? '%d' : '%s';
@@ -434,6 +449,14 @@ class Ontario_Obituaries_AI_Rewriter {
                 $update_formats,
                 array( '%d' )
             );
+
+            // v6.0.2: Set age to NULL via raw query (wpdb::update cannot set NULL).
+            if ( $null_age ) {
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE `{$table}` SET age = NULL WHERE id = %d",
+                    $obituary->id
+                ) );
+            }
 
             // v5.3.3: Phase 2c — check publish update succeeded.
             if ( function_exists( 'oo_db_check' ) ) {
@@ -634,14 +657,21 @@ class Ontario_Obituaries_AI_Rewriter {
             }
         }
 
-        // Age — must be 0-130.
+        // Age — must be 1-120 (v6.0.2: tightened from 0-130; age 0 is always a data error,
+        // age >120 is implausible for modern Ontario obituaries).
         if ( isset( $data['age'] ) && is_numeric( $data['age'] ) ) {
             $age = intval( $data['age'] );
-            if ( $age > 0 && $age <= 130 ) {
+            if ( $age >= 1 && $age <= 120 ) {
                 $result['age'] = $age;
                 if ( ! empty( $obituary->age ) && intval( $obituary->age ) > 0 && intval( $obituary->age ) !== $age ) {
                     $result['corrections'][] = sprintf( 'age: %d → %d', intval( $obituary->age ), $age );
                 }
+            } else {
+                // v6.0.2: Log implausible age — do NOT store it.
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: Rejected implausible age %d for ID %d (%s). Age must be 1-120.', $age, $obituary->id, $obituary->name ),
+                    'warning'
+                );
             }
         }
 
@@ -665,21 +695,44 @@ class Ontario_Obituaries_AI_Rewriter {
         }
 
         // Cross-validate: if we have both birth and death dates, compute expected age.
-        if ( ! empty( $result['date_of_birth'] ) && ! empty( $result['date_of_death'] ) && ! empty( $result['age'] ) ) {
+        if ( ! empty( $result['date_of_birth'] ) && ! empty( $result['date_of_death'] ) ) {
             try {
                 $b = new DateTime( $result['date_of_birth'] );
                 $d = new DateTime( $result['date_of_death'] );
                 $computed_age = $d->diff( $b )->y;
-                // Allow ±1 year tolerance (birthday edge cases).
-                if ( abs( $computed_age - $result['age'] ) > 1 ) {
+
+                // v6.0.2: If Groq returned an age, cross-check it.
+                if ( ! empty( $result['age'] ) ) {
+                    // Allow ±1 year tolerance (birthday edge cases).
+                    if ( abs( $computed_age - $result['age'] ) > 1 ) {
+                        ontario_obituaries_log(
+                            sprintf(
+                                'AI Rewriter: Age cross-validation mismatch for ID %d — Groq says %d, computed %d from dates %s to %s. Using computed.',
+                                $obituary->id, $result['age'], $computed_age, $result['date_of_birth'], $result['date_of_death']
+                            ),
+                            'warning'
+                        );
+                        $result['age'] = $computed_age;
+                    }
+                } else {
+                    // v6.0.2: Groq didn't return a valid age — compute it from dates.
+                    if ( $computed_age >= 1 && $computed_age <= 120 ) {
+                        $result['age'] = $computed_age;
+                        $result['corrections'][] = sprintf( 'age: (computed from dates) → %d', $computed_age );
+                        ontario_obituaries_log(
+                            sprintf( 'AI Rewriter: Computed age %d from dates for ID %d (%s).', $computed_age, $obituary->id, $obituary->name ),
+                            'info'
+                        );
+                    }
+                }
+
+                // v6.0.2: Final sanity check — computed age must also be plausible.
+                if ( ! empty( $result['age'] ) && ( $result['age'] < 1 || $result['age'] > 120 ) ) {
                     ontario_obituaries_log(
-                        sprintf(
-                            'AI Rewriter: Age cross-validation mismatch for ID %d — Groq says %d, computed %d from dates %s to %s. Using computed.',
-                            $obituary->id, $result['age'], $computed_age, $result['date_of_birth'], $result['date_of_death']
-                        ),
+                        sprintf( 'AI Rewriter: Computed age %d is implausible for ID %d — clearing.', $result['age'], $obituary->id ),
                         'warning'
                     );
-                    $result['age'] = $computed_age;
+                    $result['age'] = null;
                 }
             } catch ( Exception $e ) {
                 // Date parsing failed — keep Groq's age.
@@ -716,9 +769,9 @@ class Ontario_Obituaries_AI_Rewriter {
      * @return array Messages array for the chat completion API.
      */
     private function build_prompt( $obituary ) {
-        // Sprint 4 Task 20 (v5.0.6): Optimized prompt — reduced from ~400 to ~280 tokens
-        // by consolidating rules and removing redundant instructions. Saves ~120 tokens
-        // per API call × ~5 calls/min = ~600 TPM headroom within the 6,000 TPM budget.
+        // v6.0.2: Enhanced prompt — stronger data accuracy rules to prevent age 0,
+        // wrong dates, and fabricated details. Added explicit "NEVER output age 0"
+        // and cross-validation instructions.
         $system = <<<'SYSTEM'
 You extract structured data from obituaries and rewrite them as dignified prose for an Ontario funeral directory.
 
@@ -732,12 +785,20 @@ Return ONLY a JSON object with these keys:
   "rewritten_text": "Rewritten obituary"
 }
 
-EXTRACTION: Read the ORIGINAL TEXT. SUGGESTIONS may be wrong — trust the original if they conflict. For "in his/her Nth year", age = N-1. Only extract location/funeral_home if explicitly stated.
+EXTRACTION RULES (strict):
+- Read the ORIGINAL TEXT carefully. SUGGESTIONS may be wrong — trust the original text if they conflict.
+- For "in his/her Nth year", age = N-1.
+- NEVER return age 0 or age null when the text states an age. Age must be between 1 and 120.
+- If no age is stated in the text, return null for age — do NOT guess or compute.
+- If dates of birth AND death are both present, verify the age matches (death_year - birth_year ± 1).
+- Only extract location/funeral_home if explicitly stated in the original text.
+- Dates must be real calendar dates. Do not confuse funeral/visitation dates with death dates.
 
-REWRITING:
-- Preserve every fact exactly: name, all dates, locations, funeral home, age.
-- Include death date and age explicitly.
-- NEVER invent details not in the original (no family members, hobbies, traits).
+REWRITING RULES:
+- Preserve every fact exactly: full legal name, all dates, locations, funeral home, age.
+- Include death date and age explicitly in the prose (e.g., "passed away on February 14, 2025, at the age of 78").
+- NEVER write "at the age of 0" — if age is unknown, omit the age phrase entirely.
+- NEVER invent details not in the original (no family members, hobbies, traits, cause of death).
 - A year in parentheses after a name (e.g. "wife of Frank (2020)") means that person DIED — write "predeceased by".
 - 2-4 paragraphs, third person, plain prose. No headings or formatting.
 - If original is sparse, keep rewrite brief. No padding.
@@ -929,6 +990,33 @@ SYSTEM;
         }
         if ( $len > 5000 ) {
             return new WP_Error( 'too_long', sprintf( 'Rewrite too long (%d chars).', $len ) );
+        }
+
+        // ── 1b. Implausible data check (v6.0.2) ──
+        // Hard-reject rewrites that contain obviously wrong data in the prose.
+        // These patterns indicate the LLM reproduced bad source data verbatim.
+        $implausible_patterns = array(
+            '/\bage(?:d?)?\s+(?:of\s+)?0\b/i',           // "age 0", "age of 0", "aged 0"
+            '/\bat\s+the\s+age\s+of\s+0\b/i',            // "at the age of 0"
+            '/\bin\s+(?:his|her|their)\s+(?:1st|first)\s+year\b/i',  // "in his 1st year" (implies age 0)
+            '/\bage(?:d?)?\s+(?:of\s+)?(?:1[3-9]\d{2}|20\d{2})\b/i', // "age 1900", "age 2024" (year confused with age)
+        );
+        foreach ( $implausible_patterns as $pattern ) {
+            if ( preg_match( $pattern, $rewritten ) ) {
+                ontario_obituaries_log(
+                    sprintf(
+                        'AI Rewriter: HARD REJECT — rewrite for ID %d (%s) contains implausible data: "%s". Setting to re-queue.',
+                        $obituary->id,
+                        $obituary->name,
+                        $pattern
+                    ),
+                    'error'
+                );
+                return new WP_Error( 'implausible_data', sprintf(
+                    'Rewrite contains implausible data (pattern: %s). Will retry.',
+                    $pattern
+                ) );
+            }
         }
 
         // ── 2. Name check (last name required, first name preferred) ──
