@@ -959,6 +959,7 @@ TONE (strict — professional memorial):
 - Write in a respectful, dignified, matter-of-fact memorial tone.
 - BANNED terms (never use unless they appear VERBATIM in the original text):
   "fur boys", "fur babies", "fur baby", "doggo", "pupper", "good boy",
+  "kiddo", "kiddos", "hubby", "wifey", "bestie", "bestie forever",
   "journey", "shined bright", "indelible mark", "tapestry of life",
   "forever etched", "treasured memories", "cherished moments", "left a void",
   "beacon of light", "heart of gold", "touched the lives", "celebrated life".

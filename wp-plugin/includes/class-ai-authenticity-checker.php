@@ -2,6 +2,10 @@
 /**
  * AI Authenticity Checker v2
  *
+ * v6.1.0: Structured issues format (type, severity, detail) for audit responses.
+ * Updated banned terms list (kiddo, hubby, wifey, bestie). Restored pending==0
+ * idle gate. Improved issue logging for structured format.
+ *
  * v6.0.6: Blocker fixes — parse_audit_response() no longer defaults to PASS
  * on JSON parse failure (returns flagged/admin_review instead). Idle gate now
  * includes a 10-minute buffer before scheduled scrape/collection events and
@@ -10,10 +14,9 @@
  * uses %d for age field. New setting authenticity_auto_correct_enabled (default OFF)
  * gates auto-corrections.
  *
- * v6.0.5: Continuous publishing — idle gate changed from "pending == 0"
- * to "rewriter not actively running + rate limiter OK". This allows the
- * audit to publish obituaries continuously during rebuilds, rather than
- * waiting for the entire rewrite backlog to complete first.
+ * v6.0.5: (Reverted in v6.1.0) Continuous publishing — idle gate was relaxed
+ * from "pending == 0" to "rewriter not actively running + rate limiter OK".
+ * v6.1.0 restored the strict "pending == 0" requirement per spec.
  *
  * v6.0.4: Complete redesign. The checker is now the ONLY component that
  * can publish obituaries. Flow:
@@ -21,8 +24,8 @@
  *
  * Key changes from v1 (4.3.0):
  *   - Batch size 1 (not 10): processes one at a time, deterministically.
- *   - Idle gate: runs when rewriter is not actively running (v6.0.5: no longer
- *     requires pending == 0 — allows continuous publishing during rebuilds).
+ *   - Idle gate: runs when rewriter is not actively running (v6.1.0: restored
+ *     strict pending == 0 requirement — overrides v6.0.5 relaxation).
  *   - Cross-reference: compares ORIGINAL text vs AI rewrite, not just fields.
  *   - Publish gating: PASS → status='published'; FLAGGED → requeue for rewrite.
  *   - Hash-based no-churn: skips re-audit when ai_description_hash == last_audited_hash.
@@ -86,28 +89,20 @@ class Ontario_Obituaries_Authenticity_Checker {
     }
 
     /**
-     * v6.0.6: Check if the checker should run (idle gate).
+     * v6.1.0: Check if the checker should run (idle gate).
      *
-     * The checker runs when:
+     * The checker runs ONLY when the system is fully idle:
      *   1. API key is configured.
-     *   2. No active rewriter lock (rewriter is not mid-batch).
-     *   3. No scrape/collection imminent (10-minute buffer) or actively running.
-     *   4. Groq rate limiter allows 800 tokens (non-reserving peek).
+     *   2. Pending rewrites == 0 (hard requirement — restored in v6.1.0).
+     *   3. No active rewriter lock (rewriter is not mid-batch).
+     *   4. No active scraper/collector lock (collection cooldown transient).
+     *   5. No scrape/collection imminent (10-minute buffer via wp_next_scheduled).
+     *   6. Groq rate limiter allows 800 tokens (non-reserving peek).
      *
-     * v6.0.6 CHANGES:
-     *   - Gate 2 (NEW): 10-minute buffer before scheduled scrape/collection events
-     *     (ontario_obituaries_collection_event). Also respects the collection
-     *     cooldown transient (scrape actively running or just finished).
-     *   - Gate 3 FIX: Uses peek_budget() (non-reserving) instead of may_proceed()
-     *     + release_reservation(). The old code always called release_reservation()
-     *     even when may_proceed() returned false (nothing to release).
-     *
-     * v6.0.5 CHANGE: Removed the "pending == 0" gate. The old behaviour
-     * blocked ALL publishing until the entire rewrite queue emptied, meaning
-     * the directory would be effectively "off" during a rebuild. Now the
-     * audit runs continuously: as each obituary completes rewrite → needs_audit,
-     * the next audit tick publishes it. This provides continuous publishing
-     * during rebuilds instead of batch-all-or-nothing.
+     * v6.1.0 CHANGE: Restored "pending rewrites == 0" as a hard gate.
+     * The v6.0.5 relaxation (continuous publishing) is reverted because
+     * the spec requires strict idle-only operation: audit must not compete
+     * with rewrites for Groq budget or DB writes.
      *
      * @return true|WP_Error True if idle and ready, WP_Error with reason if not.
      */
@@ -116,24 +111,31 @@ class Ontario_Obituaries_Authenticity_Checker {
             return new WP_Error( 'not_configured', 'Groq API key not configured.' );
         }
 
-        // Gate 1: No active rewriter lock (rewriter is not mid-API-call).
-        // This prevents the audit from competing with the rewriter for Groq TPM.
-        // The lock has a 5-min (cron) / 2-min (AJAX) / 1-min (shutdown) TTL,
-        // so the audit waits only for the current rewrite call to finish.
+        // Gate 1 (v6.1.0 RESTORED): Pending rewrites must be 0.
+        // Audit must not run while the rewrite queue has work to do.
+        // This is a hard requirement from the pipeline spec.
+        if ( class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+            $rewriter = new Ontario_Obituaries_AI_Rewriter();
+            $pending  = $rewriter->get_pending_count();
+            if ( $pending > 0 ) {
+                return new WP_Error(
+                    'pending_rewrites',
+                    sprintf( 'AUDIT_IDLE_SKIP_PENDING: %d pending rewrites — audit deferred until rewrite queue is empty.', $pending )
+                );
+            }
+        }
+
+        // Gate 2: No active rewriter lock (rewriter is not mid-API-call).
         if ( get_transient( 'ontario_obituaries_rewriter_running' ) ) {
             return new WP_Error( 'rewriter_locked', 'Rewriter is currently running — deferring audit.' );
         }
 
-        // Gate 2 (v6.0.6): Scrape/collection buffer — don't compete with imminent scrape.
-        // Check the collection cooldown transient (set after scrape completes, 10-min TTL).
-        // If set, scraping just finished or is still wrapping up — defer audit.
+        // Gate 3: No active scraper/collector lock.
         if ( get_transient( 'ontario_obituaries_collection_cooldown' ) ) {
             return new WP_Error( 'scrape_active', 'Collection cooldown active — scraping recently ran, deferring audit.' );
         }
 
-        // Check if a scrape/collection event is scheduled within the next 10 minutes.
-        // This prevents the audit from starting an API call right before a scrape
-        // needs the system's full attention (DB writes, dedup, etc.).
+        // Gate 4: Not within 10 minutes of next scheduled scrape/collect event.
         $scrape_buffer_seconds = 600; // 10 minutes.
         $scrape_hooks = array(
             'ontario_obituaries_collection_event',
@@ -154,30 +156,18 @@ class Ontario_Obituaries_Authenticity_Checker {
             }
         }
 
-        // Gate 3 (v6.0.6 FIX): Rate limiter check — non-reserving peek.
-        // The actual token reservation happens in audit_obituary() — we just
-        // verify the budget isn't fully exhausted before starting.
-        //
-        // v6.0.6 FIX: Previously used may_proceed() (which reserves tokens)
-        // then always called release_reservation() — even when may_proceed()
-        // returned false (no reservation to release). Now uses peek_budget()
-        // which is read-only, or falls back to the old pattern only releasing
-        // when may_proceed() actually succeeded.
+        // Gate 5: Rate limiter check — non-reserving peek.
         if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
             $limiter = Ontario_Obituaries_Groq_Rate_Limiter::get_instance();
             if ( method_exists( $limiter, 'peek_budget' ) ) {
-                // Preferred: non-reserving read-only check.
                 if ( ! $limiter->peek_budget( 800, 'authenticity' ) ) {
                     return new WP_Error( 'rate_limited', 'Groq TPM budget exhausted — deferring.' );
                 }
             } else {
-                // Fallback: use may_proceed() but only release if reservation was made.
                 $reserved = $limiter->may_proceed( 800, 'authenticity' );
                 if ( ! $reserved ) {
-                    // may_proceed() returned false — no reservation was made, do NOT release.
                     return new WP_Error( 'rate_limited', 'Groq TPM budget exhausted — deferring.' );
                 }
-                // Reservation was made — release it (actual reservation in audit_obituary()).
                 $limiter->release_reservation( 800, 'authenticity' );
             }
         }
@@ -390,11 +380,21 @@ class Ontario_Obituaries_Authenticity_Checker {
             $recommendation = isset( $audit['recommendation'] ) ? $audit['recommendation'] : 'requeue';
             $requeue_count  = isset( $obit->audit_requeue_count ) ? intval( $obit->audit_requeue_count ) : 0;
 
+            // v6.1.0: Format structured issues for log display.
+            $issue_summaries = array();
+            foreach ( $audit['issues'] as $iss ) {
+                if ( is_array( $iss ) && isset( $iss['detail'] ) ) {
+                    $issue_summaries[] = sprintf( '[%s/%s] %s', isset( $iss['type'] ) ? $iss['type'] : '?', isset( $iss['severity'] ) ? $iss['severity'] : '?', $iss['detail'] );
+                } elseif ( is_string( $iss ) ) {
+                    $issue_summaries[] = $iss;
+                }
+            }
+
             ontario_obituaries_log(
                 sprintf(
                     'Authenticity Checker v2: FLAGGED ID %d (%s) — %s (requeue count: %d/%d)',
                     $obit->id, $obit->name,
-                    implode( '; ', $audit['issues'] ),
+                    implode( '; ', $issue_summaries ),
                     $requeue_count, $this->max_requeues
                 ),
                 'warning'
@@ -418,7 +418,9 @@ class Ontario_Obituaries_Authenticity_Checker {
                         'last_audited_hash'    => $current_hash,
                         'audit_requeue_count'  => $new_count,
                         'rewrite_requested_at' => current_time( 'mysql', true ),
-                        'rewrite_request_reason' => 'audit_flagged: ' . implode( '; ', array_slice( $audit['issues'], 0, 2 ) ),
+                        'rewrite_request_reason' => 'audit_flagged: ' . implode( '; ', array_map( function( $i ) {
+                            return is_array( $i ) && isset( $i['detail'] ) ? $i['detail'] : ( is_string( $i ) ? $i : '' );
+                        }, array_slice( $audit['issues'], 0, 2 ) ) ),
                     ),
                     array( 'id' => $obit->id ),
                     array( '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
@@ -550,20 +552,35 @@ CHECK THESE POINTS (in order of severity):
 
 4. AGE/DATE CONSISTENCY: If age AND birth/death dates are all present, verify age = death_year - birth_year (±1). Age 0 or age >120 = FLAGGED.
 
-5. TONE: The REWRITE should be dignified, professional, matter-of-fact. No slang ("doggo", "fur babies"), no AI cliches ("indelible mark", "tapestry of life"), no "age of 0". Tone violations = FLAGGED.
+5. TONE: The REWRITE should be dignified, professional, matter-of-fact. No slang ("doggo", "fur babies", "pupper", "kiddo", "hubby", "wifey", "bestie"), no AI cliches ("indelible mark", "tapestry of life", "beacon of light", "heart of gold"), no "age of 0". Tone violations = FLAGGED.
 
 6. CONTENT QUALITY: The REWRITE must be actual obituary prose (not placeholder, lorem ipsum, or truncated text).
 
 Respond ONLY with valid JSON:
 {
   "status": "pass" or "flagged",
-  "issues": ["list of specific issues found, empty if pass"],
+  "issues": [
+    { "type": "missing_fact|fabrication|field_mismatch|tone|age_error|quality", "severity": "critical|warning|info", "detail": "description" }
+  ],
   "missing_facts": ["facts from ORIGINAL missing in REWRITE"],
   "fabricated_facts": ["facts in REWRITE not in ORIGINAL"],
   "field_corrections": { "field_name": "correct_value" },
   "confidence": 0.0 to 1.0,
   "recommendation": "pass" or "requeue" or "admin_review"
 }
+
+ISSUE TYPES (use exactly these strings):
+- "missing_fact": A name, date, age, location, or other fact from the ORIGINAL is absent in the REWRITE.
+- "fabrication": The REWRITE contains details not present in the ORIGINAL.
+- "field_mismatch": A structured field (date, age, location, funeral_home) does not match the ORIGINAL.
+- "tone": Banned slang, AI cliche, or undignified language detected.
+- "age_error": Age is 0, >120, or inconsistent with birth/death dates.
+- "quality": Placeholder text, truncation, or other content quality problem.
+
+SEVERITY LEVELS:
+- "critical": Hard failure — must be requeued or sent to admin review. (fabrication, missing key facts)
+- "warning": Likely needs requeue but could be acceptable. (tone issues, minor missing facts)
+- "info": Noted but not grounds for flagging alone. (stylistic preferences)
 
 RULES:
 - "pass" means the REWRITE faithfully represents the ORIGINAL with no issues.
@@ -637,7 +654,11 @@ SYSTEM;
             // Now the record is held for admin review — fail-safe, not fail-open.
             return array(
                 'status'           => 'flagged',
-                'issues'           => array( 'LLM audit response could not be parsed — held for admin review.' ),
+                'issues'           => array( array(
+                    'type'     => 'quality',
+                    'severity' => 'critical',
+                    'detail'   => 'LLM audit response could not be parsed — held for admin review.',
+                ) ),
                 'missing_facts'    => array(),
                 'fabricated_facts' => array(),
                 'corrections'      => array(),
@@ -654,6 +675,45 @@ SYSTEM;
         $corrections      = isset( $data['field_corrections'] ) && is_array( $data['field_corrections'] ) ? $data['field_corrections'] : array();
         $confidence       = isset( $data['confidence'] ) ? floatval( $data['confidence'] ) : 0;
         $recommendation   = isset( $data['recommendation'] ) ? sanitize_text_field( $data['recommendation'] ) : '';
+
+        // v6.1.0: Normalize issues to structured format (type, severity, detail).
+        // Handles both new structured array-of-objects and legacy string arrays.
+        $structured_issues = array();
+        foreach ( $issues as $issue ) {
+            if ( is_array( $issue ) && isset( $issue['type'] ) && isset( $issue['detail'] ) ) {
+                // Already structured — validate and keep.
+                $allowed_types      = array( 'missing_fact', 'fabrication', 'field_mismatch', 'tone', 'age_error', 'quality' );
+                $allowed_severities = array( 'critical', 'warning', 'info' );
+                $structured_issues[] = array(
+                    'type'     => in_array( $issue['type'], $allowed_types, true ) ? $issue['type'] : 'quality',
+                    'severity' => isset( $issue['severity'] ) && in_array( $issue['severity'], $allowed_severities, true ) ? $issue['severity'] : 'warning',
+                    'detail'   => sanitize_text_field( substr( $issue['detail'], 0, 500 ) ),
+                );
+            } elseif ( is_string( $issue ) ) {
+                // Legacy string — classify based on keywords.
+                $type     = 'quality';
+                $severity = 'warning';
+                $lower    = strtolower( $issue );
+                if ( false !== strpos( $lower, 'missing' ) || false !== strpos( $lower, 'absent' ) ) {
+                    $type = 'missing_fact';
+                } elseif ( false !== strpos( $lower, 'fabricat' ) || false !== strpos( $lower, 'invent' ) || false !== strpos( $lower, 'not in original' ) ) {
+                    $type     = 'fabrication';
+                    $severity = 'critical';
+                } elseif ( false !== strpos( $lower, 'mismatch' ) || false !== strpos( $lower, 'incorrect' ) ) {
+                    $type = 'field_mismatch';
+                } elseif ( false !== strpos( $lower, 'tone' ) || false !== strpos( $lower, 'slang' ) || false !== strpos( $lower, 'cliche' ) ) {
+                    $type = 'tone';
+                } elseif ( false !== strpos( $lower, 'age' ) ) {
+                    $type = 'age_error';
+                }
+                $structured_issues[] = array(
+                    'type'     => $type,
+                    'severity' => $severity,
+                    'detail'   => sanitize_text_field( substr( $issue, 0, 500 ) ),
+                );
+            }
+        }
+        $issues = $structured_issues;
 
         // Validate recommendation.
         if ( ! in_array( $recommendation, array( 'pass', 'requeue', 'admin_review' ), true ) ) {
@@ -685,17 +745,26 @@ SYSTEM;
         }
 
         // Merge all issue sources for audit_flags storage.
+        // v6.1.0: Structured issues — append missing_facts and fabricated_facts as typed entries.
         $all_issues = $issues;
         if ( ! empty( $missing_facts ) ) {
-            $all_issues[] = 'Missing facts: ' . implode( ', ', array_slice( $missing_facts, 0, 3 ) );
+            $all_issues[] = array(
+                'type'     => 'missing_fact',
+                'severity' => 'warning',
+                'detail'   => 'Missing facts: ' . sanitize_text_field( implode( ', ', array_slice( $missing_facts, 0, 3 ) ) ),
+            );
         }
         if ( ! empty( $fabricated_facts ) ) {
-            $all_issues[] = 'Fabricated: ' . implode( ', ', array_slice( $fabricated_facts, 0, 3 ) );
+            $all_issues[] = array(
+                'type'     => 'fabrication',
+                'severity' => 'critical',
+                'detail'   => 'Fabricated: ' . sanitize_text_field( implode( ', ', array_slice( $fabricated_facts, 0, 3 ) ) ),
+            );
         }
 
         return array(
             'status'           => $status,
-            'issues'           => array_map( 'sanitize_text_field', array_slice( $all_issues, 0, 10 ) ),
+            'issues'           => array_slice( $all_issues, 0, 10 ),
             'missing_facts'    => array_map( 'sanitize_text_field', array_slice( $missing_facts, 0, 5 ) ),
             'fabricated_facts' => array_map( 'sanitize_text_field', array_slice( $fabricated_facts, 0, 5 ) ),
             'corrections'      => $corrections,

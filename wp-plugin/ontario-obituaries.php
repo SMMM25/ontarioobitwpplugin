@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 6.0.6
+ * Version: 6.1.0
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '6.0.6' );
+define( 'ONTARIO_OBITUARIES_VERSION', '6.1.0' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -252,12 +252,17 @@ function oo_tone_sanitize( $text ) {
     }
 
     // Banned slang → neutral replacements (case-insensitive).
+    // v6.1.0: Added kiddo(s), hubby, wifey, bestie per master spec.
     $replacements = array(
         '/\bfur (boys|babies|baby|kids|children)\b/i' => 'pets',
         '/\bfur-babies?\b/i'                          => 'pets',
         '/\bdoggo(s)?\b/i'                             => 'dogs',
         '/\bpupper(s)?\b/i'                            => 'puppies',
         '/\bgood\s*boy(s)?\b/i'                        => 'dogs',
+        '/\bkiddo(s)?\b/i'                             => 'children',
+        '/\bhubby\b/i'                                 => 'husband',
+        '/\bwifey\b/i'                                 => 'wife',
+        '/\bbestie(s)?\b/i'                            => 'close friend',
     );
     foreach ( $replacements as $pattern => $replacement ) {
         $text = preg_replace( $pattern, $replacement, $text );
@@ -2647,19 +2652,20 @@ add_action( 'ontario_obituaries_gofundme_batch', 'ontario_obituaries_gofundme_ba
  * v6.0.4: Complete redesign — now the ONLY path to publish.
  * v6.0.6: Blocker fixes — parse failure safety, scrape buffer gate, rate limiter
  *          peek, auto-correct setting gate.
- * v6.0.5: Continuous publishing — runs even while rewrite queue is active.
+ * v6.0.5: (Reverted in v6.1.0) Continuous publishing.
+ * v6.1.0: Restored strict "pending rewrites == 0" idle gate per spec.
  *
  * Runs via:
  *   1. Post-rewriter trigger (30s after rewrite batch completes).
  *   2. Recurring 4-hour WP-Cron (fallback/re-check).
  *   3. Manual "Run Audit Now" button (admin UI).
  *
- * Idle gates (v6.0.6):
+ * Idle gates (v6.1.0):
+ *   - Pending rewrites == 0 (RESTORED in v6.1.0 — strict idle requirement).
  *   - No active rewriter lock (rewriter not mid-batch).
  *   - No imminent scrape/collection (10-min buffer via wp_next_scheduled).
  *   - No active collection cooldown transient.
  *   - Groq rate limiter allows 800 tokens (non-reserving peek).
- *   - Note: pending_rewrites > 0 is NO LONGER a blocker (continuous publishing).
  */
 function ontario_obituaries_authenticity_audit() {
     // v6.0.4: Always attempt audit when called (gate logic is inside the checker).
@@ -2744,13 +2750,17 @@ add_action( 'ontario_obituaries_authenticity_audit', 'ontario_obituaries_authent
 add_action( 'ontario_obituaries_audit_after_rewrite', 'ontario_obituaries_authenticity_audit' );
 
 /**
- * v6.0.5: Schedule audit after rewriter batch (continuous publishing).
+ * v6.0.5: Schedule audit after rewriter batch completes.
  *
- * v6.0.4 required pending == 0 before scheduling audit. v6.0.5 relaxes
- * this: schedule audit whenever there are items needing audit, regardless
- * of rewrite queue depth. This allows continuous publishing during rebuilds
- * (items publish as soon as they pass rewrite + audit, not after the whole
- * backlog finishes).
+ * Schedules a one-shot audit event 30 seconds after the rewrite batch
+ * finishes, so newly-rewritten obituaries are audited promptly.
+ *
+ * NOTE (v6.1.0): The actual idle-gate enforcement (pending == 0, no locks,
+ * scrape buffer, rate limiter peek) is inside check_idle_gates(). This
+ * function merely *schedules* the audit — the checker will skip execution
+ * if idle-gate conditions are not met at trigger time. The v6.0.5
+ * "continuous publishing" relaxation was reverted in v6.1.0; the strict
+ * "pending rewrites == 0" idle gate is once again enforced.
  *
  * Called from ontario_obituaries_ai_rewrite_batch() post-loop and
  * from cron-rewriter.php after its processing loop.
