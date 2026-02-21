@@ -77,6 +77,15 @@ class Ontario_Obituaries_AI_Rewriter {
     /** @var int Number of consecutive rate-limit hits in this batch. */
     private $consecutive_rate_limits = 0;
 
+    /**
+     * v6.0.3 QC FIX: Maximum validation failures per obituary before quarantine.
+     * After this many consecutive validate_rewrite() hard-rejects for the SAME
+     * record, the record is quarantined (status remains 'pending', but a
+     * transient flag prevents re-selection for 1 hour). This prevents a single
+     * poison record from deadlocking the autonomous queue.
+     */
+    private $max_validation_failures = 3;
+
     /** @var bool Whether we're running in CLI mode (standalone cron). */
     private $is_cli = false;
 
@@ -252,6 +261,9 @@ class Ontario_Obituaries_AI_Rewriter {
         // v4.6.0: Get obituaries with status='pending' that need AI rewrite.
         // Only pending records are processed — they become 'published' after
         // successful rewrite + validation.
+        // v6.0.3 QC FIX: Exclude quarantined records (ai_description LIKE '__quarantined_%').
+        // Quarantined records had repeated validation failures; they are re-eligible
+        // after 1 hour when a separate cron or the next audit clears the marker.
         $obituaries = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, name, date_of_birth, date_of_death, age, funeral_home,
                     location, description, city_normalized
@@ -259,12 +271,36 @@ class Ontario_Obituaries_AI_Rewriter {
              WHERE status = 'pending'
                AND description IS NOT NULL
                AND description != ''
-               AND (ai_description IS NULL OR ai_description = '')
+               AND (ai_description IS NULL OR ai_description = '' OR ai_description LIKE '__quarantined_%%')
                AND suppressed_at IS NULL
              ORDER BY created_at DESC
              LIMIT %d",
             $this->batch_size
         ) );
+
+        // v6.0.3 QC FIX: Filter out records that are still within quarantine window.
+        if ( ! empty( $obituaries ) ) {
+            $filtered = array();
+            foreach ( $obituaries as $obit ) {
+                // Check if quarantined and still within the 1-hour window.
+                if ( ! empty( $obit->ai_description ) && 0 === strpos( $obit->ai_description, '__quarantined_' ) ) {
+                    $quarantine_ts = (int) str_replace( '__quarantined_', '', $obit->ai_description );
+                    if ( $quarantine_ts > 0 && ( time() - $quarantine_ts ) < 3600 ) {
+                        continue; // Still quarantined — skip.
+                    }
+                    // Quarantine expired — clear marker and allow re-processing.
+                    $clear_result = $wpdb->query( $wpdb->prepare(
+                        "UPDATE `{$table}` SET ai_description = NULL WHERE id = %d",
+                        $obit->id
+                    ) );
+                    if ( function_exists( 'oo_db_check' ) ) {
+                        oo_db_check( 'REWRITE', $clear_result, 'DB_QUARANTINE_CLEAR_FAIL', 'Failed to clear expired quarantine marker', array( 'obit_id' => $obit->id ) );
+                    }
+                }
+                $filtered[] = $obit;
+            }
+            $obituaries = $filtered;
+        }
 
         $result = array(
             'processed' => 0,
@@ -384,8 +420,43 @@ class Ontario_Obituaries_AI_Rewriter {
                     $obituary->name,
                     $validation->get_error_message()
                 );
+
+                // v6.0.3 QC FIX: Quarantine after repeated validation failures.
+                // Track per-record failure count in a short-lived transient.
+                // After max_validation_failures consecutive rejects, quarantine
+                // the record for 1 hour so it doesn't block the queue.
+                $fail_key   = 'oo_rewrite_fail_' . $obituary->id;
+                $fail_count = (int) get_transient( $fail_key );
+                $fail_count++;
+                set_transient( $fail_key, $fail_count, 3600 ); // 1-hour TTL.
+
+                if ( $fail_count >= $this->max_validation_failures ) {
+                    // Quarantine: set a transient that process_batch's SELECT
+                    // won't see (we skip quarantined IDs in the query below),
+                    // AND mark the record in the DB so the SELECT can exclude it.
+                    $quarantine_result = $wpdb->query( $wpdb->prepare(
+                        "UPDATE `{$table}` SET ai_description = %s WHERE id = %d",
+                        '__quarantined_' . time(),
+                        $obituary->id
+                    ) );
+                    if ( function_exists( 'oo_db_check' ) ) {
+                        oo_db_check( 'REWRITE', $quarantine_result, 'DB_QUARANTINE_SET_FAIL', 'Failed to set quarantine marker', array( 'obit_id' => $obituary->id, 'name' => $obituary->name ) );
+                    }
+                    ontario_obituaries_log(
+                        sprintf(
+                            'AI Rewriter: QUARANTINED ID %d (%s) after %d consecutive validation failures. Will retry in 1 hour.',
+                            $obituary->id, $obituary->name, $fail_count
+                        ),
+                        'warning'
+                    );
+                    delete_transient( $fail_key ); // Reset counter.
+                }
+
                 continue;
             }
+
+            // Success — clear any failure counter for this record.
+            delete_transient( 'oo_rewrite_fail_' . $obituary->id );
 
             // v5.0.0: Build the DB update — rewritten text + corrected structured fields.
             $update_data = array(
@@ -451,11 +522,28 @@ class Ontario_Obituaries_AI_Rewriter {
             );
 
             // v6.0.2: Set age to NULL via raw query (wpdb::update cannot set NULL).
+            // v6.0.3 QC FIX: Log failures from raw NULL query via oo_db_check.
             if ( $null_age ) {
-                $wpdb->query( $wpdb->prepare(
+                $null_result = $wpdb->query( $wpdb->prepare(
                     "UPDATE `{$table}` SET age = NULL WHERE id = %d",
                     $obituary->id
                 ) );
+                if ( false === $null_result ) {
+                    ontario_obituaries_log(
+                        sprintf(
+                            'AI Rewriter: Failed to SET age=NULL for ID %d — %s',
+                            $obituary->id,
+                            $wpdb->last_error
+                        ),
+                        'error'
+                    );
+                }
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'REWRITE', $null_result, 'DB_NULL_AGE_FAIL', 'Failed to set age=NULL', array(
+                        'obit_id' => $obituary->id,
+                        'name'    => $obituary->name,
+                    ) );
+                }
             }
 
             // v5.3.3: Phase 2c — check publish update succeeded.
@@ -694,39 +782,68 @@ class Ontario_Obituaries_AI_Rewriter {
             }
         }
 
-        // Cross-validate: if we have both birth and death dates, compute expected age.
-        if ( ! empty( $result['date_of_birth'] ) && ! empty( $result['date_of_death'] ) ) {
+        // v6.0.3 QC FIX: Strengthened age cross-validation.
+        // Only compute when BOTH dates are valid (not poison dates like 0000-00-00).
+        // Uses DateTime::diff() for correct leap-year/birthday-edge handling.
+        // Prefers explicit Groq-extracted age when it passes sanity checks;
+        // only overrides with computed age when there's a significant mismatch.
+        $dob_valid = ! empty( $result['date_of_birth'] )
+            && '0000-00-00' !== $result['date_of_birth']
+            && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $result['date_of_birth'] );
+        $dod_valid = ! empty( $result['date_of_death'] )
+            && '0000-00-00' !== $result['date_of_death']
+            && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $result['date_of_death'] );
+
+        if ( $dob_valid && $dod_valid ) {
             try {
                 $b = new DateTime( $result['date_of_birth'] );
                 $d = new DateTime( $result['date_of_death'] );
-                $computed_age = $d->diff( $b )->y;
 
-                // v6.0.2: If Groq returned an age, cross-check it.
-                if ( ! empty( $result['age'] ) ) {
-                    // Allow ±1 year tolerance (birthday edge cases).
-                    if ( abs( $computed_age - $result['age'] ) > 1 ) {
-                        ontario_obituaries_log(
-                            sprintf(
-                                'AI Rewriter: Age cross-validation mismatch for ID %d — Groq says %d, computed %d from dates %s to %s. Using computed.',
-                                $obituary->id, $result['age'], $computed_age, $result['date_of_birth'], $result['date_of_death']
-                            ),
-                            'warning'
-                        );
-                        $result['age'] = $computed_age;
-                    }
+                // v6.0.3: Guard — DOB must be before DOD (poison-date rule).
+                if ( $b >= $d ) {
+                    ontario_obituaries_log(
+                        sprintf(
+                            'AI Rewriter: Poison date detected for ID %d — DOB %s >= DOD %s. Clearing DOB.',
+                            $obituary->id, $result['date_of_birth'], $result['date_of_death']
+                        ),
+                        'warning'
+                    );
+                    $result['date_of_birth'] = '';
+                    // Don't compute age from invalid dates.
                 } else {
-                    // v6.0.2: Groq didn't return a valid age — compute it from dates.
-                    if ( $computed_age >= 1 && $computed_age <= 120 ) {
-                        $result['age'] = $computed_age;
-                        $result['corrections'][] = sprintf( 'age: (computed from dates) → %d', $computed_age );
-                        ontario_obituaries_log(
-                            sprintf( 'AI Rewriter: Computed age %d from dates for ID %d (%s).', $computed_age, $obituary->id, $obituary->name ),
-                            'info'
-                        );
+                    $diff         = $d->diff( $b );
+                    $computed_age = $diff->y; // DateTime::diff handles leap years correctly.
+
+                    // v6.0.3: If Groq returned an age, prefer it unless significantly wrong.
+                    if ( ! empty( $result['age'] ) ) {
+                        // Allow ±1 year tolerance (birthday edge cases).
+                        if ( abs( $computed_age - $result['age'] ) > 1 ) {
+                            $groq_age = $result['age']; // Capture before overwrite.
+                            ontario_obituaries_log(
+                                sprintf(
+                                    'AI Rewriter: Age cross-validation mismatch for ID %d — Groq says %d, computed %d from dates %s to %s. Using computed.',
+                                    $obituary->id, $groq_age, $computed_age, $result['date_of_birth'], $result['date_of_death']
+                                ),
+                                'warning'
+                            );
+                            $result['age'] = $computed_age;
+                            $result['corrections'][] = sprintf( 'age: Groq %d → computed %d', $groq_age, $computed_age );
+                        }
+                        // If within ±1, keep Groq's age (prefer explicit over computed).
+                    } else {
+                        // Groq didn't return a valid age — compute from dates.
+                        if ( $computed_age >= 1 && $computed_age <= 120 ) {
+                            $result['age'] = $computed_age;
+                            $result['corrections'][] = sprintf( 'age: (computed from dates) → %d', $computed_age );
+                            ontario_obituaries_log(
+                                sprintf( 'AI Rewriter: Computed age %d from dates for ID %d (%s).', $computed_age, $obituary->id, $obituary->name ),
+                                'info'
+                            );
+                        }
                     }
                 }
 
-                // v6.0.2: Final sanity check — computed age must also be plausible.
+                // Final sanity check — computed age must also be plausible.
                 if ( ! empty( $result['age'] ) && ( $result['age'] < 1 || $result['age'] > 120 ) ) {
                     ontario_obituaries_log(
                         sprintf( 'AI Rewriter: Computed age %d is implausible for ID %d — clearing.', $result['age'], $obituary->id ),
@@ -735,7 +852,11 @@ class Ontario_Obituaries_AI_Rewriter {
                     $result['age'] = null;
                 }
             } catch ( Exception $e ) {
-                // Date parsing failed — keep Groq's age.
+                // Date parsing failed — keep Groq's age, log the error.
+                ontario_obituaries_log(
+                    sprintf( 'AI Rewriter: DateTime exception for ID %d — %s', $obituary->id, $e->getMessage() ),
+                    'warning'
+                );
             }
         }
 
@@ -1179,15 +1300,14 @@ SYSTEM;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
         // v4.6.4 FIX: Query must EXACTLY match the process_batch() WHERE clause.
-        // Previously this counted all status='pending' records, but process_batch()
-        // also filters on (ai_description IS NULL OR ai_description = ''). Mismatch
-        // caused the UI to show "X pending" while the batch processed 0 records.
+        // v6.0.3 QC FIX: Include quarantined records in the count (they are pending
+        // but temporarily blocked). This gives accurate UI counts.
         return (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM `{$table}`
              WHERE status = 'pending'
                AND description IS NOT NULL
                AND description != ''
-               AND (ai_description IS NULL OR ai_description = '')
+               AND (ai_description IS NULL OR ai_description = '' OR ai_description LIKE '__quarantined_%')
                AND suppressed_at IS NULL"
         );
     }

@@ -320,6 +320,12 @@ class Ontario_Obituaries_Ajax {
      *   - Sets age=NULL where age=0 (template already hides it)
      *   - Re-queues records with bad prose for AI re-rewrite
      *
+     * v6.0.3 QC FIX:
+     *   - Capped response to 200 issues max per scan.
+     *   - Capped fix batch to 200 records max.
+     *   - All queries use $wpdb->prepare().
+     *   - Fix actions logged via oo_log() when available.
+     *
      * @since 6.0.2
      */
     public function audit_data_quality() {
@@ -330,16 +336,18 @@ class Ontario_Obituaries_Ajax {
         }
 
         global $wpdb;
-        $table = $wpdb->prefix . 'ontario_obituaries';
+        $table  = $wpdb->prefix . 'ontario_obituaries';
         $do_fix = ! empty( $_POST['fix'] ) && '1' === $_POST['fix'];
 
-        $issues = array();
-        $fixed  = 0;
+        $issues    = array();
+        $fixed     = 0;
+        $max_rows  = 200; // v6.0.3 QC FIX: Cap per-check to prevent huge response.
 
         // 1. Age = 0 (bad scrape data).
-        $age_zero = $wpdb->get_results(
-            "SELECT id, name, age, date_of_birth, date_of_death FROM `{$table}` WHERE age = 0 AND suppressed_at IS NULL"
-        );
+        $age_zero = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name, age, date_of_birth, date_of_death FROM `{$table}` WHERE age = 0 AND suppressed_at IS NULL LIMIT %d",
+            $max_rows
+        ) );
         foreach ( $age_zero as $row ) {
             $issues[] = array(
                 'id'    => $row->id,
@@ -347,16 +355,26 @@ class Ontario_Obituaries_Ajax {
                 'type'  => 'age_zero',
                 'detail' => 'Age is 0 — implausible value.',
             );
-            if ( $do_fix ) {
-                $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d", $row->id ) );
+            if ( $do_fix && $fixed < $max_rows ) {
+                $fix_result = $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d", $row->id ) );
+                if ( false === $fix_result ) {
+                    ontario_obituaries_log(
+                        sprintf( 'Audit fix failed: age=NULL for ID %d — %s', $row->id, $wpdb->last_error ),
+                        'error'
+                    );
+                }
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'info', 'AUDIT', 'AUDIT_FIX_AGE_ZERO', sprintf( 'Set age=NULL for ID %d (%s)', $row->id, $row->name ), array( 'obit_id' => $row->id ) );
+                }
                 $fixed++;
             }
         }
 
         // 2. Age > 120 (implausible).
-        $age_high = $wpdb->get_results(
-            "SELECT id, name, age FROM `{$table}` WHERE age > 120 AND suppressed_at IS NULL"
-        );
+        $age_high = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name, age FROM `{$table}` WHERE age > 120 AND suppressed_at IS NULL LIMIT %d",
+            $max_rows
+        ) );
         foreach ( $age_high as $row ) {
             $issues[] = array(
                 'id'    => $row->id,
@@ -364,16 +382,29 @@ class Ontario_Obituaries_Ajax {
                 'type'  => 'age_implausible',
                 'detail' => sprintf( 'Age %d > 120.', $row->age ),
             );
-            if ( $do_fix ) {
-                $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d", $row->id ) );
+            if ( $do_fix && $fixed < $max_rows ) {
+                $fix_result = $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d", $row->id ) );
+                if ( false === $fix_result ) {
+                    ontario_obituaries_log(
+                        sprintf( 'Audit fix failed: age=NULL for ID %d — %s', $row->id, $wpdb->last_error ),
+                        'error'
+                    );
+                }
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'info', 'AUDIT', 'AUDIT_FIX_AGE_HIGH', sprintf( 'Set age=NULL for ID %d (%s), was %d', $row->id, $row->name, $row->age ), array( 'obit_id' => $row->id ) );
+                }
                 $fixed++;
             }
         }
 
         // 3. AI description contains "age of 0" or "age 0" (bad AI output).
-        $bad_prose = $wpdb->get_results(
-            "SELECT id, name FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND suppressed_at IS NULL AND (ai_description LIKE '%age of 0%' OR ai_description LIKE '%age 0%' OR ai_description LIKE '%aged 0%')"
-        );
+        $bad_prose = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND suppressed_at IS NULL AND (ai_description LIKE %s OR ai_description LIKE %s OR ai_description LIKE %s) LIMIT %d",
+            '%age of 0%',
+            '%age 0%',
+            '%aged 0%',
+            $max_rows
+        ) );
         foreach ( $bad_prose as $row ) {
             $issues[] = array(
                 'id'    => $row->id,
@@ -381,25 +412,41 @@ class Ontario_Obituaries_Ajax {
                 'type'  => 'bad_prose_age_zero',
                 'detail' => 'AI description contains "age 0" — re-queue for rewrite.',
             );
-            if ( $do_fix ) {
+            if ( $do_fix && $fixed < $max_rows ) {
                 // Re-queue: clear ai_description + set status back to pending.
-                $wpdb->update(
+                $requeue_result = $wpdb->update(
                     $table,
                     array( 'ai_description' => null, 'status' => 'pending' ),
                     array( 'id' => $row->id ),
                     array( '%s', '%s' ),
                     array( '%d' )
                 );
+                if ( false === $requeue_result ) {
+                    ontario_obituaries_log(
+                        sprintf( 'Audit fix failed: re-queue for ID %d — %s', $row->id, $wpdb->last_error ),
+                        'error'
+                    );
+                }
                 // Also fix the age field.
-                $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d AND age = 0", $row->id ) );
+                $age_fix_result = $wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET age = NULL WHERE id = %d AND age = 0", $row->id ) );
+                if ( false === $age_fix_result ) {
+                    ontario_obituaries_log(
+                        sprintf( 'Audit fix failed: age=NULL for ID %d — %s', $row->id, $wpdb->last_error ),
+                        'error'
+                    );
+                }
+                if ( function_exists( 'oo_log' ) ) {
+                    oo_log( 'info', 'AUDIT', 'AUDIT_FIX_BAD_PROSE', sprintf( 'Re-queued ID %d (%s) for rewrite — bad prose', $row->id, $row->name ), array( 'obit_id' => $row->id ) );
+                }
                 $fixed++;
             }
         }
 
         // 4. date_of_death in the future.
         $future_dod = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, name, date_of_death FROM `{$table}` WHERE date_of_death > %s AND date_of_death != '0000-00-00' AND suppressed_at IS NULL",
-            current_time( 'Y-m-d' )
+            "SELECT id, name, date_of_death FROM `{$table}` WHERE date_of_death > %s AND date_of_death != '0000-00-00' AND suppressed_at IS NULL LIMIT %d",
+            current_time( 'Y-m-d' ),
+            $max_rows
         ) );
         foreach ( $future_dod as $row ) {
             $issues[] = array(
@@ -411,9 +458,10 @@ class Ontario_Obituaries_Ajax {
         }
 
         // 5. date_of_birth AFTER date_of_death.
-        $dob_after_dod = $wpdb->get_results(
-            "SELECT id, name, date_of_birth, date_of_death FROM `{$table}` WHERE date_of_birth > date_of_death AND date_of_birth != '0000-00-00' AND date_of_death != '0000-00-00' AND suppressed_at IS NULL"
-        );
+        $dob_after_dod = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name, date_of_birth, date_of_death FROM `{$table}` WHERE date_of_birth > date_of_death AND date_of_birth != '0000-00-00' AND date_of_death != '0000-00-00' AND suppressed_at IS NULL LIMIT %d",
+            $max_rows
+        ) );
         foreach ( $dob_after_dod as $row ) {
             $issues[] = array(
                 'id'    => $row->id,
@@ -423,13 +471,27 @@ class Ontario_Obituaries_Ajax {
             );
         }
 
+        // v6.0.3 QC FIX: Cap total response to $max_rows issues.
+        $total_found = count( $issues );
+        if ( $total_found > $max_rows ) {
+            $issues = array_slice( $issues, 0, $max_rows );
+        }
+
         $summary = sprintf(
-            'Audit complete: %d issues found%s.',
-            count( $issues ),
-            $do_fix ? sprintf( ', %d fixed', $fixed ) : ' (dry run — add fix=1 to auto-fix)'
+            'Audit complete: %d issues found%s%s.',
+            $total_found,
+            $do_fix ? sprintf( ', %d fixed', $fixed ) : ' (dry run — click Auto-Fix to repair)',
+            $total_found > $max_rows ? sprintf( ' (showing first %d)', $max_rows ) : ''
         );
 
-        if ( function_exists( 'ontario_obituaries_log' ) ) {
+        // v6.0.3 QC FIX: Use oo_log() when available for structured logging.
+        if ( function_exists( 'oo_log' ) ) {
+            oo_log( 'info', 'AUDIT', 'AUDIT_COMPLETE', $summary, array(
+                'total_issues' => $total_found,
+                'fixed'        => $fixed,
+                'mode'         => $do_fix ? 'fix' : 'scan',
+            ) );
+        } elseif ( function_exists( 'ontario_obituaries_log' ) ) {
             ontario_obituaries_log( 'Data Quality Audit: ' . $summary, 'info' );
         }
 
@@ -437,7 +499,7 @@ class Ontario_Obituaries_Ajax {
             'summary' => $summary,
             'issues'  => $issues,
             'fixed'   => $fixed,
-            'total'   => count( $issues ),
+            'total'   => $total_found,
         ) );
     }
 }
