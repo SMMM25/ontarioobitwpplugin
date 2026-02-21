@@ -652,7 +652,7 @@ class Ontario_Obituaries {
                         </td>
                     </tr>
                     <?php endif; ?>
-                    <!-- v6.0.2: Data Quality Audit -->
+                    <!-- v6.0.2: Data Quality Audit (v6.0.3: hardened limits) -->
                     <tr valign="top">
                         <th scope="row"><?php esc_html_e( 'Data Quality Audit', 'ontario-obituaries' ); ?></th>
                         <td>
