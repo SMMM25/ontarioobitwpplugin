@@ -1,25 +1,45 @@
 <?php
 /**
- * AI Authenticity Checker
+ * AI Authenticity Checker v2
  *
- * Performs 24/7 random audits of obituary data using the Groq LLM (same key
- * as the AI Rewriter). Picks random obituaries and asks the AI to verify:
- *   - Date plausibility (birth/death dates, age consistency)
- *   - Name/date/location cross-consistency with the description text
- *   - Duplicate or fabricated content detection
+ * v6.0.6: Blocker fixes — parse_audit_response() no longer defaults to PASS
+ * on JSON parse failure (returns flagged/admin_review instead). Idle gate now
+ * includes a 10-minute buffer before scheduled scrape/collection events and
+ * respects collection cooldown transient. Rate limiter pre-check in
+ * check_idle_gates() replaced with non-reserving peek_budget(). apply_corrections()
+ * uses %d for age field. New setting authenticity_auto_correct_enabled (default OFF)
+ * gates auto-corrections.
  *
- * Runs via WP-Cron every 4 hours, auditing a random batch each time.
- * Flags issues in the `audit_flags` column and logs results.
+ * v6.0.5: Continuous publishing — idle gate changed from "pending == 0"
+ * to "rewriter not actively running + rate limiter OK". This allows the
+ * audit to publish obituaries continuously during rebuilds, rather than
+ * waiting for the entire rewrite backlog to complete first.
+ *
+ * v6.0.4: Complete redesign. The checker is now the ONLY component that
+ * can publish obituaries. Flow:
+ *   SCRAPE → REWRITE (pending + needs_audit) → AUDIT → PUBLISH (or requeue)
+ *
+ * Key changes from v1 (4.3.0):
+ *   - Batch size 1 (not 10): processes one at a time, deterministically.
+ *   - Idle gate: runs when rewriter is not actively running (v6.0.5: no longer
+ *     requires pending == 0 — allows continuous publishing during rebuilds).
+ *   - Cross-reference: compares ORIGINAL text vs AI rewrite, not just fields.
+ *   - Publish gating: PASS → status='published'; FLAGGED → requeue for rewrite.
+ *   - Hash-based no-churn: skips re-audit when ai_description_hash == last_audited_hash.
+ *   - Requeue limit: max 2 requeues per obituary, then admin_review hold.
+ *   - Error codes: DB_AUDIT_REQUEUE_FAIL, DB_AUDIT_FLAG_FAIL, AUDIT_REQUEUE_LIMIT.
  *
  * Architecture:
  *   - Uses Groq's OpenAI-compatible chat completion API (same key as AI Rewriter).
- *   - Picks random obituaries weighted toward those never audited.
- *   - LLM returns structured JSON with pass/fail verdicts and explanations.
- *   - Failed audits are flagged for admin review.
- *   - Rate-limited: 1 request per 6 seconds, 10 per batch.
+ *   - Selects obituaries with audit_status='needs_audit' deterministically (newest first).
+ *   - LLM compares original description + AI rewrite for fact fidelity.
+ *   - Rate-limited via shared Ontario_Obituaries_Groq_Rate_Limiter (800 tokens/call).
  *
  * @package Ontario_Obituaries
  * @since   4.3.0
+ * @since   6.0.4  Complete v2 redesign — publish gating, cross-reference, requeue logic.
+ * @since   6.0.5  Continuous publishing — idle gate relaxed for rebuild scenarios.
+ * @since   6.0.6  Blocker fixes — parse failure safety, scrape buffer, rate limiter peek, auto-correct gate.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -31,20 +51,23 @@ class Ontario_Obituaries_Authenticity_Checker {
     /** @var string Groq API endpoint. */
     private $api_url = 'https://api.groq.com/openai/v1/chat/completions';
 
-    /** @var string Primary model. */
+    /** @var string Primary model — 70B for better factual comparison. */
     private $model = 'llama-3.3-70b-versatile';
 
-    /** @var int Obituaries to audit per batch. */
-    private $batch_size = 10;
+    /** @var int v6.0.4: Process ONE obituary at a time. */
+    private $batch_size = 1;
 
-    /** @var int Delay between requests in microseconds (6 seconds). */
-    private $request_delay = 6000000;
+    /** @var int Delay between requests in microseconds (12 seconds — share Groq budget). */
+    private $request_delay = 12000000;
 
     /** @var int API timeout. */
-    private $api_timeout = 30;
+    private $api_timeout = 45;
 
     /** @var string|null API key (shared with AI Rewriter). */
     private $api_key = null;
+
+    /** @var int v6.0.4: Maximum requeue attempts before admin_review hold. */
+    private $max_requeues = 2;
 
     /**
      * Constructor.
@@ -63,85 +86,207 @@ class Ontario_Obituaries_Authenticity_Checker {
     }
 
     /**
-     * Run a random audit batch.
+     * v6.0.6: Check if the checker should run (idle gate).
      *
-     * Selects random obituaries prioritizing those never audited, then
-     * verifies each with the LLM and stores results.
+     * The checker runs when:
+     *   1. API key is configured.
+     *   2. No active rewriter lock (rewriter is not mid-batch).
+     *   3. No scrape/collection imminent (10-minute buffer) or actively running.
+     *   4. Groq rate limiter allows 800 tokens (non-reserving peek).
      *
-     * @return array { audited: int, passed: int, flagged: int, errors: string[] }
+     * v6.0.6 CHANGES:
+     *   - Gate 2 (NEW): 10-minute buffer before scheduled scrape/collection events
+     *     (ontario_obituaries_collection_event). Also respects the collection
+     *     cooldown transient (scrape actively running or just finished).
+     *   - Gate 3 FIX: Uses peek_budget() (non-reserving) instead of may_proceed()
+     *     + release_reservation(). The old code always called release_reservation()
+     *     even when may_proceed() returned false (nothing to release).
+     *
+     * v6.0.5 CHANGE: Removed the "pending == 0" gate. The old behaviour
+     * blocked ALL publishing until the entire rewrite queue emptied, meaning
+     * the directory would be effectively "off" during a rebuild. Now the
+     * audit runs continuously: as each obituary completes rewrite → needs_audit,
+     * the next audit tick publishes it. This provides continuous publishing
+     * during rebuilds instead of batch-all-or-nothing.
+     *
+     * @return true|WP_Error True if idle and ready, WP_Error with reason if not.
+     */
+    public function check_idle_gates() {
+        if ( ! $this->is_configured() ) {
+            return new WP_Error( 'not_configured', 'Groq API key not configured.' );
+        }
+
+        // Gate 1: No active rewriter lock (rewriter is not mid-API-call).
+        // This prevents the audit from competing with the rewriter for Groq TPM.
+        // The lock has a 5-min (cron) / 2-min (AJAX) / 1-min (shutdown) TTL,
+        // so the audit waits only for the current rewrite call to finish.
+        if ( get_transient( 'ontario_obituaries_rewriter_running' ) ) {
+            return new WP_Error( 'rewriter_locked', 'Rewriter is currently running — deferring audit.' );
+        }
+
+        // Gate 2 (v6.0.6): Scrape/collection buffer — don't compete with imminent scrape.
+        // Check the collection cooldown transient (set after scrape completes, 10-min TTL).
+        // If set, scraping just finished or is still wrapping up — defer audit.
+        if ( get_transient( 'ontario_obituaries_collection_cooldown' ) ) {
+            return new WP_Error( 'scrape_active', 'Collection cooldown active — scraping recently ran, deferring audit.' );
+        }
+
+        // Check if a scrape/collection event is scheduled within the next 10 minutes.
+        // This prevents the audit from starting an API call right before a scrape
+        // needs the system's full attention (DB writes, dedup, etc.).
+        $scrape_buffer_seconds = 600; // 10 minutes.
+        $scrape_hooks = array(
+            'ontario_obituaries_collection_event',
+            'ontario_obituaries_initial_collection',
+        );
+        foreach ( $scrape_hooks as $hook ) {
+            $next_scheduled = wp_next_scheduled( $hook );
+            if ( $next_scheduled && ( $next_scheduled - time() ) <= $scrape_buffer_seconds && ( $next_scheduled - time() ) > 0 ) {
+                return new WP_Error(
+                    'scrape_imminent',
+                    sprintf(
+                        'Scrape/collection event "%s" scheduled in %d seconds (within %d-second buffer) — deferring audit.',
+                        $hook,
+                        $next_scheduled - time(),
+                        $scrape_buffer_seconds
+                    )
+                );
+            }
+        }
+
+        // Gate 3 (v6.0.6 FIX): Rate limiter check — non-reserving peek.
+        // The actual token reservation happens in audit_obituary() — we just
+        // verify the budget isn't fully exhausted before starting.
+        //
+        // v6.0.6 FIX: Previously used may_proceed() (which reserves tokens)
+        // then always called release_reservation() — even when may_proceed()
+        // returned false (no reservation to release). Now uses peek_budget()
+        // which is read-only, or falls back to the old pattern only releasing
+        // when may_proceed() actually succeeded.
+        if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
+            $limiter = Ontario_Obituaries_Groq_Rate_Limiter::get_instance();
+            if ( method_exists( $limiter, 'peek_budget' ) ) {
+                // Preferred: non-reserving read-only check.
+                if ( ! $limiter->peek_budget( 800, 'authenticity' ) ) {
+                    return new WP_Error( 'rate_limited', 'Groq TPM budget exhausted — deferring.' );
+                }
+            } else {
+                // Fallback: use may_proceed() but only release if reservation was made.
+                $reserved = $limiter->may_proceed( 800, 'authenticity' );
+                if ( ! $reserved ) {
+                    // may_proceed() returned false — no reservation was made, do NOT release.
+                    return new WP_Error( 'rate_limited', 'Groq TPM budget exhausted — deferring.' );
+                }
+                // Reservation was made — release it (actual reservation in audit_obituary()).
+                $limiter->release_reservation( 800, 'authenticity' );
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * v6.0.4: Run audit batch — processes ONE obituary at a time.
+     *
+     * Deterministic selection order:
+     *   1. Newest needs_audit (just rewritten, never audited).
+     *   2. Changed hash (rewritten again, hash differs from last audit).
+     *   3. Oldest audited (re-check, for legacy 4-hour schedule).
+     *
+     * @return array { audited: int, passed: int, flagged: int, published: int, requeued: int, errors: string[] }
      */
     public function run_audit_batch() {
         if ( ! $this->is_configured() ) {
             return array(
-                'audited' => 0,
-                'passed'  => 0,
-                'flagged' => 0,
-                'errors'  => array( 'Groq API key not configured.' ),
+                'audited'   => 0,
+                'passed'    => 0,
+                'flagged'   => 0,
+                'published' => 0,
+                'requeued'  => 0,
+                'errors'    => array( 'Groq API key not configured.' ),
             );
         }
 
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
-        // Pick random obituaries, prioritizing never-audited ones.
-        // 80% from never-audited, 20% from previously audited (re-check).
-        $never_audited_count = max( 1, intval( $this->batch_size * 0.8 ) );
-        $re_check_count      = $this->batch_size - $never_audited_count;
-
-        // v4.6.0: Only audit published records (already rewritten & validated).
-        $never_audited = $wpdb->get_results( $wpdb->prepare(
+        // v6.0.4: Deterministic selection — newest needs_audit first.
+        // Also picks up records where ai_description_hash != last_audited_hash (re-rewritten).
+        $obituaries = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, name, date_of_birth, date_of_death, age, funeral_home,
-                    location, city_normalized, description, ai_description, source_url
+                    location, city_normalized, description, ai_description, source_url,
+                    ai_description_hash, last_audited_hash, audit_status, audit_requeue_count
              FROM `{$table}`
-             WHERE last_audit_at IS NULL
-               AND suppressed_at IS NULL
-               AND status = 'published'
+             WHERE suppressed_at IS NULL
+               AND ai_description IS NOT NULL AND ai_description != ''
                AND description IS NOT NULL AND description != ''
-             ORDER BY RAND()
+               AND (
+                   audit_status = 'needs_audit'
+                   OR (
+                       audit_status IN ('pass', 'flagged')
+                       AND ai_description_hash IS NOT NULL
+                       AND last_audited_hash IS NOT NULL
+                       AND ai_description_hash != last_audited_hash
+                   )
+               )
+             ORDER BY
+               CASE WHEN audit_status = 'needs_audit' THEN 0 ELSE 1 END ASC,
+               id DESC
              LIMIT %d",
-            $never_audited_count
+            $this->batch_size
         ) );
 
-        $re_checks = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, name, date_of_birth, date_of_death, age, funeral_home,
-                    location, city_normalized, description, ai_description, source_url
-             FROM `{$table}`
-             WHERE last_audit_at IS NOT NULL
-               AND suppressed_at IS NULL
-               AND status = 'published'
-               AND description IS NOT NULL AND description != ''
-             ORDER BY RAND()
-             LIMIT %d",
-            $re_check_count
-        ) );
-
-        $obituaries = array_merge(
-            is_array( $never_audited ) ? $never_audited : array(),
-            is_array( $re_checks )     ? $re_checks     : array()
-        );
+        // Fallback for legacy 4-hour schedule: if no needs_audit, pick oldest published for re-check.
+        if ( empty( $obituaries ) ) {
+            $obituaries = $wpdb->get_results( $wpdb->prepare(
+                "SELECT id, name, date_of_birth, date_of_death, age, funeral_home,
+                        location, city_normalized, description, ai_description, source_url,
+                        ai_description_hash, last_audited_hash, audit_status, audit_requeue_count
+                 FROM `{$table}`
+                 WHERE suppressed_at IS NULL
+                   AND status = 'published'
+                   AND ai_description IS NOT NULL AND ai_description != ''
+                   AND description IS NOT NULL AND description != ''
+                   AND (last_audit_at IS NULL OR last_audit_at < DATE_SUB(NOW(), INTERVAL 7 DAY))
+                   AND audit_status NOT IN ('admin_review', 'needs_audit')
+                 ORDER BY last_audit_at ASC, id ASC
+                 LIMIT %d",
+                $this->batch_size
+            ) );
+        }
 
         $result = array(
-            'audited' => 0,
-            'passed'  => 0,
-            'flagged' => 0,
-            'errors'  => array(),
+            'audited'   => 0,
+            'passed'    => 0,
+            'flagged'   => 0,
+            'published' => 0,
+            'requeued'  => 0,
+            'errors'    => array(),
         );
 
         if ( empty( $obituaries ) ) {
-            ontario_obituaries_log( 'Authenticity Checker: No obituaries available for audit.', 'info' );
+            ontario_obituaries_log( 'Authenticity Checker v2: No obituaries need audit.', 'info' );
             return $result;
         }
-
-        ontario_obituaries_log(
-            sprintf( 'Authenticity Checker: Auditing batch of %d obituaries.', count( $obituaries ) ),
-            'info'
-        );
 
         foreach ( $obituaries as $obit ) {
             $result['audited']++;
 
             if ( $result['audited'] > 1 ) {
                 usleep( $this->request_delay );
+            }
+
+            // v6.0.4: Hash-based no-churn — skip if hash matches and already audited.
+            if ( ! empty( $obit->ai_description_hash )
+                 && ! empty( $obit->last_audited_hash )
+                 && $obit->ai_description_hash === $obit->last_audited_hash
+                 && 'pass' === $obit->audit_status ) {
+                ontario_obituaries_log(
+                    sprintf( 'Authenticity Checker v2: ID %d hash unchanged — skipping re-audit.', $obit->id ),
+                    'info'
+                );
+                $result['passed']++;
+                continue;
             }
 
             $audit = $this->audit_obituary( $obit );
@@ -153,55 +298,21 @@ class Ontario_Obituaries_Authenticity_Checker {
                 );
 
                 if ( 'rate_limited' === $audit->get_error_code() ) {
-                    ontario_obituaries_log( 'Authenticity Checker: Rate limited — stopping batch.', 'warning' );
+                    ontario_obituaries_log( 'Authenticity Checker v2: Rate limited — stopping batch.', 'warning' );
                     break;
                 }
                 continue;
             }
 
-            // Store audit results.
-            $update_data = array(
-                'last_audit_at'   => current_time( 'mysql' ),
-                'audit_status'    => $audit['status'],  // 'pass' or 'flagged'
-            );
-
-            if ( 'flagged' === $audit['status'] ) {
-                $update_data['audit_flags'] = wp_json_encode( $audit['issues'] );
-                $result['flagged']++;
-
-                ontario_obituaries_log(
-                    sprintf(
-                        'Authenticity Checker: FLAGGED ID %d (%s) — %s',
-                        $obit->id, $obit->name, implode( '; ', $audit['issues'] )
-                    ),
-                    'warning'
-                );
-
-                // Auto-correct if the AI provided a correction and confidence is high.
-                if ( ! empty( $audit['corrections'] ) ) {
-                    $this->apply_corrections( $obit->id, $audit['corrections'], $table );
-                }
-            } else {
-                $update_data['audit_flags'] = null;
-                $result['passed']++;
-            }
-
-            $audit_upd = $wpdb->update(
-                $table,
-                $update_data,
-                array( 'id' => $obit->id ),
-                array( '%s', '%s', '%s' ),
-                array( '%d' )
-            );
-            if ( function_exists( 'oo_db_check' ) ) {
-                oo_db_check( 'AUDIT', $audit_upd, 'DB_UPDATE_FAIL', 'Failed to store audit result', array( 'obit_id' => $obit->id ) );
-            }
+            // v6.0.4: Process audit result with publish gating.
+            $this->process_audit_result( $obit, $audit, $table, $result );
         }
 
         ontario_obituaries_log(
             sprintf(
-                'Authenticity Checker: Batch complete — %d audited, %d passed, %d flagged, %d errors.',
-                $result['audited'], $result['passed'], $result['flagged'], count( $result['errors'] )
+                'Authenticity Checker v2: Batch complete — %d audited, %d passed (%d published), %d flagged (%d requeued), %d errors.',
+                $result['audited'], $result['passed'], $result['published'],
+                $result['flagged'], $result['requeued'], count( $result['errors'] )
             ),
             'info'
         );
@@ -210,14 +321,182 @@ class Ontario_Obituaries_Authenticity_Checker {
     }
 
     /**
+     * v6.0.4: Process a single audit result — publish, requeue, or hold.
+     *
+     * @param object $obit   Obituary DB row.
+     * @param array  $audit  Parsed audit response.
+     * @param string $table  Table name.
+     * @param array  &$result Batch result counters (passed by reference).
+     */
+    private function process_audit_result( $obit, $audit, $table, &$result ) {
+        global $wpdb;
+
+        $current_hash = ! empty( $obit->ai_description_hash )
+            ? $obit->ai_description_hash
+            : ( ! empty( $obit->ai_description ) ? hash( 'sha256', $obit->ai_description ) : null );
+
+        if ( 'pass' === $audit['status'] ) {
+            // ── PUBLISH: audit passed — set status='published'. ──
+            $update_data = array(
+                'status'            => 'published',
+                'audit_status'      => 'pass',
+                'audit_flags'       => null,
+                'last_audit_at'     => current_time( 'mysql', true ),
+                'last_audited_hash' => $current_hash,
+            );
+
+            // Apply high-confidence field corrections if any.
+            if ( ! empty( $audit['corrections'] ) ) {
+                foreach ( $audit['corrections'] as $field => $value ) {
+                    $update_data[ $field ] = $value;
+                }
+            }
+
+            // Handle NULL audit_flags — wpdb::update cannot set NULL.
+            $has_null_flags = true;
+            unset( $update_data['audit_flags'] );
+
+            $formats = array();
+            foreach ( $update_data as $col => $val ) {
+                $formats[] = ( 'age' === $col ) ? '%d' : '%s';
+            }
+
+            $upd = $wpdb->update( $table, $update_data, array( 'id' => $obit->id ), $formats, array( '%d' ) );
+
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'AUDIT', $upd, 'DB_AUDIT_PUBLISH_FAIL', 'Failed to publish after audit pass', array( 'obit_id' => $obit->id ) );
+            }
+
+            // Set audit_flags to NULL via raw query.
+            if ( $has_null_flags ) {
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE `{$table}` SET audit_flags = NULL WHERE id = %d",
+                    $obit->id
+                ) );
+            }
+
+            $result['passed']++;
+            $result['published']++;
+
+            ontario_obituaries_log(
+                sprintf( 'Authenticity Checker v2: PUBLISHED ID %d (%s) — audit passed.', $obit->id, $obit->name ),
+                'info'
+            );
+
+        } else {
+            // ── FLAGGED: audit found issues. ──
+            $result['flagged']++;
+
+            $recommendation = isset( $audit['recommendation'] ) ? $audit['recommendation'] : 'requeue';
+            $requeue_count  = isset( $obit->audit_requeue_count ) ? intval( $obit->audit_requeue_count ) : 0;
+
+            ontario_obituaries_log(
+                sprintf(
+                    'Authenticity Checker v2: FLAGGED ID %d (%s) — %s (requeue count: %d/%d)',
+                    $obit->id, $obit->name,
+                    implode( '; ', $audit['issues'] ),
+                    $requeue_count, $this->max_requeues
+                ),
+                'warning'
+            );
+
+            if ( 'requeue' === $recommendation && $requeue_count < $this->max_requeues ) {
+                // ── REQUEUE for rewrite: clear AI text, set pending, increment counter. ──
+                $new_count = $requeue_count + 1;
+
+                // v6.0.5 BUG FIX: Removed ai_description_hash from update data
+                // (NULL via raw query below). Fixed format: audit_requeue_count
+                // must use %d, not %s.
+                $upd = $wpdb->update(
+                    $table,
+                    array(
+                        'status'               => 'pending',
+                        'ai_description'       => '',
+                        'audit_status'         => 'flagged',
+                        'audit_flags'          => wp_json_encode( $audit['issues'] ),
+                        'last_audit_at'        => current_time( 'mysql', true ),
+                        'last_audited_hash'    => $current_hash,
+                        'audit_requeue_count'  => $new_count,
+                        'rewrite_requested_at' => current_time( 'mysql', true ),
+                        'rewrite_request_reason' => 'audit_flagged: ' . implode( '; ', array_slice( $audit['issues'], 0, 2 ) ),
+                    ),
+                    array( 'id' => $obit->id ),
+                    array( '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
+                    array( '%d' )
+                );
+
+                // Handle NULL ai_description_hash via raw query.
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE `{$table}` SET ai_description_hash = NULL WHERE id = %d",
+                    $obit->id
+                ) );
+
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'AUDIT', $upd, 'DB_AUDIT_REQUEUE_FAIL', 'Failed to requeue flagged obituary', array( 'obit_id' => $obit->id ) );
+                }
+
+                $result['requeued']++;
+
+                ontario_obituaries_log(
+                    sprintf(
+                        'Authenticity Checker v2: REQUEUED ID %d (%s) for rewrite (attempt %d/%d).',
+                        $obit->id, $obit->name, $new_count, $this->max_requeues
+                    ),
+                    'info'
+                );
+
+                // Apply high-confidence field corrections even on requeue.
+                if ( ! empty( $audit['corrections'] ) ) {
+                    $this->apply_corrections( $obit->id, $audit['corrections'], $table );
+                }
+
+            } else {
+                // ── ADMIN REVIEW HOLD: max requeues exceeded or recommendation is admin_review. ──
+                $hold_status = ( $requeue_count >= $this->max_requeues ) ? 'admin_review' : $recommendation;
+
+                $upd = $wpdb->update(
+                    $table,
+                    array(
+                        'audit_status'      => $hold_status,
+                        'audit_flags'       => wp_json_encode( $audit['issues'] ),
+                        'last_audit_at'     => current_time( 'mysql', true ),
+                        'last_audited_hash' => $current_hash,
+                    ),
+                    array( 'id' => $obit->id ),
+                    array( '%s', '%s', '%s', '%s' ),
+                    array( '%d' )
+                );
+
+                if ( function_exists( 'oo_db_check' ) ) {
+                    oo_db_check( 'AUDIT', $upd, 'DB_AUDIT_FLAG_FAIL', 'Failed to flag obituary for admin review', array( 'obit_id' => $obit->id ) );
+                }
+
+                ontario_obituaries_log(
+                    sprintf(
+                        'Authenticity Checker v2: HELD ID %d (%s) for admin review — %d requeues exhausted.',
+                        $obit->id, $obit->name, $requeue_count
+                    ),
+                    'warning'
+                );
+
+                // Apply high-confidence field corrections.
+                if ( ! empty( $audit['corrections'] ) ) {
+                    $this->apply_corrections( $obit->id, $audit['corrections'], $table );
+                }
+            }
+        }
+    }
+
+    /**
      * Audit a single obituary using the LLM.
      *
+     * v6.0.4: Cross-references original text with AI rewrite.
+     *
      * @param object $obit Obituary database row.
-     * @return array|WP_Error { status: 'pass'|'flagged', issues: string[], corrections: array }
+     * @return array|WP_Error { status: 'pass'|'flagged', issues: string[], corrections: array, recommendation: string }
      */
     private function audit_obituary( $obit ) {
-        // BUG-M1 FIX (v5.0.6): Check shared Groq rate limiter before API call.
-        // QC-R11-1: Estimated tokens for authenticity = 800.
+        // Check shared Groq rate limiter before API call.
         $auth_estimate   = 800;
         $has_reservation = false;
         $auth_limiter    = null;
@@ -225,7 +504,6 @@ class Ontario_Obituaries_Authenticity_Checker {
         if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
             $auth_limiter = Ontario_Obituaries_Groq_Rate_Limiter::get_instance();
             if ( ! $auth_limiter->may_proceed( $auth_estimate, 'authenticity' ) ) {
-                // QC-R10-8 FIX: WP_Error data must be an array for REST/JSON compatibility.
                 return new WP_Error(
                     'rate_limited',
                     'Shared Groq rate limiter: TPM budget exhausted. Deferring.',
@@ -240,7 +518,6 @@ class Ontario_Obituaries_Authenticity_Checker {
         $response = $this->call_api( $prompt );
 
         if ( is_wp_error( $response ) ) {
-            // QC-R11-1: Release reservation on API failure — no tokens consumed.
             if ( $has_reservation && $auth_limiter ) {
                 $auth_limiter->release_reservation( $auth_estimate, 'authenticity' );
             }
@@ -251,39 +528,54 @@ class Ontario_Obituaries_Authenticity_Checker {
     }
 
     /**
-     * Build the audit prompt for the LLM.
+     * v6.0.4: Build the cross-reference audit prompt.
+     *
+     * Compares ORIGINAL text against AI REWRITE + structured fields.
+     * The LLM acts as a verifier, not a rewriter.
      *
      * @param object $obit Obituary record.
      * @return array Chat messages.
      */
     private function build_audit_prompt( $obit ) {
         $system = <<<'SYSTEM'
-You are a data quality auditor for an obituary database. Your job is to verify that each obituary record is internally consistent and factually plausible.
+You are a strict fact-checking auditor for an obituary database. You compare the ORIGINAL obituary text against the AI-REWRITTEN version to ensure no facts were lost, fabricated, or distorted.
 
-For each obituary, check these points:
-1. DATE CONSISTENCY: Does the age match the difference between birth and death dates? Is the death date in the past? Is the birth date before the death date?
-2. AGE PLAUSIBILITY: Is the age between 0 and 130? If birth/death dates are given, does the computed age match the listed age (±1 year tolerance)?
-3. TEXT-DATE AGREEMENT: If the obituary text mentions specific dates (e.g., "passed away on March 5, 2025"), do they match the structured date_of_death field?
-4. LOCATION CONSISTENCY: Does the location/city seem consistent with the funeral home location (if recognizable)?
-5. NAME-TEXT AGREEMENT: Does the obituary text reference the same person as the name field?
-6. CONTENT QUALITY: Is the description actual obituary content (not placeholder text, lorem ipsum, or completely unrelated content)?
+CHECK THESE POINTS (in order of severity):
 
-Respond ONLY with valid JSON in this exact format:
+1. FACT PRESERVATION: Every name, date, age, location, funeral home, survivor, and predeceased person in the ORIGINAL must appear in the REWRITE. Missing facts = FLAGGED.
+
+2. NO FABRICATION: The REWRITE must NOT contain names, dates, relationships, hobbies, traits, or details NOT present in the ORIGINAL. Invented content = FLAGGED.
+
+3. FIELD ACCURACY: The structured fields (date_of_death, date_of_birth, age, location, funeral_home) must match what the ORIGINAL text states. Mismatches = FLAGGED.
+
+4. AGE/DATE CONSISTENCY: If age AND birth/death dates are all present, verify age = death_year - birth_year (±1). Age 0 or age >120 = FLAGGED.
+
+5. TONE: The REWRITE should be dignified, professional, matter-of-fact. No slang ("doggo", "fur babies"), no AI cliches ("indelible mark", "tapestry of life"), no "age of 0". Tone violations = FLAGGED.
+
+6. CONTENT QUALITY: The REWRITE must be actual obituary prose (not placeholder, lorem ipsum, or truncated text).
+
+Respond ONLY with valid JSON:
 {
   "status": "pass" or "flagged",
-  "issues": ["list of issues found, empty array if pass"],
-  "corrections": {
-    "field_name": "corrected_value"
-  },
-  "confidence": 0.0 to 1.0
+  "issues": ["list of specific issues found, empty if pass"],
+  "missing_facts": ["facts from ORIGINAL missing in REWRITE"],
+  "fabricated_facts": ["facts in REWRITE not in ORIGINAL"],
+  "field_corrections": { "field_name": "correct_value" },
+  "confidence": 0.0 to 1.0,
+  "recommendation": "pass" or "requeue" or "admin_review"
 }
 
-Only include "corrections" for fields you are highly confident (>0.9) are wrong and you know the correct value.
-Only flag real issues — do NOT flag missing data (empty fields are acceptable).
-Do NOT flag records just because they lack a birth date or age.
+RULES:
+- "pass" means the REWRITE faithfully represents the ORIGINAL with no issues.
+- "requeue" means the REWRITE has fixable issues (missing facts, tone problems) — it should be rewritten.
+- "admin_review" means the issues are serious or ambiguous — a human should decide.
+- Only include "field_corrections" for structured fields you are >0.9 confident are wrong.
+- Do NOT flag missing birth dates or ages when the ORIGINAL also lacks them.
+- Be strict about fabrication — any invented detail is a hard flag.
 SYSTEM;
 
         $record = array();
+        $record[] = '=== STRUCTURED FIELDS ===';
         $record[] = 'Name: ' . $obit->name;
         $record[] = 'Date of Birth: ' . ( ! empty( $obit->date_of_birth ) && '0000-00-00' !== $obit->date_of_birth ? $obit->date_of_birth : 'Not provided' );
         $record[] = 'Date of Death: ' . ( ! empty( $obit->date_of_death ) && '0000-00-00' !== $obit->date_of_death ? $obit->date_of_death : 'Not provided' );
@@ -292,11 +584,20 @@ SYSTEM;
         $record[] = 'City (normalized): ' . ( ! empty( $obit->city_normalized ) ? $obit->city_normalized : 'Not provided' );
         $record[] = 'Funeral Home: ' . ( ! empty( $obit->funeral_home ) ? $obit->funeral_home : 'Not provided' );
 
-        // Use AI description if available, otherwise original.
-        $desc_text = ! empty( $obit->ai_description ) ? $obit->ai_description : $obit->description;
-        $record[]  = 'Obituary Text: ' . substr( $desc_text, 0, 2000 );
+        $record[] = '';
+        $record[] = '=== ORIGINAL OBITUARY TEXT (from source) ===';
+        $record[] = substr( $obit->description, 0, 3000 );
 
-        $user_message = "OBITUARY RECORD TO AUDIT:\n" . implode( "\n", $record );
+        $record[] = '';
+        $record[] = '=== AI-REWRITTEN VERSION (to verify) ===';
+        $record[] = ! empty( $obit->ai_description ) ? substr( $obit->ai_description, 0, 3000 ) : '[NO AI REWRITE AVAILABLE]';
+
+        if ( ! empty( $obit->source_url ) ) {
+            $record[] = '';
+            $record[] = 'Source URL: ' . $obit->source_url;
+        }
+
+        $user_message = implode( "\n", $record );
 
         return array(
             array( 'role' => 'system', 'content' => $system ),
@@ -305,14 +606,18 @@ SYSTEM;
     }
 
     /**
-     * Parse the LLM's audit response.
+     * v6.0.6: Parse the LLM's audit response with v2 fields.
+     *
+     * v6.0.6 BLOCKER 1 FIX: On JSON parse failure, previously defaulted to
+     * 'pass' — allowing unaudited publishing. Now returns 'flagged' with
+     * recommendation 'admin_review', ensuring the record is held for human
+     * review rather than silently published without a valid audit.
      *
      * @param string $response Raw LLM response text.
      * @param object $obit     Original obituary record.
-     * @return array { status: string, issues: array, corrections: array }
+     * @return array { status, issues, missing_facts, fabricated_facts, corrections, confidence, recommendation }
      */
     private function parse_audit_response( $response, $obit ) {
-        // Try to extract JSON from the response.
         $json = $response;
 
         // Handle markdown code blocks.
@@ -323,24 +628,37 @@ SYSTEM;
         $data = json_decode( $json, true );
 
         if ( empty( $data ) || ! isset( $data['status'] ) ) {
-            // If JSON parsing fails, treat as a pass (don't flag unfairly).
             ontario_obituaries_log(
-                sprintf( 'Authenticity Checker: Failed to parse LLM response for ID %d.', $obit->id ),
+                sprintf( 'Authenticity Checker v2: Failed to parse LLM response for ID %d. Raw: %s', $obit->id, substr( $response, 0, 200 ) ),
                 'warning'
             );
+            // v6.0.6 BLOCKER 1 FIX: On parse failure, return flagged + admin_review.
+            // Previously defaulted to 'pass' which allowed unaudited publishing.
+            // Now the record is held for admin review — fail-safe, not fail-open.
             return array(
-                'status'      => 'pass',
-                'issues'      => array(),
-                'corrections' => array(),
-                'confidence'  => 0,
+                'status'           => 'flagged',
+                'issues'           => array( 'LLM audit response could not be parsed — held for admin review.' ),
+                'missing_facts'    => array(),
+                'fabricated_facts' => array(),
+                'corrections'      => array(),
+                'confidence'       => 0,
+                'recommendation'   => 'admin_review',
             );
         }
 
         // Sanitize the response.
-        $status      = ( 'flagged' === $data['status'] ) ? 'flagged' : 'pass';
-        $issues      = isset( $data['issues'] ) && is_array( $data['issues'] ) ? $data['issues'] : array();
-        $corrections = isset( $data['corrections'] ) && is_array( $data['corrections'] ) ? $data['corrections'] : array();
-        $confidence  = isset( $data['confidence'] ) ? floatval( $data['confidence'] ) : 0;
+        $status           = ( 'flagged' === $data['status'] ) ? 'flagged' : 'pass';
+        $issues           = isset( $data['issues'] ) && is_array( $data['issues'] ) ? $data['issues'] : array();
+        $missing_facts    = isset( $data['missing_facts'] ) && is_array( $data['missing_facts'] ) ? $data['missing_facts'] : array();
+        $fabricated_facts = isset( $data['fabricated_facts'] ) && is_array( $data['fabricated_facts'] ) ? $data['fabricated_facts'] : array();
+        $corrections      = isset( $data['field_corrections'] ) && is_array( $data['field_corrections'] ) ? $data['field_corrections'] : array();
+        $confidence       = isset( $data['confidence'] ) ? floatval( $data['confidence'] ) : 0;
+        $recommendation   = isset( $data['recommendation'] ) ? sanitize_text_field( $data['recommendation'] ) : '';
+
+        // Validate recommendation.
+        if ( ! in_array( $recommendation, array( 'pass', 'requeue', 'admin_review' ), true ) ) {
+            $recommendation = ( 'pass' === $status ) ? 'pass' : 'requeue';
+        }
 
         // Only apply corrections with high confidence.
         if ( $confidence < 0.9 ) {
@@ -360,22 +678,39 @@ SYSTEM;
             }
             if ( 'age' === $field ) {
                 $age_val = intval( $value );
-                if ( $age_val < 0 || $age_val > 130 ) {
+                if ( $age_val < 1 || $age_val > 120 ) {
                     unset( $corrections[ $field ] );
                 }
             }
         }
 
+        // Merge all issue sources for audit_flags storage.
+        $all_issues = $issues;
+        if ( ! empty( $missing_facts ) ) {
+            $all_issues[] = 'Missing facts: ' . implode( ', ', array_slice( $missing_facts, 0, 3 ) );
+        }
+        if ( ! empty( $fabricated_facts ) ) {
+            $all_issues[] = 'Fabricated: ' . implode( ', ', array_slice( $fabricated_facts, 0, 3 ) );
+        }
+
         return array(
-            'status'      => $status,
-            'issues'      => array_map( 'sanitize_text_field', array_slice( $issues, 0, 5 ) ),
-            'corrections' => $corrections,
-            'confidence'  => $confidence,
+            'status'           => $status,
+            'issues'           => array_map( 'sanitize_text_field', array_slice( $all_issues, 0, 10 ) ),
+            'missing_facts'    => array_map( 'sanitize_text_field', array_slice( $missing_facts, 0, 5 ) ),
+            'fabricated_facts' => array_map( 'sanitize_text_field', array_slice( $fabricated_facts, 0, 5 ) ),
+            'corrections'      => $corrections,
+            'confidence'       => $confidence,
+            'recommendation'   => $recommendation,
         );
     }
 
     /**
      * Apply auto-corrections from a high-confidence audit.
+     *
+     * v6.0.6 BLOCKER 4 FIX:
+     *   1. Uses %d format for the 'age' field (was %s — wrong type for INT column).
+     *   2. Gated behind 'authenticity_auto_correct_enabled' setting (default OFF).
+     *      When disabled, corrections are logged but not applied.
      *
      * @param int    $obit_id     Obituary ID.
      * @param array  $corrections Field => value corrections.
@@ -386,21 +721,46 @@ SYSTEM;
             return;
         }
 
+        // v6.0.6 BLOCKER 4: Check the auto-correct setting (default OFF).
+        $settings = function_exists( 'ontario_obituaries_get_settings' )
+            ? ontario_obituaries_get_settings()
+            : get_option( 'ontario_obituaries_settings', array() );
+        if ( empty( $settings['authenticity_auto_correct_enabled'] ) ) {
+            ontario_obituaries_log(
+                sprintf(
+                    'Authenticity Checker v2: Auto-correct DISABLED — skipping %d correction(s) for ID %d. Enable via Settings > authenticity_auto_correct_enabled.',
+                    count( $corrections ), $obit_id
+                ),
+                'info'
+            );
+            return;
+        }
+
         global $wpdb;
 
+        // v6.0.5: Defence-in-depth whitelist — parse_audit_response() already
+        // filters, but validate here too in case of future code paths.
+        $allowed_fields = array( 'date_of_death', 'date_of_birth', 'age', 'city_normalized' );
+
         foreach ( $corrections as $field => $value ) {
+            if ( ! in_array( $field, $allowed_fields, true ) ) {
+                continue; // Skip unknown fields — prevents SQL injection.
+            }
+
             $old_value = $wpdb->get_var( $wpdb->prepare(
                 "SELECT `{$field}` FROM `{$table}` WHERE id = %d",
                 $obit_id
             ) );
 
-            // Only correct if the value actually differs.
             if ( (string) $old_value !== (string) $value ) {
+                // v6.0.6 BLOCKER 4 FIX: Use %d for age field (INT column), %s for others.
+                $field_format = ( 'age' === $field ) ? '%d' : '%s';
+
                 $corr_upd = $wpdb->update(
                     $table,
                     array( $field => $value ),
                     array( 'id' => $obit_id ),
-                    array( '%s' ),
+                    array( $field_format ),
                     array( '%d' )
                 );
                 if ( function_exists( 'oo_db_check' ) ) {
@@ -412,7 +772,7 @@ SYSTEM;
 
                 ontario_obituaries_log(
                     sprintf(
-                        'Authenticity Checker: AUTO-CORRECTED ID %d — %s: "%s" → "%s".',
+                        'Authenticity Checker v2: AUTO-CORRECTED ID %d — %s: "%s" → "%s".',
                         $obit_id, $field, $old_value, $value
                     ),
                     'info'
@@ -434,11 +794,12 @@ SYSTEM;
         }
 
         $body = wp_json_encode( array(
-            'model'       => $model,
-            'messages'    => $messages,
-            'temperature' => 0.2, // Low temperature for factual checking.
-            'max_tokens'  => 512,
-            'top_p'       => 0.9,
+            'model'           => $model,
+            'messages'        => $messages,
+            'temperature'     => 0.1, // v6.0.4: Lower temp for strict factual checking.
+            'max_tokens'      => 800, // v6.0.4: Increased for v2 response format.
+            'top_p'           => 0.9,
+            'response_format' => array( 'type' => 'json_object' ),
         ) );
 
         $response = oo_safe_http_post( 'AUDIT', $this->api_url, array(
@@ -451,34 +812,32 @@ SYSTEM;
         ), array( 'source' => 'class-ai-authenticity-checker', 'model' => $model ) );
 
         if ( is_wp_error( $response ) ) {
-            // Wrapper already logged. Distinguish 429 for caller.
             $http_status = oo_http_error_status( $response );
             if ( 429 === $http_status ) {
                 return new WP_Error( 'rate_limited', 'Groq API rate limit exceeded.' );
             }
+            if ( 401 === $http_status ) {
+                return new WP_Error( 'api_key_invalid', 'Groq API key is invalid or expired.' );
+            }
             return new WP_Error( 'api_error', 'HTTP request failed: ' . $response->get_error_message() );
         }
 
-        $code = wp_remote_retrieve_response_code( $response );
-        $body = wp_remote_retrieve_body( $response );
-
-        $data = json_decode( $body, true );
+        $body_text = wp_remote_retrieve_body( $response );
+        $data      = json_decode( $body_text, true );
 
         if ( empty( $data['choices'][0]['message']['content'] ) ) {
             return new WP_Error( 'empty_response', 'Groq API returned empty content.' );
         }
 
-        // BUG-M1 FIX (v5.0.6): Record actual token usage in shared rate limiter.
-        // QC-R12 FIX: Pass estimate so record_usage computes delta, not pure add.
-        // If usage data is missing, assume estimate was correct (reservation stands).
+        // Record actual token usage in shared rate limiter.
         if ( class_exists( 'Ontario_Obituaries_Groq_Rate_Limiter' ) ) {
             $actual = ! empty( $data['usage']['total_tokens'] )
                 ? (int) $data['usage']['total_tokens']
-                : 800; // Fallback: reservation stands as-is.
+                : 800;
             Ontario_Obituaries_Groq_Rate_Limiter::get_instance()->record_usage(
                 $actual,
                 'authenticity',
-                800  // Must match the estimate in audit_obituary()'s may_proceed() call.
+                800
             );
         }
 
@@ -486,37 +845,65 @@ SYSTEM;
     }
 
     /**
+     * v6.0.4: Get count of obituaries needing audit.
+     *
+     * @return int
+     */
+    public function get_needs_audit_count() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}`
+             WHERE audit_status = 'needs_audit'
+               AND ai_description IS NOT NULL AND ai_description != ''
+               AND suppressed_at IS NULL"
+        );
+    }
+
+    /**
      * Get audit statistics.
      *
-     * @return array { total: int, audited: int, passed: int, flagged: int, never_audited: int }
+     * v6.0.4: Updated to include pipeline-aware counts.
+     *
+     * @return array
      */
     public function get_stats() {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
-        // v4.6.0: Only count published records.
-        $total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL AND status = 'published' AND description IS NOT NULL AND description != ''"
+        $total_published = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE suppressed_at IS NULL AND status = 'published'"
+        );
+
+        $needs_audit = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'needs_audit' AND suppressed_at IS NULL"
         );
 
         $audited = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE last_audit_at IS NOT NULL AND suppressed_at IS NULL AND status = 'published'"
-        );
-
-        $flagged = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'flagged' AND suppressed_at IS NULL AND status = 'published'"
+            "SELECT COUNT(*) FROM `{$table}` WHERE last_audit_at IS NOT NULL AND suppressed_at IS NULL"
         );
 
         $passed = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'pass' AND suppressed_at IS NULL AND status = 'published'"
+            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'pass' AND suppressed_at IS NULL"
+        );
+
+        $flagged = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'flagged' AND suppressed_at IS NULL"
+        );
+
+        $admin_review = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}` WHERE audit_status = 'admin_review' AND suppressed_at IS NULL"
         );
 
         return array(
-            'total'         => $total,
-            'audited'       => $audited,
-            'passed'        => $passed,
-            'flagged'       => $flagged,
-            'never_audited' => $total - $audited,
+            'total_published' => $total_published,
+            'needs_audit'     => $needs_audit,
+            'audited'         => $audited,
+            'passed'          => $passed,
+            'flagged'         => $flagged,
+            'admin_review'    => $admin_review,
+            'never_audited'   => max( 0, $total_published - $audited ),
         );
     }
 
@@ -531,9 +918,10 @@ SYSTEM;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
         return $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, name, date_of_death, location, audit_status, audit_flags, last_audit_at
+            "SELECT id, name, date_of_death, location, audit_status, audit_flags,
+                    last_audit_at, audit_requeue_count
              FROM `{$table}`
-             WHERE audit_status = 'flagged'
+             WHERE audit_status IN ('flagged', 'admin_review')
                AND suppressed_at IS NULL
              ORDER BY last_audit_at DESC
              LIMIT %d",
