@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ontario Obituaries
  * Description: Ontario-wide obituary data ingestion with coverage-first, rights-aware publishing — Compatible with Obituary Assistant
- * Version: 6.0.3
+ * Version: 6.0.6
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * Author: Monaco Monuments
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Define plugin constants
-define( 'ONTARIO_OBITUARIES_VERSION', '6.0.3' );
+define( 'ONTARIO_OBITUARIES_VERSION', '6.0.6' );
 define( 'ONTARIO_OBITUARIES_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'ONTARIO_OBITUARIES_PLUGIN_FILE', __FILE__ );
@@ -204,6 +204,94 @@ function ontario_obituaries_log( $message, $level = 'info' ) {
 
     // Fallback: raw error_log when oo_log is not yet loaded.
     error_log( sprintf( '[Ontario Obituaries][%s] %s', strtoupper( $level ), $message ) );
+}
+
+/**
+ * v6.0.4: Idempotent column helper — ensures a column exists on the obituary table.
+ *
+ * Safe to call multiple times: checks SHOW COLUMNS first, only ALTERs if missing.
+ * Uses oo_db_check() for structured error logging when available.
+ *
+ * @since 6.0.4
+ * @param string $table  Full table name (with prefix).
+ * @param string $column Column name to check.
+ * @param string $ddl    Full DDL for ADD COLUMN (e.g., "audit_requeue_count SMALLINT UNSIGNED NOT NULL DEFAULT 0").
+ * @return bool True if column exists (or was added successfully).
+ */
+function oo_ensure_column( $table, $column, $ddl ) {
+    global $wpdb;
+    $exists = $wpdb->get_var( $wpdb->prepare(
+        "SHOW COLUMNS FROM `{$table}` LIKE %s", $column
+    ) );
+    if ( $exists ) {
+        return true;
+    }
+    $r = $wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN {$ddl}" );
+    if ( function_exists( 'oo_db_check' ) ) {
+        oo_db_check( 'SCHEMA', $r, 'DB_SCHEMA_FAIL', "Failed adding column {$column}", array( 'table' => $table, 'column' => $column ) );
+    }
+    return false !== $r;
+}
+
+/**
+ * v6.0.4: Deterministic tone sanitizer.
+ *
+ * Runs AFTER Groq rewrite but BEFORE save. Removes/neutralizes banned slang
+ * and AI cliches that occasionally slip through the prompt. Also strips
+ * "age of 0" phrases that indicate bad data propagation.
+ *
+ * This function only removes or replaces — it never invents new content.
+ *
+ * @since 6.0.4
+ * @param string $text The AI-rewritten obituary text.
+ * @return string Cleaned text.
+ */
+function oo_tone_sanitize( $text ) {
+    if ( empty( $text ) ) {
+        return $text;
+    }
+
+    // Banned slang → neutral replacements (case-insensitive).
+    $replacements = array(
+        '/\bfur (boys|babies|baby|kids|children)\b/i' => 'pets',
+        '/\bfur-babies?\b/i'                          => 'pets',
+        '/\bdoggo(s)?\b/i'                             => 'dogs',
+        '/\bpupper(s)?\b/i'                            => 'puppies',
+        '/\bgood\s*boy(s)?\b/i'                        => 'dogs',
+    );
+    foreach ( $replacements as $pattern => $replacement ) {
+        $text = preg_replace( $pattern, $replacement, $text );
+    }
+
+    // Remove "age of 0" phrases (bad data propagation).
+    $text = preg_replace( '/,?\s*at the age of 0\b/i', '', $text );
+    $text = preg_replace( '/\bat the age of 0\b/i', '', $text );
+    $text = preg_replace( '/\baged 0\b/i', '', $text );
+    $text = preg_replace( '/\bage of 0\b/i', '', $text );
+
+    // Remove common AI cliches (only if NOT quoting the original).
+    $ai_cliches = array(
+        '/\bindelible mark\b/i',
+        '/\bshined bright(ly)?\b/i',
+        '/\bjourney\s+through\s+life\b/i',
+        '/\btapestry of (life|memories)\b/i',
+        '/\bleft an? .{0,20}void\b/i',
+        '/\bforever etched\b/i',
+        '/\btreasured memories\b/i',
+        '/\bcherished moments?\b/i',
+    );
+    foreach ( $ai_cliches as $cliche ) {
+        // Only remove if the cliche creates a dangling sentence fragment.
+        // For safety, only strip when preceded by a comma or period.
+        $text = preg_replace( '/,\s*' . substr( $cliche, 1 ) . '/i', '', $text );
+    }
+
+    // Clean up any double spaces or trailing commas left by removals.
+    $text = preg_replace( '/\s{2,}/', ' ', $text );
+    $text = preg_replace( '/,\s*\./', '.', $text );
+    $text = preg_replace( '/,\s*,/', ',', $text );
+
+    return trim( $text );
 }
 
 /**
@@ -630,6 +718,48 @@ function ontario_obituaries_activate() {
         delete_transient( 'ontario_obituaries_funeral_homes_cache' );
         delete_option( 'ontario_obituaries_last_collection' );
         delete_option( 'ontario_obituaries_last_scrape' );
+    }
+
+    // v6.0.4 migration: Add authenticity checker v2 + pipeline gating columns.
+    // Uses oo_ensure_column() — idempotent, safe to re-run.
+    if ( version_compare( $current_db_version, '6.0.4', '<' ) ) {
+        oo_ensure_column( $table_name, 'audit_requeue_count',    'audit_requeue_count SMALLINT UNSIGNED NOT NULL DEFAULT 0' );
+        oo_ensure_column( $table_name, 'ai_description_hash',    'ai_description_hash CHAR(64) DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'last_audited_hash',      'last_audited_hash CHAR(64) DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'last_audit_at',          'last_audit_at datetime DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'audit_status',           "audit_status VARCHAR(20) DEFAULT NULL" );
+        oo_ensure_column( $table_name, 'audit_flags',            'audit_flags TEXT DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'rewrite_requested_at',   'rewrite_requested_at datetime DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'rewrite_request_reason', 'rewrite_request_reason VARCHAR(255) DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'gofundme_url',           'gofundme_url VARCHAR(2083) DEFAULT NULL' );
+        oo_ensure_column( $table_name, 'gofundme_checked_at',    'gofundme_checked_at datetime DEFAULT NULL' );
+
+        // Add index on audit_status for efficient queries.
+        $indexes_604 = $wpdb->get_results( "SHOW INDEX FROM `{$table_name}`", ARRAY_A );
+        $idx_names_604 = array_column( $indexes_604, 'Key_name' );
+        if ( ! in_array( 'idx_audit_status', $idx_names_604, true ) ) {
+            $idx_r = $wpdb->query( "ALTER TABLE `{$table_name}` ADD KEY idx_audit_status (audit_status)" );
+            if ( function_exists( 'oo_db_check' ) ) {
+                oo_db_check( 'SCHEMA', $idx_r, 'DB_SCHEMA_FAIL', 'Failed to add idx_audit_status', array( 'table' => $table_name ) );
+            }
+        }
+
+        // Backfill ai_description_hash for existing published records.
+        $wpdb->query(
+            "UPDATE `{$table_name}` SET ai_description_hash = SHA2(ai_description, 256)
+             WHERE ai_description IS NOT NULL AND ai_description != ''
+               AND ai_description_hash IS NULL
+             LIMIT 1000"
+        );
+
+        // Mark existing published records as needing initial audit.
+        $wpdb->query(
+            "UPDATE `{$table_name}` SET audit_status = 'needs_audit'
+             WHERE status = 'published' AND audit_status IS NULL
+             LIMIT 1000"
+        );
+
+        ontario_obituaries_log( 'v6.0.4 migration: Added authenticity checker v2 columns + backfilled hashes.', 'info' );
     }
 
     update_option( 'ontario_obituaries_db_version', ONTARIO_OBITUARIES_VERSION );
@@ -1509,6 +1639,10 @@ function ontario_obituaries_deactivate() {
     // Without this, the cron keeps firing after plugin deactivation.
     wp_clear_scheduled_hook( 'ontario_obituaries_ai_rewrite_batch' );
 
+    // v6.0.4: Clear authenticity audit hooks.
+    wp_clear_scheduled_hook( 'ontario_obituaries_authenticity_audit' );
+    wp_clear_scheduled_hook( 'ontario_obituaries_audit_after_rewrite' );
+
     // v5.2.0: Clear image localizer cron and lock.
     if ( class_exists( 'Ontario_Obituaries_Image_Localizer' ) ) {
         Ontario_Obituaries_Image_Localizer::deactivate();
@@ -1876,27 +2010,11 @@ function ontario_obituaries_ai_rewrite_batch() {
             }
         }
 
-        // Purge cache and submit newly published records to IndexNow.
-        // BUG-H4 FIX (v5.0.5): Use $total_ok (accumulator) instead of $result['succeeded']
-        // (last iteration only). Also avoids undefined $result if loop never ran.
+        // Purge cache if any records were rewritten (even though they're not published yet,
+        // the admin UI shows updated counts).
+        // v6.0.4: IndexNow submission moved to authenticity audit (only after publish).
         if ( $total_ok > 0 ) {
             ontario_obituaries_purge_litespeed( 'ontario_obits' );
-
-            // v4.6.0: Submit newly published obituaries to IndexNow.
-            if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
-                global $wpdb;
-                $table = $wpdb->prefix . 'ontario_obituaries';
-                // Get IDs of obituaries published in the last 10 minutes (this batch).
-                $recent_ids = $wpdb->get_col( $wpdb->prepare(
-                    "SELECT id FROM `{$table}` WHERE status = 'published' AND ai_description IS NOT NULL AND ai_description != '' AND created_at >= %s AND suppressed_at IS NULL ORDER BY id DESC LIMIT 100",
-                    gmdate( 'Y-m-d H:i:s', strtotime( '-10 minutes' ) )
-                ) );
-                if ( ! empty( $recent_ids ) ) {
-                    $indexnow = new Ontario_Obituaries_IndexNow();
-                    $indexnow->submit_urls( $recent_ids );
-                    ontario_obituaries_log( sprintf( 'v4.6.0: Submitted %d newly published obituaries to IndexNow.', count( $recent_ids ) ), 'info' );
-                }
-            }
         }
 
         // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally (clean completion).
@@ -1906,6 +2024,12 @@ function ontario_obituaries_ai_rewrite_batch() {
         }
         if ( $total_ok > 0 && function_exists( 'oo_health_record_success' ) ) {
             oo_health_record_success( 'REWRITE' );
+        }
+
+        // v6.0.4: After rewriter batch, schedule audit if queue is empty.
+        // The audit is the only path to publish — it must run after rewrites complete.
+        if ( function_exists( 'ontario_obituaries_maybe_schedule_audit_after_rewrite' ) ) {
+            ontario_obituaries_maybe_schedule_audit_after_rewrite();
         }
 
     } catch ( \Throwable $e ) {
@@ -2280,6 +2404,151 @@ function ontario_obituaries_ajax_validate_api_key() {
 add_action( 'wp_ajax_ontario_obituaries_validate_api_key', 'ontario_obituaries_ajax_validate_api_key' );
 
 /**
+ * v6.0.4: AJAX endpoint — Run Audit Now (manual trigger).
+ *
+ * Processes one obituary through the authenticity checker.
+ * Only runs when rewriter queue is empty (idle-only).
+ */
+function ontario_obituaries_ajax_run_audit_now() {
+    check_ajax_referer( 'ontario_obituaries_reset_rescan', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+    }
+
+    require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-authenticity-checker.php';
+    $checker = new Ontario_Obituaries_Authenticity_Checker();
+
+    if ( ! $checker->is_configured() ) {
+        wp_send_json_error( array( 'message' => 'Groq API key not configured.' ) );
+    }
+
+    // Check idle gates.
+    $idle = $checker->check_idle_gates();
+    if ( is_wp_error( $idle ) ) {
+        wp_send_json_error( array( 'message' => 'Audit deferred: ' . $idle->get_error_message() ) );
+    }
+
+    $result = $checker->run_audit_batch();
+
+    wp_send_json_success( array(
+        'message'   => sprintf(
+            'Audited %d: %d published, %d flagged, %d requeued. %d needs audit.',
+            $result['audited'],
+            isset( $result['published'] ) ? $result['published'] : 0,
+            $result['flagged'],
+            isset( $result['requeued'] ) ? $result['requeued'] : 0,
+            $checker->get_needs_audit_count()
+        ),
+        'audited'   => $result['audited'],
+        'published' => isset( $result['published'] ) ? $result['published'] : 0,
+        'flagged'   => $result['flagged'],
+        'requeued'  => isset( $result['requeued'] ) ? $result['requeued'] : 0,
+        'pending'   => $checker->get_needs_audit_count(),
+        'done'      => ( $checker->get_needs_audit_count() < 1 ),
+    ) );
+}
+add_action( 'wp_ajax_ontario_obituaries_run_audit_now', 'ontario_obituaries_ajax_run_audit_now' );
+
+/**
+ * v6.0.4: AJAX endpoint — Request Rewrite for a specific obituary ID.
+ *
+ * Clears the AI description, resets audit status, and sets the record
+ * back to pending so the rewriter picks it up again.
+ */
+function ontario_obituaries_ajax_request_rewrite() {
+    check_ajax_referer( 'ontario_obituaries_reset_rescan', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+    }
+
+    $obit_id = isset( $_POST['obit_id'] ) ? absint( $_POST['obit_id'] ) : 0;
+    if ( $obit_id < 1 ) {
+        wp_send_json_error( array( 'message' => 'Invalid obituary ID.' ) );
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ontario_obituaries';
+
+    // v6.0.5 BUG FIX: Only include non-NULL fields in wpdb->update().
+    // NULL values can't be set via wpdb->update() — they need raw SQL.
+    // Previously, NULL fields were included with %s format, which wrote
+    // empty strings instead of SQL NULL, then a raw query fixed them.
+    $upd = $wpdb->update(
+        $table,
+        array(
+            'status'               => 'pending',
+            'ai_description'       => '',
+            'rewrite_requested_at' => current_time( 'mysql', true ),
+            'rewrite_request_reason' => 'admin_request',
+        ),
+        array( 'id' => $obit_id ),
+        array( '%s', '%s', '%s', '%s' ),
+        array( '%d' )
+    );
+
+    // Set NULL fields via raw query (wpdb::update cannot set NULL).
+    $wpdb->query( $wpdb->prepare(
+        "UPDATE `{$table}` SET ai_description_hash = NULL, audit_status = NULL, audit_flags = NULL, last_audited_hash = NULL WHERE id = %d",
+        $obit_id
+    ) );
+
+    if ( false === $upd ) {
+        wp_send_json_error( array( 'message' => 'Database update failed.' ) );
+    }
+
+    ontario_obituaries_log(
+        sprintf( 'v6.0.4: Admin requested rewrite for ID %d.', $obit_id ),
+        'info'
+    );
+
+    wp_send_json_success( array( 'message' => sprintf( 'Obituary ID %d queued for rewrite.', $obit_id ) ) );
+}
+add_action( 'wp_ajax_ontario_obituaries_request_rewrite', 'ontario_obituaries_ajax_request_rewrite' );
+
+/**
+ * v6.0.4: AJAX endpoint — Suppress (remove) a specific obituary.
+ *
+ * Sets suppressed_at to immediately hide the record from the frontend.
+ */
+function ontario_obituaries_ajax_suppress_obituary() {
+    check_ajax_referer( 'ontario_obituaries_reset_rescan', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Permission denied.' ) );
+    }
+
+    $obit_id = isset( $_POST['obit_id'] ) ? absint( $_POST['obit_id'] ) : 0;
+    if ( $obit_id < 1 ) {
+        wp_send_json_error( array( 'message' => 'Invalid obituary ID.' ) );
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ontario_obituaries';
+
+    $upd = $wpdb->update(
+        $table,
+        array(
+            'suppressed_at'     => current_time( 'mysql', true ),
+            'suppressed_reason' => 'admin_suppress',
+        ),
+        array( 'id' => $obit_id ),
+        array( '%s', '%s' ),
+        array( '%d' )
+    );
+
+    if ( false === $upd ) {
+        wp_send_json_error( array( 'message' => 'Database update failed.' ) );
+    }
+
+    ontario_obituaries_log(
+        sprintf( 'v6.0.4: Admin suppressed obituary ID %d.', $obit_id ),
+        'info'
+    );
+
+    wp_send_json_success( array( 'message' => sprintf( 'Obituary ID %d suppressed.', $obit_id ) ) );
+}
+add_action( 'wp_ajax_ontario_obituaries_suppress_obituary', 'ontario_obituaries_ajax_suppress_obituary' );
+
+/**
  * v5.1.3: AJAX endpoint for live AI Rewrite Status refresh.
  *
  * Called every 30 seconds by the settings page JavaScript to update the
@@ -2301,11 +2570,12 @@ function ontario_obituaries_ajax_rewrite_status() {
     $stats    = $rewriter->get_stats();
 
     $html = sprintf(
-        '<strong>%s</strong> scraped &nbsp;|&nbsp; <strong style="color:blue;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:green;">%s</strong> published (live) &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong>%s%%</strong> complete',
+        '<strong>%s</strong> scraped &nbsp;|&nbsp; <strong style="color:blue;">%s</strong> rewritten &nbsp;|&nbsp; <strong style="color:green;">%s</strong> published (live) &nbsp;|&nbsp; <strong style="color:orange;">%s</strong> pending &nbsp;|&nbsp; <strong style="color:purple;">%s</strong> awaiting audit &nbsp;|&nbsp; <strong>%s%%</strong> complete',
         esc_html( number_format_i18n( $stats['total'] ) ),
         esc_html( number_format_i18n( $stats['rewritten'] ) ),
         esc_html( number_format_i18n( isset( $stats['published'] ) ? $stats['published'] : 0 ) ),
         esc_html( number_format_i18n( $stats['pending'] ) ),
+        esc_html( number_format_i18n( isset( $stats['needs_audit'] ) ? $stats['needs_audit'] : 0 ) ),
         esc_html( number_format_i18n( $stats['percent_complete'], 1 ) )
     );
 
@@ -2374,47 +2644,67 @@ add_action( 'ontario_obituaries_gofundme_batch', 'ontario_obituaries_gofundme_ba
 
 /**
  * v4.3.0: AI Authenticity Checker batch.
+ * v6.0.4: Complete redesign — now the ONLY path to publish.
+ * v6.0.6: Blocker fixes — parse failure safety, scrape buffer gate, rate limiter
+ *          peek, auto-correct setting gate.
+ * v6.0.5: Continuous publishing — runs even while rewrite queue is active.
  *
- * Runs every 4 hours via WP-Cron. Picks random obituaries and audits them
- * for data consistency using the Groq LLM.
+ * Runs via:
+ *   1. Post-rewriter trigger (30s after rewrite batch completes).
+ *   2. Recurring 4-hour WP-Cron (fallback/re-check).
+ *   3. Manual "Run Audit Now" button (admin UI).
+ *
+ * Idle gates (v6.0.6):
+ *   - No active rewriter lock (rewriter not mid-batch).
+ *   - No imminent scrape/collection (10-min buffer via wp_next_scheduled).
+ *   - No active collection cooldown transient.
+ *   - Groq rate limiter allows 800 tokens (non-reserving peek).
+ *   - Note: pending_rewrites > 0 is NO LONGER a blocker (continuous publishing).
  */
 function ontario_obituaries_authenticity_audit() {
-    $settings = get_option( 'ontario_obituaries_settings', array() );
-
-    if ( empty( $settings['authenticity_enabled'] ) ) {
-        return;
-    }
-
+    // v6.0.4: Always attempt audit when called (gate logic is inside the checker).
+    // The 4-hour schedule is a fallback; the primary trigger is post-rewriter.
     require_once ONTARIO_OBITUARIES_PLUGIN_DIR . 'includes/class-ai-authenticity-checker.php';
     $checker = new Ontario_Obituaries_Authenticity_Checker();
 
     if ( ! $checker->is_configured() ) {
-        ontario_obituaries_log( 'Authenticity Checker: Skipped — no Groq API key.', 'info' );
+        ontario_obituaries_log( 'Authenticity Checker v2: Skipped — no Groq API key.', 'info' );
+        return;
+    }
+
+    // v6.0.4: Check idle gates (rewriter queue empty, rate limiter OK, etc.).
+    $idle_check = $checker->check_idle_gates();
+    if ( is_wp_error( $idle_check ) ) {
+        ontario_obituaries_log(
+            sprintf( 'Authenticity Checker v2: Idle gate failed — %s', $idle_check->get_error_message() ),
+            'info'
+        );
         return;
     }
 
     // v5.3.0 Phase 2a: Wrap in oo_safe_call for crash protection.
-    // QC-Adj-4: null === crash; non-null result (including WP_Error) passed through.
     $result = function_exists( 'oo_safe_call' )
         ? oo_safe_call( 'AUDIT', 'CRON_AUTHENTICITY_CRASH', function() use ( $checker ) {
             return $checker->run_audit_batch();
         }, null, array( 'hook' => 'ontario_obituaries_authenticity_audit' ) )
         : $checker->run_audit_batch();
 
-    // oo_safe_call caught a Throwable → bail (already logged).
     if ( null === $result ) {
         return;
     }
 
     ontario_obituaries_log(
         sprintf(
-            'Authenticity audit: %d audited, %d passed, %d flagged.',
-            $result['audited'], $result['passed'], $result['flagged']
+            'Authenticity audit v2: %d audited, %d passed (%d published), %d flagged (%d requeued).',
+            $result['audited'],
+            $result['passed'],
+            isset( $result['published'] ) ? $result['published'] : 0,
+            $result['flagged'],
+            isset( $result['requeued'] ) ? $result['requeued'] : 0
         ),
         'info'
     );
 
-    // v5.3.0 Phase 2a QC-Adj-3: Record "ran" unconditionally, "progress" on audit > 0.
     if ( function_exists( 'oo_health_record_ran' ) ) {
         oo_health_record_ran( 'AUDIT' );
     }
@@ -2422,23 +2712,77 @@ function ontario_obituaries_authenticity_audit() {
         oo_health_record_success( 'AUDIT' );
     }
 
-    if ( $result['flagged'] > 0 ) {
+    // Purge cache if any records were published or flagged.
+    $published_count = isset( $result['published'] ) ? $result['published'] : 0;
+    if ( ( $published_count > 0 || $result['flagged'] > 0 ) && function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
         ontario_obituaries_purge_litespeed( 'ontario_obits' );
+    }
+
+    // v6.0.4: Submit newly published obituaries to IndexNow.
+    if ( $published_count > 0 && class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+        $recent_ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT id FROM `{$table}`
+             WHERE status = 'published'
+               AND audit_status = 'pass'
+               AND ai_description IS NOT NULL AND ai_description != ''
+               AND last_audit_at >= %s
+               AND suppressed_at IS NULL
+             ORDER BY id DESC LIMIT 100",
+            gmdate( 'Y-m-d H:i:s', strtotime( '-15 minutes' ) )
+        ) );
+        if ( ! empty( $recent_ids ) ) {
+            $indexnow = new Ontario_Obituaries_IndexNow();
+            $indexnow->submit_urls( $recent_ids );
+            ontario_obituaries_log( sprintf( 'v6.0.4: Submitted %d audit-published obituaries to IndexNow.', count( $recent_ids ) ), 'info' );
+        }
     }
 }
 add_action( 'ontario_obituaries_authenticity_audit', 'ontario_obituaries_authenticity_audit' );
+// v6.0.4: Also hook the one-shot post-rewriter trigger.
+add_action( 'ontario_obituaries_audit_after_rewrite', 'ontario_obituaries_authenticity_audit' );
+
+/**
+ * v6.0.5: Schedule audit after rewriter batch (continuous publishing).
+ *
+ * v6.0.4 required pending == 0 before scheduling audit. v6.0.5 relaxes
+ * this: schedule audit whenever there are items needing audit, regardless
+ * of rewrite queue depth. This allows continuous publishing during rebuilds
+ * (items publish as soon as they pass rewrite + audit, not after the whole
+ * backlog finishes).
+ *
+ * Called from ontario_obituaries_ai_rewrite_batch() post-loop and
+ * from cron-rewriter.php after its processing loop.
+ */
+function ontario_obituaries_maybe_schedule_audit_after_rewrite() {
+    // Check if there are items needing audit — that's all we need.
+    if ( class_exists( 'Ontario_Obituaries_AI_Rewriter' ) ) {
+        $rewriter = new Ontario_Obituaries_AI_Rewriter();
+        if ( $rewriter->get_needs_audit_count() < 1 ) {
+            return; // Nothing to audit.
+        }
+    }
+
+    // Schedule a one-shot audit 30s from now.
+    if ( ! wp_next_scheduled( 'ontario_obituaries_audit_after_rewrite' ) ) {
+        wp_schedule_single_event( time() + 30, 'ontario_obituaries_audit_after_rewrite' );
+        ontario_obituaries_log( 'v6.0.5: Scheduled post-rewriter audit (30s) — continuous publishing.', 'info' );
+    }
+}
 
 /**
  * v4.3.0: Schedule recurring authenticity audit every 4 hours.
+ * v6.0.4: Fallback schedule — primary trigger is post-rewriter.
+ * v6.0.5: Still schedules 4-hour fallback. Primary trigger fires after
+ *          every rewrite batch (even during rebuilds) for continuous publishing.
  * Hooked to init so it runs on every page load check.
  */
 function ontario_obituaries_schedule_authenticity_audit() {
-    $settings = get_option( 'ontario_obituaries_settings', array() );
-
-    // QC-R10 FIX (v5.0.10): Jitter (+0-120s) to prevent exact alignment with
-    // other 4-hour recurring events. wp_rand() is WP's crypto-safe random.
-    // Interval: 300-420s (5-7 min) from now.
-    if ( ! empty( $settings['authenticity_enabled'] ) && ! wp_next_scheduled( 'ontario_obituaries_authenticity_audit' ) ) {
+    // v6.0.4: Always schedule the 4-hour fallback (no longer gated behind authenticity_enabled).
+    // The authenticity checker IS the publish gate — it must always run.
+    $groq_key = get_option( 'ontario_obituaries_groq_api_key', '' );
+    if ( ! empty( $groq_key ) && ! wp_next_scheduled( 'ontario_obituaries_authenticity_audit' ) ) {
         $offset = 300 + wp_rand( 0, 120 );
         wp_schedule_event( time() + $offset, 'four_hours', 'ontario_obituaries_authenticity_audit' );
     }

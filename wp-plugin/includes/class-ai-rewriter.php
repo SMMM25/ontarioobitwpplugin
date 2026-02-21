@@ -458,10 +458,24 @@ class Ontario_Obituaries_AI_Rewriter {
             // Success — clear any failure counter for this record.
             delete_transient( 'oo_rewrite_fail_' . $obituary->id );
 
-            // v5.0.0: Build the DB update — rewritten text + corrected structured fields.
+            // v6.0.4: Apply tone sanitizer BEFORE save. Removes banned slang,
+            // AI cliches, and age-of-0 phrases that slip through the prompt.
+            if ( function_exists( 'oo_tone_sanitize' ) ) {
+                $rewrite_text = oo_tone_sanitize( $rewrite_text );
+            }
+
+            // v6.0.4 PIPELINE GATING: Rewriter no longer publishes directly.
+            // Flow: pending → (rewrite) → pending + needs_audit → (audit pass) → published.
+            // The authenticity checker is the ONLY component that sets status='published'.
+            $sanitized_text = sanitize_textarea_field( $rewrite_text );
+            $ai_hash = ! empty( $sanitized_text ) ? hash( 'sha256', $sanitized_text ) : null;
+
             $update_data = array(
-                'ai_description' => sanitize_textarea_field( $rewrite_text ),
-                'status'         => 'published',
+                'ai_description'      => $sanitized_text,
+                'ai_description_hash' => $ai_hash,
+                'status'              => 'pending',         // v6.0.4: stays pending until audit pass.
+                'audit_status'        => 'needs_audit',     // v6.0.4: flag for authenticity checker.
+                'last_audited_hash'   => null,              // v6.0.4: force re-audit on new rewrite.
             );
 
             // Apply Groq-extracted fields — only overwrite when Groq returned a value
@@ -503,10 +517,16 @@ class Ontario_Obituaries_AI_Rewriter {
             // Build explicit format array so WordPress uses correct types
             // (especially %d for age, %s for everything else).
             // v6.0.2: Handle NULL age — remove from $update_data and set via raw SQL.
+            // v6.0.4: Handle NULL last_audited_hash — remove from $update_data and set via raw SQL.
             $null_age = false;
             if ( array_key_exists( 'age', $update_data ) && null === $update_data['age'] ) {
                 $null_age = true;
                 unset( $update_data['age'] );
+            }
+            $null_last_audited_hash = false;
+            if ( array_key_exists( 'last_audited_hash', $update_data ) && null === $update_data['last_audited_hash'] ) {
+                $null_last_audited_hash = true;
+                unset( $update_data['last_audited_hash'] );
             }
             $update_formats = array();
             foreach ( $update_data as $col => $val ) {
@@ -520,6 +540,14 @@ class Ontario_Obituaries_AI_Rewriter {
                 $update_formats,
                 array( '%d' )
             );
+
+            // v6.0.4: Set last_audited_hash to NULL via raw query (wpdb::update cannot set NULL).
+            if ( $null_last_audited_hash ) {
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE `{$table}` SET last_audited_hash = NULL WHERE id = %d",
+                    $obituary->id
+                ) );
+            }
 
             // v6.0.2: Set age to NULL via raw query (wpdb::update cannot set NULL).
             // v6.0.3 QC FIX: Log failures from raw NULL query via oo_db_check.
@@ -546,14 +574,14 @@ class Ontario_Obituaries_AI_Rewriter {
                 }
             }
 
-            // v5.3.3: Phase 2c — check publish update succeeded.
+            // v5.3.3: Phase 2c — check rewrite update succeeded.
             if ( function_exists( 'oo_db_check' ) ) {
-                if ( ! oo_db_check( 'REWRITE', $upd_result, 'DB_PUBLISH_FAIL', 'Failed to publish rewritten obituary', array(
+                if ( ! oo_db_check( 'REWRITE', $upd_result, 'DB_REWRITE_SAVE_FAIL', 'Failed to save rewritten obituary', array(
                     'obit_id' => $obituary->id,
                     'name'    => $obituary->name,
                 ) ) ) {
                     $result['failed']++;
-                    $result['errors'][] = sprintf( 'ID %d (%s): DB update failed during publish', $obituary->id, $obituary->name );
+                    $result['errors'][] = sprintf( 'ID %d (%s): DB update failed during rewrite save', $obituary->id, $obituary->name );
                     continue;
                 }
             }
@@ -562,8 +590,9 @@ class Ontario_Obituaries_AI_Rewriter {
                 ? ' Corrections: ' . implode( '; ', $rewritten['corrections'] )
                 : '';
 
+            // v6.0.4: Rewriter no longer publishes — it marks as needs_audit.
             ontario_obituaries_log(
-                sprintf( 'AI Rewriter: Published obituary ID %d (%s).%s', $obituary->id, $obituary->name, $corrections_msg ),
+                sprintf( 'AI Rewriter: Rewrote obituary ID %d (%s) — awaiting audit.%s', $obituary->id, $obituary->name, $corrections_msg ),
                 'info'
             );
 
@@ -893,6 +922,7 @@ class Ontario_Obituaries_AI_Rewriter {
         // v6.0.2: Enhanced prompt — stronger data accuracy rules to prevent age 0,
         // wrong dates, and fabricated details. Added explicit "NEVER output age 0"
         // and cross-validation instructions.
+        // v6.0.4: Professional tone — banned slang, AI cliche list, facts-only rule.
         $system = <<<'SYSTEM'
 You extract structured data from obituaries and rewrite them as dignified prose for an Ontario funeral directory.
 
@@ -916,7 +946,7 @@ EXTRACTION RULES (strict):
 - Dates must be real calendar dates. Do not confuse funeral/visitation dates with death dates.
 
 REWRITING RULES:
-- Preserve every fact exactly: full legal name, all dates, locations, funeral home, age.
+- Preserve every fact exactly: full legal name, all dates, locations, funeral home, age, survivors, predeceased.
 - Include death date and age explicitly in the prose (e.g., "passed away on February 14, 2025, at the age of 78").
 - NEVER write "at the age of 0" — if age is unknown, omit the age phrase entirely.
 - NEVER invent details not in the original (no family members, hobbies, traits, cause of death).
@@ -924,6 +954,17 @@ REWRITING RULES:
 - 2-4 paragraphs, third person, plain prose. No headings or formatting.
 - If original is sparse, keep rewrite brief. No padding.
 - No phrases like "according to the obituary". No condolences.
+
+TONE (strict — professional memorial):
+- Write in a respectful, dignified, matter-of-fact memorial tone.
+- BANNED terms (never use unless they appear VERBATIM in the original text):
+  "fur boys", "fur babies", "fur baby", "doggo", "pupper", "good boy",
+  "journey", "shined bright", "indelible mark", "tapestry of life",
+  "forever etched", "treasured memories", "cherished moments", "left a void",
+  "beacon of light", "heart of gold", "touched the lives", "celebrated life".
+- For pets: use "dogs", "cats", "pets" — never slang.
+- No sentimental filler. State facts plainly. Let the facts speak.
+- Do NOT add commentary, praise, or editorial observations not in the original.
 
 Return ONLY the JSON object.
 SYSTEM;
@@ -1293,6 +1334,10 @@ SYSTEM;
     /**
      * Get the number of obituaries still awaiting AI rewrite.
      *
+     * v6.0.4: Only counts records that have NO ai_description yet (or quarantined).
+     * Records that have been rewritten but await audit (audit_status='needs_audit')
+     * are NOT counted here — they're done from the rewriter's perspective.
+     *
      * @return int Count of unrewritten obituaries.
      */
     public function get_pending_count() {
@@ -1313,11 +1358,33 @@ SYSTEM;
     }
 
     /**
+     * v6.0.4: Get count of obituaries awaiting authenticity audit.
+     *
+     * These are records that have been rewritten (ai_description set) but
+     * not yet audited (audit_status = 'needs_audit').
+     *
+     * @return int Count of records awaiting audit.
+     */
+    public function get_needs_audit_count() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ontario_obituaries';
+
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}`
+             WHERE audit_status = 'needs_audit'
+               AND ai_description IS NOT NULL
+               AND ai_description != ''
+               AND suppressed_at IS NULL"
+        );
+    }
+
+    /**
      * Get rewrite statistics.
      *
      * v4.6.0: Now tracks pipeline status (pending → published).
+     * v6.0.4: Added needs_audit count for pipeline visibility.
      *
-     * @return array { total: int, rewritten: int, pending: int, published: int, pct: float }
+     * @return array { total: int, rewritten: int, pending: int, published: int, needs_audit: int, pct: float }
      */
     public function get_stats() {
         global $wpdb;
@@ -1343,6 +1410,14 @@ SYSTEM;
              WHERE status = 'pending' AND suppressed_at IS NULL"
         );
 
+        // v6.0.4: Count records awaiting audit (rewritten but not yet published).
+        $needs_audit = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM `{$table}`
+             WHERE audit_status = 'needs_audit'
+               AND ai_description IS NOT NULL AND ai_description != ''
+               AND suppressed_at IS NULL"
+        );
+
         $pct = $total > 0 ? round( ( $published / $total ) * 100, 1 ) : 0;
 
         return array(
@@ -1350,7 +1425,8 @@ SYSTEM;
             'rewritten'        => $rewritten,
             'published'        => $published,
             'pending'          => $pending_count,
-            'pending_rewrite'  => $total - $rewritten,
+            'needs_audit'      => $needs_audit,
+            'pending_rewrite'  => max( 0, $total - $rewritten ),
             'pct'              => $pct,
             'percent_complete' => $pct,
         );

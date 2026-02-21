@@ -208,24 +208,42 @@ if ( $total_ok > 0 ) {
         cron_log( 'LiteSpeed cache purged.' );
     }
 
-    // Submit newly published obituaries to IndexNow.
-    if ( class_exists( 'Ontario_Obituaries_IndexNow' ) ) {
-        global $wpdb;
-        $table = $wpdb->prefix . 'ontario_obituaries';
-        $recent_ids = $wpdb->get_col( $wpdb->prepare(
-            "SELECT id FROM `{$table}`
-             WHERE status = 'published'
-               AND ai_description IS NOT NULL AND ai_description != ''
-               AND created_at >= %s
-               AND suppressed_at IS NULL
-             ORDER BY id DESC
-             LIMIT 100",
-            gmdate( 'Y-m-d H:i:s', strtotime( '-10 minutes' ) )
-        ) );
-        if ( ! empty( $recent_ids ) ) {
-            $indexnow = new Ontario_Obituaries_IndexNow();
-            $indexnow->submit_urls( $recent_ids );
-            cron_log( sprintf( 'IndexNow: submitted %d URLs.', count( $recent_ids ) ) );
+    // v6.0.4: IndexNow submission moved to authenticity audit (only after publish).
+    // The rewriter no longer publishes — it sets needs_audit.
+}
+
+// v6.0.5: After rewriter loop, schedule audit (continuous publishing).
+// The audit runs even if the rewrite queue isn't empty — items publish
+// as soon as they pass rewrite + audit.
+if ( function_exists( 'ontario_obituaries_maybe_schedule_audit_after_rewrite' ) ) {
+    ontario_obituaries_maybe_schedule_audit_after_rewrite();
+    cron_log( 'Checked post-rewriter audit trigger.' );
+} else {
+    // Fallback: directly run inline audit if the helper isn't available.
+    $audit_file = __DIR__ . '/includes/class-ai-authenticity-checker.php';
+    if ( file_exists( $audit_file ) ) {
+        require_once $audit_file;
+        $checker = new Ontario_Obituaries_Authenticity_Checker();
+        if ( $checker->is_configured() && $checker->get_needs_audit_count() > 0 ) {
+            cron_log( 'Running inline post-rewriter audit...' );
+            $idle_check = $checker->check_idle_gates();
+            if ( ! is_wp_error( $idle_check ) ) {
+                $audit_result = $checker->run_audit_batch();
+                cron_log( sprintf(
+                    'Audit: %d audited, %d published, %d flagged.',
+                    $audit_result['audited'],
+                    isset( $audit_result['published'] ) ? $audit_result['published'] : 0,
+                    $audit_result['flagged']
+                ) );
+                // Purge cache if audit published anything.
+                if ( isset( $audit_result['published'] ) && $audit_result['published'] > 0 ) {
+                    if ( function_exists( 'ontario_obituaries_purge_litespeed' ) ) {
+                        ontario_obituaries_purge_litespeed( 'ontario_obits' );
+                    }
+                }
+            } else {
+                cron_log( 'Audit idle gate: ' . $idle_check->get_error_message() );
+            }
         }
     }
 }

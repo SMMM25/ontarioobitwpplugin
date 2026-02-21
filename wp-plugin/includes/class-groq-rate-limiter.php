@@ -544,6 +544,57 @@ class Ontario_Obituaries_Groq_Rate_Limiter {
     }
 
     /**
+     * v6.0.6: Non-reserving budget check — read-only peek.
+     *
+     * Unlike may_proceed(), this does NOT make an atomic reservation.
+     * It simply reads the current window and checks whether the pool
+     * has enough remaining budget for $estimated_tokens. Safe to call
+     * from idle gates or pre-flight checks where you want to know
+     * "could I proceed?" without actually committing tokens.
+     *
+     * @since 6.0.6
+     * @param int    $estimated_tokens Estimated tokens needed.
+     * @param string $consumer         Consumer ID: 'rewriter', 'chatbot', 'authenticity'.
+     * @return bool  True if budget appears sufficient (no reservation made).
+     */
+    public function peek_budget( $estimated_tokens = 800, $consumer = 'unknown' ) {
+        $estimated_tokens = (int) $estimated_tokens;
+        if ( $estimated_tokens <= 0 ) {
+            return false;
+        }
+
+        $consumer = $this->normalize_consumer( $consumer );
+        $pool     = $this->get_pool( $consumer );
+        if ( false === $pool ) {
+            return false; // Unknown consumer — fail-closed.
+        }
+
+        $pool_budget = ( 'chatbot' === $pool ) ? $this->chatbot_budget : $this->cron_budget;
+        $pool_key    = $pool . '_tokens';
+        $now         = time();
+
+        $raw = get_option( self::OPTION_KEY, '' );
+
+        // No window or empty — budget is fully available.
+        if ( ! is_string( $raw ) || '' === $raw ) {
+            return $estimated_tokens <= $pool_budget;
+        }
+
+        $window = json_decode( $raw, true );
+
+        // Invalid or expired window — budget is fully available.
+        if ( ! is_array( $window ) || ! isset( $window['expires'] ) || $now >= (int) $window['expires'] ) {
+            return $estimated_tokens <= $pool_budget;
+        }
+
+        // Active window — check remaining budget.
+        $used      = isset( $window[ $pool_key ] ) ? (int) $window[ $pool_key ] : 0;
+        $remaining = max( 0, $pool_budget - $used );
+
+        return $estimated_tokens <= $remaining;
+    }
+
+    /**
      * Get seconds until the current rate-limit window resets.
      *
      * @return int Seconds until reset (0 if no active window).
