@@ -652,6 +652,65 @@ class Ontario_Obituaries {
                         </td>
                     </tr>
                     <?php endif; ?>
+                    <!-- v6.0.2: Data Quality Audit -->
+                    <tr valign="top">
+                        <th scope="row"><?php esc_html_e( 'Data Quality Audit', 'ontario-obituaries' ); ?></th>
+                        <td>
+                            <button type="button" id="oo-audit-dry" class="button"><?php esc_html_e( 'Scan for Issues', 'ontario-obituaries' ); ?></button>
+                            <button type="button" id="oo-audit-fix" class="button button-primary" style="margin-left:8px;display:none;"><?php esc_html_e( 'Auto-Fix Issues', 'ontario-obituaries' ); ?></button>
+                            <span id="oo-audit-spinner" class="spinner" style="float:none;"></span>
+                            <div id="oo-audit-result" style="margin-top:10px;"></div>
+                            <p class="description"><?php esc_html_e( 'Checks all published obituaries for: age=0, age>120, bad AI prose, impossible dates. "Auto-Fix" clears bad ages and re-queues faulty AI rewrites.', 'ontario-obituaries' ); ?></p>
+                            <script>
+                            (function(){
+                                var dryBtn = document.getElementById('oo-audit-dry');
+                                var fixBtn = document.getElementById('oo-audit-fix');
+                                var spinner = document.getElementById('oo-audit-spinner');
+                                var result = document.getElementById('oo-audit-result');
+                                if (!dryBtn) return;
+
+                                function runAudit(fix) {
+                                    spinner.classList.add('is-active');
+                                    result.innerHTML = '';
+                                    var xhr = new XMLHttpRequest();
+                                    xhr.open('POST', ajaxurl);
+                                    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                                    xhr.onload = function() {
+                                        spinner.classList.remove('is-active');
+                                        try {
+                                            var d = JSON.parse(xhr.responseText);
+                                            if (d.success) {
+                                                var html = '<strong>' + d.data.summary + '</strong>';
+                                                if (d.data.total > 0) {
+                                                    fixBtn.style.display = fix ? 'none' : 'inline-block';
+                                                    html += '<ul style="margin:5px 0 0 15px;list-style:disc;">';
+                                                    d.data.issues.forEach(function(i) {
+                                                        html += '<li>ID ' + i.id + ' (' + i.name + '): <code>' + i.type + '</code> — ' + i.detail + '</li>';
+                                                    });
+                                                    html += '</ul>';
+                                                } else {
+                                                    fixBtn.style.display = 'none';
+                                                    html = '<span style="color:green;">' + html + '</span>';
+                                                }
+                                                result.innerHTML = html;
+                                            } else {
+                                                result.innerHTML = '<span style="color:red;">Error: ' + (d.data ? d.data.message : 'Unknown') + '</span>';
+                                            }
+                                        } catch(e) {
+                                            result.innerHTML = '<span style="color:red;">Parse error.</span>';
+                                        }
+                                    };
+                                    xhr.send('action=ontario_obituaries_audit_data&nonce=<?php echo esc_js( wp_create_nonce( 'ontario-obituaries-admin-nonce' ) ); ?>&fix=' + (fix ? '1' : '0'));
+                                }
+
+                                dryBtn.addEventListener('click', function() { runAudit(false); });
+                                fixBtn.addEventListener('click', function() {
+                                    if (confirm('This will auto-fix all detected issues. Continue?')) { runAudit(true); }
+                                });
+                            })();
+                            </script>
+                        </td>
+                    </tr>
                 </table>
 
                 <h2 style="margin-top:30px;"><?php esc_html_e( 'GoFundMe Auto-Linker', 'ontario-obituaries' ); ?></h2>
