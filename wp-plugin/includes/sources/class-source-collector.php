@@ -117,6 +117,16 @@ class Ontario_Obituaries_Source_Collector {
             return $this->results;
         }
 
+        // v6.1.0 BUG FIX: Check banned sources for single-source collection too.
+        // Previously, filter_banned_sources() was only called in collect(), so a
+        // banned source could still be scraped via collect_source() (AJAX per-source).
+        $filtered = $this->filter_banned_sources( array( $source ) );
+        if ( empty( $filtered ) ) {
+            $this->results['errors']['source'] = sprintf( 'Source ID %d is banned.', $source_id );
+            $this->results['completed_at'] = current_time( 'mysql', true );
+            return $this->results;
+        }
+
         $this->process_source( $source, $table_name );
         $this->results['completed_at'] = current_time( 'mysql', true );
         return $this->results;
@@ -142,6 +152,9 @@ class Ontario_Obituaries_Source_Collector {
         } else {
             $sources = Ontario_Obituaries_Source_Registry::get_active_sources();
         }
+
+        // v6.1.0: Filter out banned sources before processing.
+        $sources = $this->filter_banned_sources( $sources );
 
         if ( empty( $sources ) ) {
             $this->results['errors']['registry'] = 'No active sources found in the registry.';
@@ -646,5 +659,66 @@ class Ontario_Obituaries_Source_Collector {
     public function scrape() {
         $results = $this->collect();
         return isset( $results['obituaries_added'] ) ? intval( $results['obituaries_added'] ) : 0;
+    }
+
+    /**
+     * v6.1.0: Filter out banned sources before collection.
+     *
+     * Reads the 'ontario_obituaries_banned_sources' option (array of domain
+     * patterns). Sources whose 'domain' matches any banned pattern are skipped.
+     * Supports exact match and wildcard prefix (e.g., '*.legacy.com').
+     *
+     * @param array $sources Array of source rows from the registry.
+     * @return array Filtered sources with banned entries removed.
+     */
+    private function filter_banned_sources( $sources ) {
+        $banned = get_option( 'ontario_obituaries_banned_sources', array() );
+        if ( empty( $banned ) || ! is_array( $banned ) ) {
+            return $sources;
+        }
+
+        $filtered = array();
+        foreach ( $sources as $source ) {
+            $domain = isset( $source['domain'] ) ? strtolower( $source['domain'] ) : '';
+            $is_banned = false;
+
+            foreach ( $banned as $pattern ) {
+                $pattern = strtolower( trim( $pattern ) );
+                if ( empty( $pattern ) ) {
+                    continue;
+                }
+                // Exact match.
+                if ( $domain === $pattern ) {
+                    $is_banned = true;
+                    break;
+                }
+                // Wildcard prefix: *.example.com matches sub.example.com.
+                if ( 0 === strpos( $pattern, '*.' ) ) {
+                    $suffix = substr( $pattern, 1 ); // '.example.com'
+                    if ( substr( $domain, -strlen( $suffix ) ) === $suffix ) {
+                        $is_banned = true;
+                        break;
+                    }
+                }
+                // Contains match for partial domain patterns (e.g., 'legacy.com' matches 'legacy.com/ca/...')
+                if ( false !== strpos( $domain, $pattern ) ) {
+                    $is_banned = true;
+                    break;
+                }
+            }
+
+            if ( $is_banned ) {
+                ontario_obituaries_log(
+                    sprintf( 'Source Manager: Skipping banned source "%s" (matched ban list).', $domain ),
+                    'info'
+                );
+                $this->results['sources_skipped']++;
+                continue;
+            }
+
+            $filtered[] = $source;
+        }
+
+        return $filtered;
     }
 }
