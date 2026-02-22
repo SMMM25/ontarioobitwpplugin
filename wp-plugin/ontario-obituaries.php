@@ -288,7 +288,10 @@ function oo_tone_sanitize( $text ) {
     foreach ( $ai_cliches as $cliche ) {
         // Only remove if the cliche creates a dangling sentence fragment.
         // For safety, only strip when preceded by a comma or period.
-        $text = preg_replace( '/,\s*' . substr( $cliche, 1 ) . '/i', '', $text );
+        // v6.1.1 FIX: Extract pattern body between delimiters to avoid
+        // "Unknown modifier '/'" when concatenating regex fragments.
+        $inner = preg_replace( '/^\/(.+)\/[a-z]*$/s', '$1', $cliche );
+        $text  = preg_replace( '/,\s*' . $inner . '/i', '', $text );
     }
 
     // Clean up any double spaces or trailing commas left by removals.

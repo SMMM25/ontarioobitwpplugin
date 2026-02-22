@@ -68,12 +68,13 @@ class Ontario_Obituaries_Ajax {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
-        // Search by name (LIKE), exclude suppressed, limit to 10 results
+        // Search by name (LIKE), exclude suppressed, published only, limit to 10 results
         $like_term = '%' . $wpdb->esc_like( $query ) . '%';
         $results   = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, name, location FROM `{$table}`
              WHERE name LIKE %s
                AND suppressed_at IS NULL
+               AND status = 'published'
              ORDER BY date_of_death DESC
              LIMIT 10",
             $like_term

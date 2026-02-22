@@ -20,6 +20,12 @@
  *   pipeline still runs — ai_description replaces description when ready.
  *   The core pipeline (SCRAPE → AI REVIEW → REWRITE → PUBLISH) is unchanged;
  *   the status column still tracks progress but no longer gates visibility.
+ *
+ * v6.1.1: Restored status='published' requirement on ALL public-facing SEO
+ *   queries (hub, city, individual, schema, breadcrumbs, title, meta).
+ *   The v6.0.4+ pipeline (SCRAPE→REWRITE→AUDIT→PUBLISH) guarantees every
+ *   published record has been AI-rewritten and fact-checked. Showing pending
+ *   records publicly exposed unaudited content during rebuilds.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -285,23 +291,25 @@ class Ontario_Obituaries_SEO {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
-        // Get city statistics
+        // Get city statistics — v6.1.1: only published records.
         $city_stats = $wpdb->get_results(
             "SELECT city_normalized as city, COUNT(*) as total,
                     MAX(date_of_death) as latest
              FROM `{$table}`
              WHERE city_normalized != ''
                AND suppressed_at IS NULL
+               AND status = 'published'
              GROUP BY city_normalized
              ORDER BY total DESC
              LIMIT 50"
         );
 
-        // Get recent obituaries across all cities
+        // Get recent obituaries across all cities — v6.1.1: only published records.
         $recent = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT * FROM `{$table}`
                  WHERE suppressed_at IS NULL
+                   AND status = 'published'
                    AND date_of_death >= %s
                  ORDER BY date_of_death DESC
                  LIMIT 20",
@@ -338,11 +346,12 @@ class Ontario_Obituaries_SEO {
         $per_page = 20;
         $offset = ( $page - 1 ) * $per_page;
 
-        // Fetch obituaries for this city
+        // Fetch obituaries for this city — v6.1.1: only published records.
         $obituaries = $wpdb->get_results( $wpdb->prepare(
             "SELECT * FROM `{$table}`
              WHERE ( city_normalized = %s OR location LIKE %s )
                AND suppressed_at IS NULL
+               AND status = 'published'
              ORDER BY date_of_death DESC
              LIMIT %d OFFSET %d",
             $city_name,
@@ -362,7 +371,8 @@ class Ontario_Obituaries_SEO {
         $total = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(*) FROM `{$table}`
              WHERE ( city_normalized = %s OR location LIKE %s )
-               AND suppressed_at IS NULL",
+               AND suppressed_at IS NULL
+               AND status = 'published'",
             $city_name,
             '%' . $wpdb->esc_like( $city_name ) . '%'
         ) );
@@ -389,8 +399,9 @@ class Ontario_Obituaries_SEO {
         global $wpdb;
         $table = $wpdb->prefix . 'ontario_obituaries';
 
+        // v6.1.1: Only show published records on individual pages.
         $obituary = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
+            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
             $id
         ) );
 
@@ -455,7 +466,7 @@ class Ontario_Obituaries_SEO {
         $table = $wpdb->prefix . 'ontario_obituaries';
 
         $obit = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
+            "SELECT * FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
             $id
         ) );
 
@@ -558,9 +569,10 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
+            // v6.1.1: Added status='published' — only expose published names.
             // render_individual_page() already 404s suppressed records, but wp_head
             // hooks may still fire; this prevents metadata leakage.
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL", intval( $id ) ) );
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'", intval( $id ) ) );
             if ( $obit ) {
                 $items[] = array(
                     'name' => $obit->name,
@@ -608,7 +620,8 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL", intval( $id ) ) );
+            // v6.1.1: Added status='published' — only expose published records in titles.
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name, city_normalized, location FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'", intval( $id ) ) );
             if ( $obit ) {
                 $city_name = ! empty( $obit->city_normalized ) ? $obit->city_normalized : $obit->location;
                 $title_parts['title'] = sprintf( '%s — %s, Ontario | Monaco Monuments', $obit->name, $city_name );
@@ -643,7 +656,8 @@ class Ontario_Obituaries_SEO {
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
                 // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
-                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
+                // v6.1.1: Added status='published' — only expose published records in meta.
+                "SELECT name, description, ai_description, city_normalized, location, date_of_death FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
                 intval( $id )
             ) );
             if ( $obit ) {
@@ -695,7 +709,8 @@ class Ontario_Obituaries_SEO {
             global $wpdb;
             $table = $wpdb->prefix . 'ontario_obituaries';
             // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
-            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL", intval( $id ) ) );
+            // v6.1.1: Added status='published' — only expose published records in canonical.
+            $obit  = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'", intval( $id ) ) );
             if ( $obit ) {
                 $canonical = home_url( '/obituaries/ontario/' . sanitize_title( $city ) . '/' . sanitize_title( $obit->name ) . '-' . intval( $id ) . '/' );
             }
@@ -750,10 +765,11 @@ class Ontario_Obituaries_SEO {
         );
 
         // 2. City hubs
+        // v6.1.1: Only include published records in sitemap.
         $cities = $wpdb->get_results(
             "SELECT city_normalized as city, COUNT(*) as total, MAX(date_of_death) as latest
              FROM `{$table}`
-             WHERE city_normalized != '' AND suppressed_at IS NULL
+             WHERE city_normalized != '' AND suppressed_at IS NULL AND status = 'published'
              GROUP BY city_normalized ORDER BY total DESC LIMIT 100"
         );
 
@@ -772,10 +788,12 @@ class Ontario_Obituaries_SEO {
         // v4.2.2: Also consider ai_description for sitemap inclusion.
         // An obituary is indexable if either its original description or AI-rewritten
         // description exceeds 100 characters.
+        // v6.1.1: Only include published records in sitemap.
         $obits = $wpdb->get_results(
             "SELECT id, name, city_normalized, location, date_of_death
              FROM `{$table}`
              WHERE suppressed_at IS NULL
+               AND status = 'published'
                AND (
                    ( description IS NOT NULL AND CHAR_LENGTH(description) > 100 )
                    OR ( ai_description IS NOT NULL AND CHAR_LENGTH(ai_description) > 100 )
@@ -875,7 +893,8 @@ class Ontario_Obituaries_SEO {
             $table = $wpdb->prefix . 'ontario_obituaries';
             $obit  = $wpdb->get_row( $wpdb->prepare(
                 // QC FIX (v5.0.5): Added suppressed_at IS NULL — defense-in-depth.
-                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL",
+                // v6.1.1: Added status='published' — only expose published records in OG meta.
+                "SELECT name, description, ai_description, city_normalized, location, image_url, date_of_death FROM `{$table}` WHERE id = %d AND suppressed_at IS NULL AND status = 'published'",
                 intval( $id )
             ) );
             if ( $obit ) {

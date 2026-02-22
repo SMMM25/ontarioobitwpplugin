@@ -25,3 +25,5 @@ dist-ssr
 public/
 ontario-obituaries-*.zip
 screenshot*.png
+deploy_v610/
+v610_deploy.tar.gz
