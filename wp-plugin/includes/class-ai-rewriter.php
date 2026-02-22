@@ -86,6 +86,15 @@ class Ontario_Obituaries_AI_Rewriter {
      */
     private $max_validation_failures = 3;
 
+    /**
+     * v6.1.1 FIX: Maximum quarantine cycles before permanent failure.
+     * After this many 1-hour quarantine cycles (each triggered by
+     * $max_validation_failures consecutive rejects), the record is
+     * permanently marked status='failed' and removed from the queue.
+     * This prevents poison records from blocking the queue indefinitely.
+     */
+    private $max_quarantine_cycles = 3;
+
     /** @var bool Whether we're running in CLI mode (standalone cron). */
     private $is_cli = false;
 
@@ -279,16 +288,46 @@ class Ontario_Obituaries_AI_Rewriter {
         ) );
 
         // v6.0.3 QC FIX: Filter out records that are still within quarantine window.
+        // v6.1.1 FIX: Track quarantine cycle count; after max_quarantine_cycles,
+        // permanently mark as 'failed' to prevent infinite retry loops.
         if ( ! empty( $obituaries ) ) {
             $filtered = array();
             foreach ( $obituaries as $obit ) {
                 // Check if quarantined and still within the 1-hour window.
                 if ( ! empty( $obit->ai_description ) && 0 === strpos( $obit->ai_description, '__quarantined_' ) ) {
-                    $quarantine_ts = (int) str_replace( '__quarantined_', '', $obit->ai_description );
-                    if ( $quarantine_ts > 0 && ( time() - $quarantine_ts ) < 3600 ) {
+                    // v6.1.1: Parse format __quarantined_{timestamp}_{cycle_count}
+                    $parts      = explode( '_', str_replace( '__quarantined_', '', $obit->ai_description ) );
+                    $q_ts       = isset( $parts[0] ) ? (int) $parts[0] : 0;
+                    $q_cycles   = isset( $parts[1] ) ? (int) $parts[1] : 1;
+
+                    if ( $q_ts > 0 && ( time() - $q_ts ) < 3600 ) {
                         continue; // Still quarantined — skip.
                     }
-                    // Quarantine expired — clear marker and allow re-processing.
+
+                    // v6.1.1: If max quarantine cycles reached, permanently fail.
+                    if ( $q_cycles >= $this->max_quarantine_cycles ) {
+                        $wpdb->update(
+                            $table,
+                            array(
+                                'status'         => 'failed',
+                                'ai_description' => '__failed_max_quarantine_cycles_' . $q_cycles,
+                                'audit_status'   => 'admin_review',
+                            ),
+                            array( 'id' => $obit->id ),
+                            array( '%s', '%s', '%s' ),
+                            array( '%d' )
+                        );
+                        ontario_obituaries_log(
+                            sprintf(
+                                'AI Rewriter: PERMANENTLY FAILED ID %d (%s) after %d quarantine cycles. Requires manual review.',
+                                $obit->id, $obit->name, $q_cycles
+                            ),
+                            'error'
+                        );
+                        continue; // Remove from this batch.
+                    }
+
+                    // Quarantine expired but cycles remain — clear marker and allow re-processing.
                     $clear_result = $wpdb->query( $wpdb->prepare(
                         "UPDATE `{$table}` SET ai_description = NULL WHERE id = %d",
                         $obit->id
@@ -434,9 +473,16 @@ class Ontario_Obituaries_AI_Rewriter {
                     // Quarantine: set a transient that process_batch's SELECT
                     // won't see (we skip quarantined IDs in the query below),
                     // AND mark the record in the DB so the SELECT can exclude it.
+                    // v6.1.1: Track cycle count in marker: __quarantined_{ts}_{cycles}
+                    $prev_cycles = 0;
+                    if ( ! empty( $obituary->ai_description ) && 0 === strpos( $obituary->ai_description, '__quarantined_' ) ) {
+                        $prev_parts  = explode( '_', str_replace( '__quarantined_', '', $obituary->ai_description ) );
+                        $prev_cycles = isset( $prev_parts[1] ) ? (int) $prev_parts[1] : 0;
+                    }
+                    $new_cycles = $prev_cycles + 1;
                     $quarantine_result = $wpdb->query( $wpdb->prepare(
                         "UPDATE `{$table}` SET ai_description = %s WHERE id = %d",
-                        '__quarantined_' . time(),
+                        '__quarantined_' . time() . '_' . $new_cycles,
                         $obituary->id
                     ) );
                     if ( function_exists( 'oo_db_check' ) ) {
@@ -444,8 +490,8 @@ class Ontario_Obituaries_AI_Rewriter {
                     }
                     ontario_obituaries_log(
                         sprintf(
-                            'AI Rewriter: QUARANTINED ID %d (%s) after %d consecutive validation failures. Will retry in 1 hour.',
-                            $obituary->id, $obituary->name, $fail_count
+                            'AI Rewriter: QUARANTINED ID %d (%s) after %d consecutive validation failures (cycle %d/%d). Will retry in 1 hour.',
+                            $obituary->id, $obituary->name, $fail_count, $new_cycles, $this->max_quarantine_cycles
                         ),
                         'warning'
                     );
