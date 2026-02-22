@@ -27,3 +27,8 @@ ontario-obituaries-*.zip
 screenshot*.png
 deploy_v610/
 v610_deploy.tar.gz
+deploy_v611/
+v611_hotfix.tar.gz
+deploy_v*/
+v*_deploy.tar.gz
+v*_hotfix.tar.gz
